@@ -1,0 +1,7 @@
+# Code owners for claude-tasks.
+#
+# @kmmwren owns everything. Combined with the "Main" ruleset's
+# "require code owner review", every pull request from anyone else needs
+# @kmmwren's approval before it can merge. @kmmwren is a ruleset bypass actor
+# (repository admin), so her own changes go straight to main without approval.
+* @kmmwren
