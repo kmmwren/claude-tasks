@@ -25,5 +25,18 @@ After it runs:
    either set `CLAUDE_TASKS_DIR` or name the directory `.tasks` inside a project.
 3. Offer to `git init` the queue if it isn't already under version control — the whole
    point is that the queue is greppable, diffable, and syncable.
-4. Optionally open `tasks.toml` so they can set the project `name` and the list of
-   `domains` their briefs can use.
+4. **Offer to back the queue up to a remote.** A local-only queue has no backup and
+   can't sync across machines. Offer to create a GitHub repo and push to it, using
+   whatever GitHub tooling is available (the `gh` CLI or a GitHub MCP):
+   - **Default to a PRIVATE repo.** A queue contains real task content — work tickets,
+     customer names, internal system details, half-formed ideas — that should not be
+     public. Create the repo private unless the user explicitly chooses otherwise.
+   - **If the user asks for a public repo, warn them first** that the queue holds
+     sensitive task content and confirm before pushing. Never push a queue to a public
+     repo without an explicit, informed confirmation.
+   - The queue repo is separate from the claude-tasks *plugin* repo. This means a user
+     can keep, e.g., a work queue and a personal queue in two different private repos,
+     fully isolated from each other. Suggest a descriptive repo name (e.g.
+     `work-tasks`) rather than reusing the plugin's name.
+5. Optionally open `tasks.toml` so they can set the project `name`, the list of
+   `domains` their briefs can use, and any `[priority] tag_weights`.
