@@ -29,15 +29,27 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          # Pinned to 3.12: mutmut<3 does not run on 3.14. Do not let Renovate bump this.
+          python-version: "3.12"
       - name: Install dev dependencies
-        run: pip install pytest "mutmut<3"
+        run: pip install pytest pyyaml "mutmut<3"
       # Mutation gate scoped to the dependency-resolution + config core, kept at zero
       # survivors. Expanding the gated set to the remaining logic modules is tracked in
       # the roadmap; presentational/template strings are intentionally not gated.
       - name: mutation testing (no survivors allowed)
         run: |
-          mutmut run --paths-to-mutate "scripts/_paths.py,scripts/config.py" || true
+          set -e
+          # Baseline must pass, else mutmut can't run — fail LOUDLY rather than vacuously
+          # report "no survivors" off a crashed run (e.g. a missing test dependency).
+          python -m pytest -x -q
+          mutmut run --paths-to-mutate "scripts/_paths.py,scripts/config.py" 2>&1 | tee mutmut_run.log || true
+          # Guard against a crashed run reporting green: a mutmut crash leaves no result
+          # data, so the survivor check below would pass vacuously. Catch the crash here.
+          if grep -qiE "Traceback|RuntimeError|cannot pickle" mutmut_run.log; then
+            echo "::error::mutmut did not run cleanly — the mutation gate is not actually testing:"
+            tail -20 mutmut_run.log
+            exit 1
+          fi
           if mutmut results | grep -q "Survived"; then
             echo "::error::Surviving mutants found — tests do not fully assert behaviour:"
             mutmut results
