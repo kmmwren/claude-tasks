@@ -3,13 +3,17 @@
   "extends": [
     "config:recommended"
   ],
-  "automerge": true,
   "platformAutomerge": false,
   "packageRules": [
     {
-      "description": "Auto-merge every update type once CI is green (Renovate waits for checks before merging).",
-      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "description": "Auto-merge low-risk updates once CI is green. These are all dev-only tooling or official GitHub Actions; none ship in the plugin's runtime (pure stdlib).",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest", "lockFileMaintenance"],
       "automerge": true
+    },
+    {
+      "description": "MAJOR version bumps require human review — CI catches breakage but not a malicious-but-passing dependency (supply-chain risk). Renovate opens the PR; Katherine approves.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     },
     {
       "description": "Pin CI Python: mutmut<3 cannot run on 3.14, so do not bump the workflow python-version.",
