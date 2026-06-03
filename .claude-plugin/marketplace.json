@@ -1,0 +1,13 @@
+{
+  "name": "claude-tasks",
+  "owner": {
+    "name": "Katherine"
+  },
+  "plugins": [
+    {
+      "name": "claude-tasks",
+      "description": "A git-backed task queue Claude can capture into, structure, see, execute, and hand off. Each task is a self-contained markdown brief.",
+      "source": "."
+    }
+  ]
+}
