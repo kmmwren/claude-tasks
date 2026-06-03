@@ -1,6 +1,5 @@
 {
   "name": "claude-tasks",
-  "displayName": "Claude Tasks",
   "description": "A git-backed task queue Claude can capture into, structure, see, execute, and hand off. Each task is a self-contained markdown brief.",
   "version": "0.1.0",
   "author": {

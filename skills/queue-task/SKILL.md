@@ -1,6 +1,6 @@
 ---
 name: queue-task
-description: Use whenever a task should be added to the claude-tasks queue — either because the user said "add a task / track this / remember to do X / put this on the list", OR because you (Claude), in the middle of other work, discovered something that should become a tracked task: a follow-up, a deferred fix, a TODO you left, a security issue, an improvement, a "we should also…". This is how Claude self-captures work into the queue from any session. Fill the brief out as meaningfully as you can from what you already know.
+description: 'Use whenever a task should be added to the claude-tasks queue — either because the user said "add a task / track this / remember to do X / put this on the list", OR because you (Claude), in the middle of other work, discovered something that should become a tracked task: a follow-up, a deferred fix, a TODO you left, a security issue, an improvement, a "we should also…". This is how Claude self-captures work into the queue from any session. Fill the brief out as meaningfully as you can from what you already know.'
 ---
 
 # queue-task
