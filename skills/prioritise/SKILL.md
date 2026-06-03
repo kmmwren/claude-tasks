@@ -1,6 +1,6 @@
 ---
 name: prioritise
-description: Use when the user asks what to do next or how the queue is prioritised — "what's next", "what should I work on", "what's the priority", "what's blocked", "what's the most important thing", "what can you pick up". Ranks the ready/ briefs (dependency-aware: a brief stays blocked until its dependencies are done; briefs that unblock others rank higher) and shows the top of the queue with blocked / needs-you / unlock flags.
+description: "Use when the user asks what to do next or how the queue is prioritised — \"what's next\", \"what should I work on\", \"what's the priority\", \"what's blocked\", \"what's the most important thing\", \"what can you pick up\". Ranks the ready/ briefs (dependency-aware: a brief stays blocked until its dependencies are done; briefs that unblock others rank higher) and shows the top of the queue with blocked / needs-you / unlock flags."
 ---
 
 # prioritise — rank the queue, dependency-aware
