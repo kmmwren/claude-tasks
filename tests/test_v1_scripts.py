@@ -76,6 +76,26 @@ def test_add_task_resolves_root_from_env(queue, monkeypatch):
     assert (queue / "inbox" / "env-routed.md").is_file()
 
 
+def test_add_task_parked_writes_to_parked_dir(queue, capsys):
+    add_task.main(["--title", "Waiting on answer", "--root", str(queue), "--parked"])
+    path = queue / "parked" / "waiting-on-answer.md"
+    text = path.read_text()
+    assert "status: parked" in text
+    assert "parked/waiting-on-answer.md" in capsys.readouterr().out
+
+
+def test_add_task_parked_does_not_write_to_inbox(queue):
+    add_task.main(["--title", "Blocked task", "--root", str(queue), "--parked"])
+    assert not (queue / "inbox" / "blocked-task.md").exists()
+
+
+def test_add_task_parked_takes_precedence_over_ready(queue):
+    # --parked beats --ready: parked/ wins when both flags are passed
+    add_task.main(["--title", "Double flagged", "--root", str(queue), "--parked", "--ready"])
+    assert (queue / "parked" / "double-flagged.md").is_file()
+    assert not (queue / "ready" / "double-flagged.md").exists()
+
+
 # ── raw_capture ───────────────────────────────────────────────────────────────
 
 def test_slugify_truncates_and_cleans():

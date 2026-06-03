@@ -46,6 +46,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--parent", default="")
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
     ap.add_argument("--ready", action="store_true", help="file in ready/ (enriched) instead of inbox/")
+    ap.add_argument(
+        "--parked",
+        action="store_true",
+        help="file in parked/ (status: parked) — work intentionally suspended awaiting external input",
+    )
     ap.add_argument("--stdin", action="store_true", help="append stdin to Context")
     ap.add_argument("--commit", action="store_true", help="git add+commit+push the new brief")
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
@@ -53,7 +58,12 @@ def main(argv: list[str] | None = None) -> None:
 
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()
-    status = "ready" if a.ready else "inbox"
+    if a.parked:
+        status = "parked"
+    elif a.ready:
+        status = "ready"
+    else:
+        status = "inbox"
     # Atomically claim a unique filename BEFORE writing, so two sessions capturing the
     # same title at the same instant can't overwrite each other (O_CREAT|O_EXCL).
     nid = reserve_name(root / status, slug(a.title), [root / d for d in TASK_DIRS])
