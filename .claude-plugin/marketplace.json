@@ -3,11 +3,12 @@
   "owner": {
     "name": "Katherine"
   },
+  "description": "Single-plugin marketplace for claude-tasks: a git-backed task queue Claude can capture into, structure, see, execute, and hand off.",
   "plugins": [
     {
       "name": "claude-tasks",
       "description": "A git-backed task queue Claude can capture into, structure, see, execute, and hand off. Each task is a self-contained markdown brief.",
-      "source": "."
+      "source": "./"
     }
   ]
 }
