@@ -27,7 +27,7 @@ After it runs:
    point is that the queue is greppable, diffable, and syncable.
 4. **Offer to back the queue up to a remote.** A local-only queue has no backup and
    can't sync across machines. Offer to create a GitHub repo and push to it, using
-   whatever GitHub tooling is available (the `gh` CLI or a GitHub MCP):
+   whatever GitHub tooling is available (the `gh` CLI or a GitHub MCP server (Model Context Protocol)):
    - **Default to a PRIVATE repo.** A queue contains real task content — work tickets,
      customer names, internal system details, half-formed ideas — that should not be
      public. Create the repo private unless the user explicitly chooses otherwise.
