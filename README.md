@@ -76,6 +76,10 @@ session's loose ends back when it stops.
 That scaffolds the lifecycle folders, a `tasks.toml`, and a brief template, and tells you
 how the scripts will find it.
 
+The scripts require **Python 3.11+**. On macOS the system `python3` is 3.9; if a script
+is run with it, it exits with a message telling you which interpreters to use instead
+(rather than the cryptic import-time `TypeError` older Pythons would otherwise raise).
+
 ## The loop
 
 | You say… | Skill | What happens |

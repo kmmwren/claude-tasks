@@ -32,6 +32,8 @@ import pathlib
 import time
 from collections.abc import Iterable, Iterator
 
+import _compat  # noqa: F401  - version guard; must run before the annotations below evaluate
+
 TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
 
 

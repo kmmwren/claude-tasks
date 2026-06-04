@@ -19,6 +19,8 @@ import os
 import pathlib
 from collections.abc import Mapping
 
+import _compat  # noqa: F401  - version guard; must run before the annotations below evaluate
+
 TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
 ENV_VAR = "CLAUDE_TASKS_DIR"
 PROJECT_MARKER = ".tasks"
