@@ -5,7 +5,7 @@ description = "A git-backed task queue Claude can capture into, structure, see, 
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.4", "mypy>=1.10", "mutmut<3", "pyyaml>=6"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.4", "mypy>=1.10", "mutmut<4", "pyyaml>=6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
