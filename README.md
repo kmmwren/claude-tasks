@@ -120,11 +120,26 @@ assignee:              # empty = unclaimed
 
 The point of step 3 is that your claim becomes visible to everyone else in seconds rather
 than whenever your first real commit happens to land. Later transitions leave the claim
-alone unless you pass `--assignee` again; `--assignee ""` releases it.
+alone unless you pass `--assignee` again.
+
+**Claiming will not silently steal someone else's claim.** If a brief is already claimed by
+someone other than the assignee you pass, the move is refused and nothing is written:
+
+```
+$ python3 scripts/transition.py move <id> in-progress --assignee bob
+error: '<id>' is already claimed by 'alice'; refusing to reassign it to 'bob'.
+       Coordinate with them, or release it first with --assignee "".
+```
+
+Re-claiming with the same assignee is fine (idempotent), and claiming an unclaimed brief is
+fine. To free a brief stuck under a stale claim, release it with `--assignee ""` — releasing
+is deliberately allowed regardless of who holds it. `--assignee` takes a single-line value;
+a newline in it is rejected rather than written into the frontmatter.
 
 `assignee` is **advisory, not a lock**. Within a single checkout, `transition.py` really does
 serialise concurrent moves on a file lock, so two local processes cannot both move the same
-brief. What it cannot do is coordinate *across* clones: pulling first narrows the race
+brief, and the claim check happens under that same lock so two local sessions cannot both
+claim it. What it cannot do is coordinate *across* clones: pulling first narrows the race
 window, it does not close it, and two people who claim on separate machines within the same
 few seconds will still collide (git tells you on push, and you sort it out between you).
 Treat it as a coordination signal, not a mutex. Briefs without the field are simply

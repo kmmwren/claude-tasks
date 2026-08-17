@@ -51,8 +51,11 @@ commit yourself with `scripts/git_sync.py`. Omit `--assignee` on later transitio
 existing claim is left alone; pass `--assignee ""` to release it.)
 
 That commit **is** the claim: it lands before any of the actual work, so everyone else sees
-the brief is taken. `assignee` is advisory, not a lock — if someone else already claimed it,
-pick a different brief rather than working it in parallel.
+the brief is taken. If the brief is already claimed by someone else the command **fails**
+and names them, rather than taking it from them: pick a different brief rather than working
+it in parallel. If you know the claim is stale (the holder is gone), free it with
+`--assignee ""` first, then claim it. Across clones `assignee` is still advisory, not a
+lock — pulling first narrows the race, it does not close it.
 
 ### 5. Do the work — properly
 Execute against the success criteria using the right approach (TDD for code, etc.). Tick

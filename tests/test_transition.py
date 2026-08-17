@@ -543,3 +543,110 @@ def test_fm_parses_the_shipped_template_without_comment_pollution():
     assert parsed["parent"] == ""
     assert parsed["requires-repo"] == ""
     assert parsed["tags"] == "[]"
+
+
+# --------------------------------------------------------------------------- #
+# Claim conflicts — serialising claims within a checkout
+# --------------------------------------------------------------------------- #
+def test_move_rejects_claiming_a_brief_someone_else_holds(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    with pytest.raises(ValueError, match="already claimed by 'alice'"):
+        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-03")
+
+
+def test_move_rejected_claim_leaves_the_brief_untouched(root):
+    claimed = transition.move_brief("rotate-the-api-key", "in-progress", root,
+                                    assignee="alice", today="2026-06-02")
+    before = claimed.read_text()
+    with contextlib.suppress(ValueError):
+        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
+                              today="2026-06-03")
+    assert claimed.read_text() == before
+    assert not (root / "done" / "rotate-the-api-key.md").exists()
+
+
+def test_move_allows_the_same_assignee_to_reclaim(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "done", root, assignee="alice",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == "alice"
+    assert transition.fm(p.read_text())["status"] == "done"
+
+
+def test_move_allows_claiming_an_unclaimed_brief(root):
+    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-02")
+    assert transition.fm(p.read_text())["assignee"] == "bob"
+
+
+def test_move_allows_releasing_someone_elses_claim(root):
+    """Releasing is the documented way to free a brief stuck under a dead claim."""
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == ""
+
+
+def test_move_can_claim_after_a_release(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
+                          today="2026-06-03")
+    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-04")
+    assert transition.fm(p.read_text())["assignee"] == "bob"
+
+
+def test_move_conflict_names_both_claimants(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    with pytest.raises(ValueError) as exc:
+        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
+                              today="2026-06-03")
+    msg = str(exc.value)
+    assert "rotate-the-api-key" in msg      # which brief
+    assert "'alice'" in msg                 # who holds it
+    assert "'bob'" in msg                   # who was refused
+    assert '--assignee ""' in msg           # how to force it free
+
+
+def test_move_ignores_a_claim_conflict_when_no_assignee_is_passed(root):
+    """A plain move must keep preserving the claim silently, not raise."""
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "done", root, today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == "alice"
+
+
+def test_move_treats_a_whitespace_only_claim_as_a_release(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="   ",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == ""
+
+
+def test_move_claim_conflict_is_checked_under_the_lock(root, monkeypatch):
+    """The check must read the assignee inside the lock, not from a pre-lock snapshot.
+
+    Simulates the race: a first actor's claim lands after our find_brief but before we
+    take the lock. Rewriting the file from inside the lock acquisition proves the
+    conflict is detected against the current on-disk state.
+    """
+    real_lock = transition.repo_lock
+
+    @contextlib.contextmanager
+    def racing_lock(root_, **kw):
+        path = root_ / "ready" / "rotate-the-api-key.md"
+        path.write_text(path.read_text().replace("parent:", "assignee: alice\nparent:"))
+        with real_lock(root_, **kw) as acquired:
+            yield acquired
+
+    monkeypatch.setattr(transition, "repo_lock", racing_lock)
+    with pytest.raises(ValueError, match="already claimed by 'alice'"):
+        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-03")

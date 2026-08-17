@@ -173,10 +173,14 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     then re-verify it still exists INSIDE the lock before writing. This makes the claim
     atomic even across threads that both ran find_brief concurrently.
 
-    Callers commit separately via sync_commit. Returns the new path.
+    A non-empty `assignee` is also checked against the current one under the lock and
+    raises ValueError rather than stealing another actor's claim; `assignee=""` releases
+    whoever holds it. Callers commit separately via sync_commit. Returns the new path.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")
+    if assignee is not None:
+        assignee = assignee.strip()  # a whitespace-only claim is a release, not a claimant
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
@@ -194,6 +198,14 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                 f"no brief with id {brief_id!r} (claimed by another actor)"
             )
         text = path.read_text()
+        if assignee:
+            held = fm(text).get("assignee", "")
+            if held and held != assignee:
+                raise ValueError(
+                    f"{brief_id!r} is already claimed by {held!r}; refusing to reassign it "
+                    f"to {assignee!r}. Coordinate with them, or release it first with "
+                    f'--assignee "".'
+                )
         text = _update_frontmatter(text, new_status, today, assignee=assignee)
         text = _append_log(text, today, message)
         new_path = root / new_status / f"{brief_id}.md"

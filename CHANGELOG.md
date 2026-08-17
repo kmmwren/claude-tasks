@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Fixed
+- **Claiming no longer overwrites someone else's claim.** `move --assignee` now reads the
+  current `assignee` under the same move lock and refuses a *different* non-empty claimant
+  instead of replacing it, closing a race where two local sessions could both report success
+  and the first could commit the second's claim. Re-claiming with the same assignee and
+  claiming an unclaimed brief are unchanged; a plain `move` still preserves the claim
+  silently; and `--assignee ""` still releases whoever holds it, which stays the documented
+  way to free a stuck brief.
+- **`--assignee` is validated as a single-line value.** A newline or carriage return in it is
+  rejected with a clear error instead of being written into the frontmatter, where it could
+  have injected further keys. A whitespace-only value normalises to a release.
 - **Inline frontmatter comments are no longer parsed as values.** Every parser
   (`transition.py`, `prioritise.py`, `build_board.py`) shared the same gap: `assignee: #
   OPTIONAL who has claimed this…` read back as that whole comment, so a brief copied
