@@ -131,14 +131,24 @@ def resolve_brief(query: str, root: pathlib.Path,
     return hits
 
 
-def _update_frontmatter(text: str, new_status: str, today: str) -> str:
-    """Set `status:` and `updated:` in the frontmatter block only, leaving the body intact."""
+def _update_frontmatter(text: str, new_status: str, today: str,
+                        assignee: str | None = None) -> str:
+    """Set `status:`/`updated:` (and `assignee:` when given) in the frontmatter block only.
+
+    `assignee=None` leaves any existing claim untouched, so briefs written before the field
+    existed keep transitioning unchanged; pass "" to release a claim.
+    """
     m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
     if not m:
         return text
     block = m.group(2)
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
+    if assignee is not None:
+        line = f"assignee: {assignee}".rstrip()
+        block, n = re.subn(r"(?m)^assignee:.*$", line, block, count=1)
+        if not n:
+            block = block + "\n" + line
     return text[: m.start(2)] + block + text[m.end(2):]
 
 
@@ -151,7 +161,8 @@ def _append_log(text: str, today: str, message: str) -> str:
 
 
 def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
-               log: str | None = None, today: str | None = None) -> pathlib.Path:
+               log: str | None = None, today: str | None = None,
+               assignee: str | None = None) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
@@ -183,7 +194,7 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                 f"no brief with id {brief_id!r} (claimed by another actor)"
             )
         text = path.read_text()
-        text = _update_frontmatter(text, new_status, today)
+        text = _update_frontmatter(text, new_status, today, assignee=assignee)
         text = _append_log(text, today, message)
         new_path = root / new_status / f"{brief_id}.md"
         atomic_write(new_path, text)
@@ -212,6 +223,8 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("status", choices=VALID_STATUSES)
     m.add_argument("--root", default=None)
     m.add_argument("--log", default=None, help="execution-log line (default per target state)")
+    m.add_argument("--assignee", default=None,
+                   help="claim the brief for someone (person or agent); '' releases it")
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
@@ -234,7 +247,8 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     try:
-        new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today)
+        new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
+                              assignee=a.assignee)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)

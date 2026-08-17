@@ -185,6 +185,40 @@ def test_update_frontmatter_leaves_body_untouched():
     assert transition.fm(out)["status"] == "done"
 
 
+def test_update_frontmatter_leaves_assignee_alone_by_default():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02")
+    assert transition.fm(out)["assignee"] == "alice"
+
+
+def test_update_frontmatter_sets_existing_assignee():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "in-progress", "2026-06-02", assignee="bob")
+    assert transition.fm(out)["assignee"] == "bob"
+
+
+def test_update_frontmatter_inserts_assignee_when_absent():
+    # briefs written before the field existed have no assignee: line at all
+    text = _brief("ready", "x", "T")
+    assert "assignee:" not in text
+    out = transition._update_frontmatter(text, "in-progress", "2026-06-02", assignee="bob")
+    assert transition.fm(out)["assignee"] == "bob"
+    assert transition.fm(out)["status"] == "in-progress"
+
+
+def test_update_frontmatter_can_release_a_claim():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "ready", "2026-06-02", assignee="")
+    assert transition.fm(out)["assignee"] == ""
+
+
+def test_update_frontmatter_assignee_does_not_touch_body():
+    text = _brief("ready", "x", "assignee: someone in the body should survive")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert "assignee: someone in the body should survive" in out
+    assert transition.fm(out)["assignee"] == "bob"
+
+
 # --------------------------------------------------------------------------- #
 # _append_log()
 # --------------------------------------------------------------------------- #
@@ -225,6 +259,24 @@ def test_move_custom_log_message(root):
         log="ESCALATED — need the API provider login", today="2026-06-02"
     )
     assert "ESCALATED — need the API provider login" in p.read_text()
+
+
+def test_move_claims_the_brief(root):
+    p = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    fm = transition.fm(p.read_text())
+    assert fm["assignee"] == "alice"
+    assert fm["status"] == "in-progress"
+
+
+def test_move_without_assignee_leaves_the_claim_unchanged(root):
+    claimed = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    assert transition.fm(claimed.read_text())["assignee"] == "alice"
+    moved = transition.move_brief("rotate-the-api-key", "done", root, today="2026-06-03")
+    assert transition.fm(moved.read_text())["assignee"] == "alice"
 
 
 def test_move_invalid_status_raises(root):
@@ -339,6 +391,14 @@ def test_main_move_commits(root, monkeypatch, capsys):
                      "--root", str(root), "--today", "2026-06-02"])
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
     assert "brief(rotate-the-api-key)" in calls["msg"]
+
+
+def test_main_move_accepts_assignee_flag(root, monkeypatch):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    text = (root / "in-progress" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == "alice"
 
 
 def test_main_move_no_sync_skips_git(root, monkeypatch):

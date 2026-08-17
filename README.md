@@ -112,17 +112,23 @@ assignee:              # empty = unclaimed
 **The claiming convention.** Before starting work on a brief:
 
 1. `git pull` — get everyone else's claims first.
-2. Set `assignee:` to yourself and move the brief to `in-progress/`.
-3. Commit and push **that alone**, immediately, before doing any of the actual work.
+2. Claim it and move it, in one step:
+   ```
+   python3 scripts/transition.py move <id> in-progress --assignee alice --log "started"
+   ```
+3. That pushes **the claim alone**, immediately, before any of the actual work.
 
 The point of step 3 is that your claim becomes visible to everyone else in seconds rather
-than whenever your first real commit happens to land.
+than whenever your first real commit happens to land. Later transitions leave the claim
+alone unless you pass `--assignee` again; `--assignee ""` releases it.
 
-`assignee` is **advisory, not a lock**. Nothing enforces it: pulling first narrows the race
-window, it does not close it, and two people who claim within the same few seconds will
-still collide (git will tell you on push, and you sort it out between you). It is a
-coordination signal, not a mutex. Briefs without the field are simply unclaimed, and the
-board shows a claimed brief with an assignee chip and matches it in the search box.
+`assignee` is **advisory, not a lock**. Within a single checkout, `transition.py` really does
+serialise concurrent moves on a file lock, so two local processes cannot both move the same
+brief. What it cannot do is coordinate *across* clones: pulling first narrows the race
+window, it does not close it, and two people who claim on separate machines within the same
+few seconds will still collide (git tells you on push, and you sort it out between you).
+Treat it as a coordination signal, not a mutex. Briefs without the field are simply
+unclaimed; the board shows a claimed brief with an assignee chip and matches it in search.
 
 ## A worked example
 
