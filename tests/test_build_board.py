@@ -205,3 +205,25 @@ def test_main_uses_resolver_and_config(tmp_path, monkeypatch):
     page = (root / "view" / "board.html").read_text()
     assert "Resolved Name" in page
     assert "Just one" in page
+
+
+def test_parse_frontmatter_strips_an_inline_comment():
+    fm, _ = build_board.parse_frontmatter("---\nstatus: ready # ready | done\n---\nbody")
+    assert fm["status"] == "ready"
+
+
+def test_parse_frontmatter_reads_a_comment_only_value_as_empty():
+    fm, _ = build_board.parse_frontmatter("---\nassignee: # OPTIONAL who claimed it\n---\nb")
+    assert fm["assignee"] == ""
+
+
+def test_parse_frontmatter_keeps_a_hash_that_is_part_of_the_value():
+    fm, _ = build_board.parse_frontmatter("---\ntitle: fix issue#42\n---\nbody")
+    assert fm["title"] == "fix issue#42"
+
+
+def test_parse_frontmatter_handles_the_shipped_template():
+    fm, _ = build_board.parse_frontmatter(init_queue.QUEUE_TEMPLATE)
+    assert fm["assignee"] == ""
+    assert fm["status"] == "ready"
+    assert fm["importance"] == ""

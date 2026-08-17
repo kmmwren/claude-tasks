@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- **Inline frontmatter comments are no longer parsed as values.** Every parser
+  (`transition.py`, `prioritise.py`, `build_board.py`) shared the same gap: `assignee: #
+  OPTIONAL who has claimed this…` read back as that whole comment, so a brief copied
+  straight from `_template.md` looked *claimed by a comment*, and even populated fields like
+  `status: ready # inbox | ready | …` carried their comment into the value. Cleaning is now
+  one shared `_paths.strip_comment`. A `#` that opens the value or is spaced off from it
+  starts a comment; a `#` inside a value (`issue#42`, `[a#b]`) is kept.
+
 ### Added
 - **`assignee:` frontmatter field** — optional, free-form (person or agent), empty means
   unclaimed. Lets several people/agents share one queue without silently picking the same

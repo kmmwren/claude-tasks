@@ -509,3 +509,37 @@ def test_move_brief_lock_timeout_raises(root, monkeypatch):
     monkeypatch.setattr(transition, "repo_lock", fake_lock)
     with pytest.raises(RuntimeError, match="timed out"):
         transition.move_brief("rotate-the-api-key", "in-progress", root)
+
+
+# --------------------------------------------------------------------------- #
+# Frontmatter comment stripping (the shipped _template.md is fully commented)
+# --------------------------------------------------------------------------- #
+def test_fm_strips_an_inline_comment_from_a_populated_value():
+    parsed = transition.fm("---\nstatus: ready # ready | done\n---\n")
+    assert parsed["status"] == "ready"
+
+
+def test_fm_reads_a_comment_only_value_as_empty():
+    parsed = transition.fm("---\nassignee: # OPTIONAL who has claimed this\n---\n")
+    assert parsed["assignee"] == ""
+
+
+def test_fm_keeps_a_hash_that_is_part_of_the_value():
+    parsed = transition.fm("---\ntitle: fix issue#42\n---\n")
+    assert parsed["title"] == "fix issue#42"
+
+
+def test_fm_parses_the_shipped_template_without_comment_pollution():
+    """A brief copied from _template.md must not read as claimed-by-a-comment."""
+    import init_queue
+
+    parsed = transition.fm(init_queue.QUEUE_TEMPLATE)
+    assert parsed["assignee"] == ""
+    assert parsed["status"] == "ready"
+    assert parsed["importance"] == ""
+    assert parsed["autonomy"] == ""
+    assert parsed["due"] == ""
+    assert parsed["domain"] == ""
+    assert parsed["parent"] == ""
+    assert parsed["requires-repo"] == ""
+    assert parsed["tags"] == "[]"

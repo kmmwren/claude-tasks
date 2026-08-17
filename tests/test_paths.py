@@ -76,3 +76,62 @@ def test_require_queue_raises_with_guidance(tmp_path):
     assert msg.startswith("No task queue at")  # names the missing queue
     assert msg.rstrip().endswith("to create one.")  # points at the fix
     assert "/tasks-init" in msg
+
+
+# --------------------------------------------------------------------------- #
+# strip_comment — the shared frontmatter value cleaner
+# --------------------------------------------------------------------------- #
+def test_strip_comment_drops_a_trailing_comment():
+    assert _paths.strip_comment("ready # inbox | ready | done") == "ready"
+
+
+def test_strip_comment_treats_a_whole_comment_as_empty():
+    assert _paths.strip_comment("# OPTIONAL who has claimed this. Empty = unclaimed.") == ""
+
+
+def test_strip_comment_leaves_a_plain_value_untouched():
+    assert _paths.strip_comment("alice") == "alice"
+
+
+def test_strip_comment_keeps_a_hash_with_no_leading_space():
+    # a mid-word # is part of the value, not a comment marker
+    assert _paths.strip_comment("issue#42") == "issue#42"
+
+
+def test_strip_comment_keeps_a_hash_inside_a_tag_list():
+    assert _paths.strip_comment("[a#b, c#d]") == "[a#b, c#d]"
+
+
+def test_strip_comment_strips_only_at_the_first_spaced_hash():
+    assert _paths.strip_comment("a # b # c") == "a"
+
+
+def test_strip_comment_handles_a_tab_before_the_hash():
+    assert _paths.strip_comment("ready\t# a comment") == "ready"
+
+
+def test_strip_comment_strips_a_comment_after_a_hash_bearing_value():
+    # the value's own # survives; only the spaced-off comment goes
+    assert _paths.strip_comment("issue#42 # the tracking id") == "issue#42"
+
+
+def test_strip_comment_returns_empty_for_an_empty_value():
+    assert _paths.strip_comment("") == ""
+
+
+def test_strip_comment_strips_surrounding_whitespace():
+    assert _paths.strip_comment("  ready  ") == "ready"
+
+
+def test_strip_comment_drops_a_bare_trailing_hash():
+    # an empty comment is still a comment
+    assert _paths.strip_comment("ready #") == "ready"
+
+
+def test_strip_comment_reads_a_lone_hash_as_empty():
+    assert _paths.strip_comment("#") == ""
+
+
+def test_strip_comment_keeps_a_leading_hash_value_that_is_indented():
+    # a value that is nothing but a comment, however indented, is an empty value
+    assert _paths.strip_comment("   # just a comment") == ""

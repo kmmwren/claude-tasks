@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from _concurrency import atomic_write
-from _paths import require_queue, resolve_root
+from _paths import require_queue, resolve_root, strip_comment
 from config import load_config
 
 DIRS = ["inbox", "ready", "in-progress", "done", "parked"]
@@ -33,7 +33,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         if ":" not in line:
             continue
         k, _, v = line.partition(":")
-        fm[k.strip()] = v.strip()
+        fm[k.strip()] = strip_comment(v)
     return fm, body
 
 

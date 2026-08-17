@@ -33,7 +33,7 @@ import sys
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root
+from _paths import resolve_root, strip_comment
 from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
@@ -60,7 +60,7 @@ def fm(text: str) -> dict[str, str]:
         for line in m.group(1).splitlines():
             if ":" in line:
                 k, _, v = line.partition(":")
-                d[k.strip()] = v.strip()
+                d[k.strip()] = strip_comment(v)
     return d
 
 

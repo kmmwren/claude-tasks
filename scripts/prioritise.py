@@ -26,7 +26,7 @@ import pathlib
 import re
 from typing import Any
 
-from _paths import require_queue, resolve_root
+from _paths import require_queue, resolve_root, strip_comment
 from config import load_config
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
@@ -48,7 +48,7 @@ def fm(text: str) -> dict[str, str]:
         for line in m.group(1).splitlines():
             if ":" in line:
                 k, _, v = line.partition(":")
-                d[k.strip()] = v.strip()
+                d[k.strip()] = strip_comment(v)
     return d
 
 
