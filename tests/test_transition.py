@@ -210,6 +210,23 @@ def test_update_frontmatter_can_release_a_claim():
     text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
     out = transition._update_frontmatter(text, "ready", "2026-06-02", assignee="")
     assert transition.fm(out)["assignee"] == ""
+    # released as a bare key, with no trailing whitespace left behind
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == ["assignee:"]
+
+
+def test_update_frontmatter_writes_exactly_one_assignee_line():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == ["assignee: bob"]
+
+
+def test_update_frontmatter_rewrites_only_the_first_assignee_line():
+    # a hand-edited brief can end up with a duplicate key; rewrite the first, leave the rest
+    text = _brief("ready", "x", "T").replace(
+        "parent:", "assignee: alice\nassignee: stray\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == [
+        "assignee: bob", "assignee: stray"]
 
 
 def test_update_frontmatter_assignee_does_not_touch_body():
@@ -398,6 +415,17 @@ def test_main_move_accepts_assignee_flag(root, monkeypatch):
     transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
                      "--root", str(root), "--today", "2026-06-02"])
     text = (root / "in-progress" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == "alice"
+
+
+def test_main_move_without_assignee_preserves_the_claim(root, monkeypatch):
+    # guards the CLI default: a plain move must never silently release an existing claim
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(["move", "rotate-the-api-key", "done",
+                     "--root", str(root), "--today", "2026-06-03"])
+    text = (root / "done" / "rotate-the-api-key.md").read_text()
     assert transition.fm(text)["assignee"] == "alice"
 
 
