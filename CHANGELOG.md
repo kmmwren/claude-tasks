@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **`assignee:` frontmatter field** — optional, free-form (person or agent), empty means
+  unclaimed. Lets several people/agents share one queue without silently picking the same
+  brief: pull, set `assignee`, move to `in-progress/`, then push that claim commit alone
+  before starting work. Advisory coordination only, **not** a lock. Rendered as a chip on
+  the board and included in its search. Briefs without the field keep working unchanged.
 - **Directed handoff** — `add_task.py` gains `--status {inbox,ready,parked}` (default
   inbox; `--ready` kept as an alias). The `handoff` skill can now route a session's items to
   a chosen lifecycle state per the user's direction (e.g. "hand off everything to parked"),

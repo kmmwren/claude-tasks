@@ -13,8 +13,12 @@ def _write(root, folder, name, text):
 
 
 def _brief(bid, *, title="T", status="ready", btype="todo", autonomy="full",
-           importance="2", parent="", domain="", effort="", criteria=None, goal="A goal."):
+           importance="2", parent="", domain="", effort="", criteria=None, goal="A goal.",
+           assignee=None):
     crit = "\n".join(criteria) if criteria else ""
+    # assignee is omitted entirely unless given, so the default brief doubles as the
+    # backwards-compatibility fixture for briefs written before the field existed.
+    claim = "" if assignee is None else f"\nassignee: {assignee}"
     return f"""---
 id: {bid}
 title: {title}
@@ -24,7 +28,7 @@ importance: {importance}
 autonomy: {autonomy}
 estimated-effort: {effort}
 domain: {domain}
-parent: {parent}
+parent: {parent}{claim}
 ---
 
 ## Goal
@@ -77,6 +81,77 @@ def test_load_briefs_synthesises_raw_inbox_item(tmp_path):
     briefs = {b["id"]: b for b in build_board.load_briefs(root)}
     assert "raw-thought" in briefs
     assert briefs["raw-thought"]["goal"].startswith("# Raw thought")
+
+
+# ── assignee (advisory claim) ─────────────────────────────────────────────────
+
+def test_load_briefs_reads_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "in-progress", "claimed.md", _brief("claimed", assignee="alice"))
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["claimed"]["assignee"] == "alice"
+
+
+def test_load_briefs_defaults_assignee_to_empty_when_field_absent(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "legacy.md", _brief("legacy"))
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["legacy"]["assignee"] == ""
+
+
+def test_load_briefs_defaults_assignee_for_raw_inbox_item(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["raw"]["assignee"] == ""
+
+
+def test_search_text_joins_only_non_empty_parts():
+    b = {"title": "t", "domain": "", "goal": "", "assignee": "alice"}
+    assert build_board.search_text(b) == "t alice"
+
+
+def test_search_text_lowercases_and_orders_all_parts():
+    b = {"title": "Ttl", "domain": "Dom", "goal": "Goal", "assignee": "Alice"}
+    assert build_board.search_text(b) == "ttl dom goal alice"
+
+
+def test_search_text_of_unclaimed_brief_omits_assignee():
+    b = {"title": "t", "domain": "d", "goal": "g", "assignee": ""}
+    assert build_board.search_text(b) == "t d g"
+
+
+def test_card_renders_assignee_chip_when_claimed(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "in-progress", "claimed.md", _brief("claimed", assignee="agent-2"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="chip who">agent-2</span>' in page
+
+
+def test_card_omits_assignee_chip_when_unclaimed(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "free.md", _brief("free", title="Unclaimed"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert "chip who" not in page
+    assert "Unclaimed" in page  # the unclaimed card still renders
+
+
+def test_card_escapes_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "x.md", _brief("x", assignee="<script>"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="chip who">&lt;script&gt;</span>' in page
+
+
+def test_card_data_text_includes_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "x.md", _brief("x", title="Ttl", domain="", assignee="Alice"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert 'data-text="ttl a goal. alice"' in page
 
 
 # ── build(): the structural fixture ───────────────────────────────────────────

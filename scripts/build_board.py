@@ -66,6 +66,7 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
                 "type": fm.get("type", "todo"), "importance": fm.get("importance", "3"),
                 "autonomy": fm.get("autonomy", "needs-input"), "effort": fm.get("estimated-effort", ""),
                 "domain": fm.get("domain", ""), "parent": fm.get("parent", "") or "",
+                "assignee": fm.get("assignee", ""),
                 "goal": goal if goal != "# TODO" else "", "crit": crit,
                 "crit_done": done, "crit_total": total,
             })
@@ -77,6 +78,12 @@ AUTONOMY = {
     "needs-input": ("needs you", "Needs human input", "warn"),
     "blocked": ("blocked", "Blocked", "muted"),
 }
+
+
+def search_text(b: dict[str, Any]) -> str:
+    """Lowercased haystack for the board's client-side filter, skipping empty fields."""
+    parts = (b["title"], b["domain"], b["goal"], b["assignee"])
+    return " ".join(p for p in parts if p).lower()
 
 
 def card_html(b: dict[str, Any], child_of_epic: bool = False) -> str:
@@ -103,13 +110,14 @@ def card_html(b: dict[str, Any], child_of_epic: bool = False) -> str:
         body = f'<div class="body">{goal}{("<ul class=crit>"+crit_html+"</ul>") if crit_html else ""}</div>'
     effort = f'<span class="chip eff">{html.escape(b["effort"])}</span>' if b["effort"].strip() else ""
     domain = f'<span class="chip dom">{html.escape(b["domain"])}</span>' if b["domain"] else ""
-    return f'''<div class="card {('child' if child_of_epic else '')}" data-autonomy="{b['autonomy']}" data-text="{html.escape((b['title']+' '+b['domain']+' '+b['goal']).lower())}">
+    who = f'<span class="chip who">{html.escape(b["assignee"])}</span>' if b["assignee"] else ""
+    return f'''<div class="card {('child' if child_of_epic else '')}" data-autonomy="{b['autonomy']}" data-text="{html.escape(search_text(b))}">
   <div class="head" onclick="this.parentNode.classList.toggle('open')">
     <span class="pri p{p}">P{p}</span>
     <span class="title">{html.escape(b['title'])}</span>
     <span class="auto {a_cls}" title="{a_tip}">{a_label}</span>
   </div>
-  <div class="meta"><span class="chip id">{pid}</span>{domain}{effort}{prog}</div>
+  <div class="meta"><span class="chip id">{pid}</span>{who}{domain}{effort}{prog}</div>
   {body}
 </div>'''
 
@@ -181,6 +189,7 @@ header .sub{{color:var(--mut);font-size:12.5px;margin-top:3px}}
 .meta{{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:7px}}
 .chip{{font-size:10.5px;color:var(--mut);background:#20242d;border:1px solid var(--line);border-radius:6px;padding:1px 7px}}
 .chip.id{{font-family:ui-monospace,Menlo,monospace;color:#7d8694}}
+.chip.who{{color:var(--accent);border-color:#33406b;background:#1b2138}}
 .body{{display:none;margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)}}
 .card.open .body{{display:block}}
 .goal{{margin:0 0 8px;color:#c9d1d9;font-size:12.5px}}
@@ -199,7 +208,7 @@ footer{{color:var(--muted);font-size:11.5px;padding:0 24px 30px;text-align:cente
   <h1>{project} <span style="color:var(--mut);font-weight:400;font-size:13px">· {total} briefs</span></h1>
   <div class="sub">Read-only view of the task queue. Source of truth is the git briefs, not this page. Generated {stamp}.</div>
   <div class="controls">
-    <input id="q" placeholder="Search title, domain, goal…" oninput="filter()">
+    <input id="q" placeholder="Search title, domain, goal, assignee…" oninput="filter()">
     <span class="btn" id="fAuto" onclick="tog('fAuto');filter()">⚡ Claude can do ({n_auto})</span>
     <span class="btn" id="fNeed" onclick="tog('fNeed');filter()">🙋 Needs you ({n_needs})</span>
     <span class="btn" onclick="document.querySelectorAll('.card').forEach(c=>c.classList.add('open'))">Expand all</span>

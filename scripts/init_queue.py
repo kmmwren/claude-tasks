@@ -32,6 +32,7 @@ due: # OPTIONAL YYYY-MM-DD hard deadline. Empty = no deadline.
 domain: # OPTIONAL category. Define the allowed set in tasks.toml [domains].
 tags: [] # OPTIONAL free-form labels, e.g. [security, depends:other-brief-id].
 parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-level.
+assignee: # OPTIONAL who (person or agent) has claimed this. Empty = unclaimed. Advisory, not a lock.
 source: # who created it: user | claude.
 blockers: [] # list of brief ids or external blockers
 related: [] # list of brief ids

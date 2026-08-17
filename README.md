@@ -98,6 +98,32 @@ stays blocked until its dependency reaches `done/`, so the queue self-unblocks a
 lands. Define your own priority-tag weights (e.g. an `urgent`/`frog` convention) under
 `[priority]` in `tasks.toml`; the base ranking is otherwise purely mechanical.
 
+### Sharing a queue: claiming with `assignee`
+
+A queue can be shared by several people and agents. Because briefs are files in git, two
+of them can pick the same brief and neither sees the other's move until someone pushes.
+The optional `assignee:` field plus one convention keeps that cheap to avoid:
+
+```yaml
+assignee: alice        # a person, an agent name, a machine — free-form
+assignee:              # empty = unclaimed
+```
+
+**The claiming convention.** Before starting work on a brief:
+
+1. `git pull` — get everyone else's claims first.
+2. Set `assignee:` to yourself and move the brief to `in-progress/`.
+3. Commit and push **that alone**, immediately, before doing any of the actual work.
+
+The point of step 3 is that your claim becomes visible to everyone else in seconds rather
+than whenever your first real commit happens to land.
+
+`assignee` is **advisory, not a lock**. Nothing enforces it: pulling first narrows the race
+window, it does not close it, and two people who claim within the same few seconds will
+still collide (git will tell you on push, and you sort it out between you). It is a
+coordination signal, not a mutex. Briefs without the field are simply unclaimed, and the
+board shows a claimed brief with an assignee chip and matches it in the search box.
+
 ## A worked example
 
 Say you're mid-way through a code review and notice the public API has no rate limiting.
