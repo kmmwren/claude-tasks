@@ -258,6 +258,11 @@ def main(argv: list[str] | None = None) -> None:
         _print_table(hits)
         return
 
+    # An assignee is one frontmatter line; a newline in it would inject further keys.
+    if a.assignee is not None and ("\n" in a.assignee or "\r" in a.assignee):
+        print("error: --assignee must be a single line (no newlines)", file=sys.stderr)
+        sys.exit(1)
+
     try:
         new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
                               assignee=a.assignee)

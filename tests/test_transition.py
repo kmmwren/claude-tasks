@@ -650,3 +650,49 @@ def test_move_claim_conflict_is_checked_under_the_lock(root, monkeypatch):
     with pytest.raises(ValueError, match="already claimed by 'alice'"):
         transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
                               today="2026-06-03")
+
+
+# --------------------------------------------------------------------------- #
+# --assignee is a single-line value (no frontmatter injection)
+# --------------------------------------------------------------------------- #
+def test_main_move_rejects_a_newline_in_assignee(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "in-progress",
+                         "--assignee", "alice\nstatus: done", "--root", str(root)])
+    assert exc.value.code == 1
+    assert "must be a single line" in capsys.readouterr().err
+    # the injection never reached the file
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+    assert not (root / "in-progress" / "rotate-the-api-key.md").exists()
+
+
+def test_main_move_rejects_a_carriage_return_in_assignee(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "in-progress",
+                         "--assignee", "alice\rbob", "--root", str(root)])
+    assert exc.value.code == 1
+    assert "must be a single line" in capsys.readouterr().err
+
+
+def test_main_move_reports_a_claim_conflict_and_exits_nonzero(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "done", "--assignee", "bob",
+                         "--root", str(root), "--today", "2026-06-03"])
+    assert exc.value.code == 1
+    assert "already claimed by 'alice'" in capsys.readouterr().err
+    assert (root / "in-progress" / "rotate-the-api-key.md").exists()
+
+
+def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(["move", "rotate-the-api-key", "ready", "--assignee", "",
+                     "--root", str(root), "--today", "2026-06-03"])
+    text = (root / "ready" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == ""
