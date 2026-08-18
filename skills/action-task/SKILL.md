@@ -39,12 +39,23 @@ the contract** — that list is what "done" means.
 - `autonomy: blocked` or listed blockers unmet → name the blocker; offer to action the
   blocker first, or do the unblocked part. Don't start the blocked work.
 
-### 4. Move it to in-progress
+### 4. Claim it and move it to in-progress
+On a shared queue, `git pull` first so you see other people's claims, then claim and move in
+one locked, committed step with `--assignee`:
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transition.py" move <id> in-progress --log "started"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transition.py" move <id> in-progress \
+  --assignee "<who is doing the work>" --log "started"
 ```
 (Commits via the shared lock automatically. Pass `--no-sync` only if you'll batch the
-commit yourself with `scripts/git_sync.py`.)
+commit yourself with `scripts/git_sync.py`. Omit `--assignee` on later transitions and the
+existing claim is left alone; pass `--assignee ""` to release it.)
+
+That commit **is** the claim: it lands before any of the actual work, so everyone else sees
+the brief is taken. If the brief is already claimed by someone else the command **fails**
+and names them, rather than taking it from them: pick a different brief rather than working
+it in parallel. If you know the claim is stale (the holder is gone), free it with
+`--assignee ""` first, then claim it. Across clones `assignee` is still advisory, not a
+lock — pulling first narrows the race, it does not close it.
 
 ### 5. Do the work — properly
 Execute against the success criteria using the right approach (TDD for code, etc.). Tick

@@ -2,7 +2,33 @@
 
 ## Unreleased
 
+### Fixed
+- **Claiming no longer overwrites someone else's claim.** `move --assignee` now reads the
+  current `assignee` under the same move lock and refuses a *different* non-empty claimant
+  instead of replacing it, closing a race where two local sessions could both report success
+  and the first could commit the second's claim. Re-claiming with the same assignee and
+  claiming an unclaimed brief are unchanged; a plain `move` still preserves the claim
+  silently; and `--assignee ""` still releases whoever holds it, which stays the documented
+  way to free a stuck brief.
+- **`--assignee` is validated as a single-line value.** A newline or carriage return in it is
+  rejected with a clear error instead of being written into the frontmatter, where it could
+  have injected further keys. A whitespace-only value normalises to a release.
+- **Inline frontmatter comments are no longer parsed as values.** Every parser
+  (`transition.py`, `prioritise.py`, `build_board.py`) shared the same gap: `assignee: #
+  OPTIONAL who has claimed this…` read back as that whole comment, so a brief copied
+  straight from `_template.md` looked *claimed by a comment*, and even populated fields like
+  `status: ready # inbox | ready | …` carried their comment into the value. Cleaning is now
+  one shared `_paths.strip_comment`. A `#` that opens the value or is spaced off from it
+  starts a comment; a `#` inside a value (`issue#42`, `[a#b]`) is kept.
+
 ### Added
+- **`assignee:` frontmatter field** — optional, free-form (person or agent), empty means
+  unclaimed. Lets several people/agents share one queue without silently picking the same
+  brief: pull, then `transition.py move <id> in-progress --assignee <who>`, which claims and
+  moves in one locked commit that lands before the work starts. Advisory coordination only,
+  **not** a lock across clones. Rendered as a chip on the board and included in its search.
+  Briefs without the field keep working unchanged, and transitions without `--assignee`
+  leave an existing claim untouched (`--assignee ""` releases it).
 - **Directed handoff** — `add_task.py` gains `--status {inbox,ready,parked}` (default
   inbox; `--ready` kept as an alias). The `handoff` skill can now route a session's items to
   a chosen lifecycle state per the user's direction (e.g. "hand off everything to parked"),

@@ -185,6 +185,57 @@ def test_update_frontmatter_leaves_body_untouched():
     assert transition.fm(out)["status"] == "done"
 
 
+def test_update_frontmatter_leaves_assignee_alone_by_default():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02")
+    assert transition.fm(out)["assignee"] == "alice"
+
+
+def test_update_frontmatter_sets_existing_assignee():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "in-progress", "2026-06-02", assignee="bob")
+    assert transition.fm(out)["assignee"] == "bob"
+
+
+def test_update_frontmatter_inserts_assignee_when_absent():
+    # briefs written before the field existed have no assignee: line at all
+    text = _brief("ready", "x", "T")
+    assert "assignee:" not in text
+    out = transition._update_frontmatter(text, "in-progress", "2026-06-02", assignee="bob")
+    assert transition.fm(out)["assignee"] == "bob"
+    assert transition.fm(out)["status"] == "in-progress"
+
+
+def test_update_frontmatter_can_release_a_claim():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "ready", "2026-06-02", assignee="")
+    assert transition.fm(out)["assignee"] == ""
+    # released as a bare key, with no trailing whitespace left behind
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == ["assignee:"]
+
+
+def test_update_frontmatter_writes_exactly_one_assignee_line():
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == ["assignee: bob"]
+
+
+def test_update_frontmatter_rewrites_only_the_first_assignee_line():
+    # a hand-edited brief can end up with a duplicate key; rewrite the first, leave the rest
+    text = _brief("ready", "x", "T").replace(
+        "parent:", "assignee: alice\nassignee: stray\nparent:")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == [
+        "assignee: bob", "assignee: stray"]
+
+
+def test_update_frontmatter_assignee_does_not_touch_body():
+    text = _brief("ready", "x", "assignee: someone in the body should survive")
+    out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
+    assert "assignee: someone in the body should survive" in out
+    assert transition.fm(out)["assignee"] == "bob"
+
+
 # --------------------------------------------------------------------------- #
 # _append_log()
 # --------------------------------------------------------------------------- #
@@ -225,6 +276,24 @@ def test_move_custom_log_message(root):
         log="ESCALATED — need the API provider login", today="2026-06-02"
     )
     assert "ESCALATED — need the API provider login" in p.read_text()
+
+
+def test_move_claims_the_brief(root):
+    p = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    fm = transition.fm(p.read_text())
+    assert fm["assignee"] == "alice"
+    assert fm["status"] == "in-progress"
+
+
+def test_move_without_assignee_leaves_the_claim_unchanged(root):
+    claimed = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    assert transition.fm(claimed.read_text())["assignee"] == "alice"
+    moved = transition.move_brief("rotate-the-api-key", "done", root, today="2026-06-03")
+    assert transition.fm(moved.read_text())["assignee"] == "alice"
 
 
 def test_move_invalid_status_raises(root):
@@ -341,6 +410,25 @@ def test_main_move_commits(root, monkeypatch, capsys):
     assert "brief(rotate-the-api-key)" in calls["msg"]
 
 
+def test_main_move_accepts_assignee_flag(root, monkeypatch):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    text = (root / "in-progress" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == "alice"
+
+
+def test_main_move_without_assignee_preserves_the_claim(root, monkeypatch):
+    # guards the CLI default: a plain move must never silently release an existing claim
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(["move", "rotate-the-api-key", "done",
+                     "--root", str(root), "--today", "2026-06-03"])
+    text = (root / "done" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == "alice"
+
+
 def test_main_move_no_sync_skips_git(root, monkeypatch):
     called = {"n": 0}
     monkeypatch.setattr(transition, "sync_commit",
@@ -421,3 +509,190 @@ def test_move_brief_lock_timeout_raises(root, monkeypatch):
     monkeypatch.setattr(transition, "repo_lock", fake_lock)
     with pytest.raises(RuntimeError, match="timed out"):
         transition.move_brief("rotate-the-api-key", "in-progress", root)
+
+
+# --------------------------------------------------------------------------- #
+# Frontmatter comment stripping (the shipped _template.md is fully commented)
+# --------------------------------------------------------------------------- #
+def test_fm_strips_an_inline_comment_from_a_populated_value():
+    parsed = transition.fm("---\nstatus: ready # ready | done\n---\n")
+    assert parsed["status"] == "ready"
+
+
+def test_fm_reads_a_comment_only_value_as_empty():
+    parsed = transition.fm("---\nassignee: # OPTIONAL who has claimed this\n---\n")
+    assert parsed["assignee"] == ""
+
+
+def test_fm_keeps_a_hash_that_is_part_of_the_value():
+    parsed = transition.fm("---\ntitle: fix issue#42\n---\n")
+    assert parsed["title"] == "fix issue#42"
+
+
+def test_fm_parses_the_shipped_template_without_comment_pollution():
+    """A brief copied from _template.md must not read as claimed-by-a-comment."""
+    import init_queue
+
+    parsed = transition.fm(init_queue.QUEUE_TEMPLATE)
+    assert parsed["assignee"] == ""
+    assert parsed["status"] == "ready"
+    assert parsed["importance"] == ""
+    assert parsed["autonomy"] == ""
+    assert parsed["due"] == ""
+    assert parsed["domain"] == ""
+    assert parsed["parent"] == ""
+    assert parsed["requires-repo"] == ""
+    assert parsed["tags"] == "[]"
+
+
+# --------------------------------------------------------------------------- #
+# Claim conflicts — serialising claims within a checkout
+# --------------------------------------------------------------------------- #
+def test_move_rejects_claiming_a_brief_someone_else_holds(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    with pytest.raises(ValueError, match="already claimed by 'alice'"):
+        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-03")
+
+
+def test_move_rejected_claim_leaves_the_brief_untouched(root):
+    claimed = transition.move_brief("rotate-the-api-key", "in-progress", root,
+                                    assignee="alice", today="2026-06-02")
+    before = claimed.read_text()
+    with contextlib.suppress(ValueError):
+        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
+                              today="2026-06-03")
+    assert claimed.read_text() == before
+    assert not (root / "done" / "rotate-the-api-key.md").exists()
+
+
+def test_move_allows_the_same_assignee_to_reclaim(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "done", root, assignee="alice",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == "alice"
+    assert transition.fm(p.read_text())["status"] == "done"
+
+
+def test_move_allows_claiming_an_unclaimed_brief(root):
+    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-02")
+    assert transition.fm(p.read_text())["assignee"] == "bob"
+
+
+def test_move_allows_releasing_someone_elses_claim(root):
+    """Releasing is the documented way to free a brief stuck under a dead claim."""
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == ""
+
+
+def test_move_can_claim_after_a_release(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
+                          today="2026-06-03")
+    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-04")
+    assert transition.fm(p.read_text())["assignee"] == "bob"
+
+
+def test_move_conflict_names_both_claimants(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    with pytest.raises(ValueError) as exc:
+        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
+                              today="2026-06-03")
+    msg = str(exc.value)
+    assert "rotate-the-api-key" in msg      # which brief
+    assert "'alice'" in msg                 # who holds it
+    assert "'bob'" in msg                   # who was refused
+    assert '--assignee ""' in msg           # how to force it free
+
+
+def test_move_ignores_a_claim_conflict_when_no_assignee_is_passed(root):
+    """A plain move must keep preserving the claim silently, not raise."""
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "done", root, today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == "alice"
+
+
+def test_move_treats_a_whitespace_only_claim_as_a_release(root):
+    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
+                          today="2026-06-02")
+    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="   ",
+                              today="2026-06-03")
+    assert transition.fm(p.read_text())["assignee"] == ""
+
+
+def test_move_claim_conflict_is_checked_under_the_lock(root, monkeypatch):
+    """The check must read the assignee inside the lock, not from a pre-lock snapshot.
+
+    Simulates the race: a first actor's claim lands after our find_brief but before we
+    take the lock. Rewriting the file from inside the lock acquisition proves the
+    conflict is detected against the current on-disk state.
+    """
+    real_lock = transition.repo_lock
+
+    @contextlib.contextmanager
+    def racing_lock(root_, **kw):
+        path = root_ / "ready" / "rotate-the-api-key.md"
+        path.write_text(path.read_text().replace("parent:", "assignee: alice\nparent:"))
+        with real_lock(root_, **kw) as acquired:
+            yield acquired
+
+    monkeypatch.setattr(transition, "repo_lock", racing_lock)
+    with pytest.raises(ValueError, match="already claimed by 'alice'"):
+        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
+                              today="2026-06-03")
+
+
+# --------------------------------------------------------------------------- #
+# --assignee is a single-line value (no frontmatter injection)
+# --------------------------------------------------------------------------- #
+def test_main_move_rejects_a_newline_in_assignee(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "in-progress",
+                         "--assignee", "alice\nstatus: done", "--root", str(root)])
+    assert exc.value.code == 1
+    assert "must be a single line" in capsys.readouterr().err
+    # the injection never reached the file
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+    assert not (root / "in-progress" / "rotate-the-api-key.md").exists()
+
+
+def test_main_move_rejects_a_carriage_return_in_assignee(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "in-progress",
+                         "--assignee", "alice\rbob", "--root", str(root)])
+    assert exc.value.code == 1
+    assert "must be a single line" in capsys.readouterr().err
+
+
+def test_main_move_reports_a_claim_conflict_and_exits_nonzero(root, monkeypatch, capsys):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "rotate-the-api-key", "done", "--assignee", "bob",
+                         "--root", str(root), "--today", "2026-06-03"])
+    assert exc.value.code == 1
+    assert "already claimed by 'alice'" in capsys.readouterr().err
+    assert (root / "in-progress" / "rotate-the-api-key.md").exists()
+
+
+def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
+    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
+                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(["move", "rotate-the-api-key", "ready", "--assignee", "",
+                     "--root", str(root), "--today", "2026-06-03"])
+    text = (root / "ready" / "rotate-the-api-key.md").read_text()
+    assert transition.fm(text)["assignee"] == ""

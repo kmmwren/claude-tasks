@@ -25,6 +25,14 @@ def test_writes_template_and_gitignore(tmp_path):
     assert (root / ".gitignore").is_file()
 
 
+def test_template_offers_optional_assignee_field(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    lines = (root / "_template.md").read_text().splitlines()
+    assignee = [ln for ln in lines if ln.startswith("assignee:")]
+    assert len(assignee) == 1
+    assert assignee[0].startswith("assignee: #"), "must ship unset (empty = unclaimed)"
+
+
 def test_empty_dirs_have_keep_files(tmp_path):
     # so the lifecycle folders survive a git commit while empty
     root = init_queue.init_queue(tmp_path / "q", name="demo")

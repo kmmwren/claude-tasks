@@ -17,6 +17,7 @@ stray run can never silently scatter folders into the wrong place.
 """
 import os
 import pathlib
+import re
 from collections.abc import Mapping
 
 TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
@@ -24,6 +25,15 @@ ENV_VAR = "CLAUDE_TASKS_DIR"
 PROJECT_MARKER = ".tasks"
 CONFIG_FILE = "tasks.toml"
 DEFAULT_ROOT = "~/tasks"
+
+# A frontmatter comment starts at a `#` that opens the value or is spaced off from it, so a
+# `#` inside a value (issue#42, [a#b]) is never mistaken for one.
+_COMMENT = re.compile(r"(?:^|\s)#.*")
+
+
+def strip_comment(value: str) -> str:
+    """Drop a frontmatter value's inline `#` comment. The shared cleaner for every parser."""
+    return _COMMENT.sub("", value).strip()
 
 
 def resolve_root(

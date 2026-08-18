@@ -278,3 +278,25 @@ def test_main_text_renders_all_flags(tmp_path, monkeypatch, capsys):
     assert "🙋" in out          # needs-you flag
     assert "⏱" in out          # lead-time flag
     assert "→1" in out          # blk unlocks one brief
+
+
+def test_fm_strips_an_inline_comment_from_a_populated_value():
+    assert prioritise.fm("---\nstatus: ready # ready | done\n---\n")["status"] == "ready"
+
+
+def test_fm_reads_a_comment_only_value_as_empty():
+    assert prioritise.fm("---\nautonomy: # full | blocked\n---\n")["autonomy"] == ""
+
+
+def test_fm_keeps_a_hash_that_is_part_of_the_value():
+    assert prioritise.fm("---\ntitle: fix issue#42\n---\n")["title"] == "fix issue#42"
+
+
+def test_fm_parses_the_shipped_template_without_comment_pollution():
+    import init_queue
+
+    parsed = prioritise.fm(init_queue.QUEUE_TEMPLATE)
+    assert parsed["assignee"] == ""
+    assert parsed["status"] == "ready"
+    assert parsed["importance"] == ""
+    assert parsed["autonomy"] == ""
