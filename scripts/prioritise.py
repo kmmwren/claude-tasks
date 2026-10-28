@@ -23,16 +23,16 @@ import argparse
 import datetime
 import json
 import pathlib
-import re
 from typing import Any
 
-from _paths import require_queue, resolve_root, strip_comment
+from _paths import require_queue, resolve_root
 from config import load_config
+from deps import Brief, fm, unmet
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
 EFFORT_DAYS = {"xs": 0.125, "s": 0.5, "m": 2, "l": 7, "xl": 14}
 UNLOCK_WEIGHT = 150
-INDEX_DIRS = ("ready", "in-progress", "parked", "done")
+INDEX_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
 
 # A context excludes briefs declaring a requires-* field it cannot satisfy.
 CONTEXT_EXCLUSIONS = {
@@ -41,29 +41,15 @@ CONTEXT_EXCLUSIONS = {
 }
 
 
-def fm(text: str) -> dict[str, str]:
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-    d: dict[str, str] = {}
-    if m:
-        for line in m.group(1).splitlines():
-            if ":" in line:
-                k, _, v = line.partition(":")
-                d[k.strip()] = strip_comment(v)
-    return d
-
-
 def _parse_tags(brief: dict[str, Any]) -> set[str]:
     raw = (brief.get("tags", "") or "").strip().strip("[]")
     return {t.strip() for t in raw.split(",") if t.strip()}
 
 
 def parse_deps(brief: dict[str, Any]) -> set[str]:
-    """Dependency ids: every token in `blockers:` plus the target of each `depends:<id>` tag."""
-    deps = set(re.findall(r"[\w-]+", brief.get("blockers", "") or ""))
-    for tag in _parse_tags(brief):
-        if tag.startswith("depends:"):
-            deps.add(tag[len("depends:"):])
-    return deps
+    """Dependency ids: `blocked_by` ids, every `blockers:` token, and each `depends:<id>` tag."""
+    b = Brief("", "", brief)
+    return b.declared_ids | b.legacy_tokens
 
 
 def is_runnable_in_context(brief: dict[str, Any], context: str) -> bool:
@@ -127,8 +113,8 @@ def is_blocked(brief: dict[str, Any], done_ids: set[str]) -> tuple[bool, list[st
     """A brief is blocked if autonomy is blocked, or any dependency is not yet `done`."""
     if brief.get("autonomy") == "blocked":
         return True, []
-    unmet = sorted(d for d in parse_deps(brief) if d not in done_ids)
-    return bool(unmet), unmet
+    pending = unmet(Brief("", "", brief), done_ids)
+    return bool(pending), pending
 
 
 def rank(root: pathlib.Path, today: datetime.date | None = None, context: str = "",

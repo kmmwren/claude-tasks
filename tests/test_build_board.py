@@ -227,3 +227,46 @@ def test_parse_frontmatter_handles_the_shipped_template():
     assert fm["assignee"] == ""
     assert fm["status"] == "ready"
     assert fm["importance"] == ""
+
+
+# ── blocked column, waiting-on chips, optional milestone progress ──────────────
+
+def test_blocked_briefs_get_their_own_column_with_the_reason(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "blocked", "w.md", _brief("w").replace("parent: \n", "parent: \nblocked_by: [dep, external:login]\n"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert "Blocked <span class=\"n\">1</span>" in page
+    assert "waiting on: dep, external:login" in page
+
+
+def test_queue_without_milestones_renders_no_milestone_strip(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "a.md", _brief("a"))
+    build_board.build(root, "demo")
+    assert 'class="ms-strip"' not in (root / "view" / "board.html").read_text()
+    assert build_board.milestone_strip(root) == ""
+
+
+def test_configured_milestones_render_progress_and_card_chip(tmp_path):
+    from tests.queue_helpers import MILESTONES, make_queue
+    root = make_queue(tmp_path, {"a": {"status": "done", "milestone": "M1"},
+                                 "b": {"milestone": "M1"}, "c": {"milestone": "M2"}},
+                      milestones=MILESTONES)
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="pct">1/2</span>' in page and '<span class="pct">0/1</span>' in page
+    assert '<span class="chip ms">M1</span>' in page
+
+
+def test_unreadable_milestones_file_degrades_to_a_notice(tmp_path):
+    from tests.queue_helpers import make_queue
+    root = make_queue(tmp_path, {"a": {}}, milestones="x = [")
+    build_board.build(root, "demo")
+    assert "cannot read milestones file" in (root / "view" / "board.html").read_text()
+
+
+def test_milestone_with_no_briefs_shows_zero_percent(tmp_path):
+    from tests.queue_helpers import MILESTONES, make_queue
+    root = make_queue(tmp_path, {}, milestones=MILESTONES)
+    assert "width:0%" in build_board.milestone_strip(root)

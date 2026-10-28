@@ -696,3 +696,63 @@ def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
                      "--root", str(root), "--today", "2026-06-03"])
     text = (root / "ready" / "rotate-the-api-key.md").read_text()
     assert transition.fm(text)["assignee"] == ""
+
+
+# --------------------------------------------------------------------------- #
+# blocked state
+# --------------------------------------------------------------------------- #
+def test_move_to_blocked_records_blockers_and_moves_the_file(root):
+    new = transition.move_brief("rotate-the-api-key", "blocked", root,
+                                blocked_by=["build-the-billing-checkout-app", "external:key vault access"],
+                                today="2026-06-02")
+    assert new == root / "blocked" / "rotate-the-api-key.md"
+    text = new.read_text()
+    assert transition.fm(text)["blocked_by"] == "[build-the-billing-checkout-app, external:key vault access]"
+    assert transition.fm(text)["status"] == "blocked"
+    assert "2026-06-02: blocked" in text
+
+
+def test_move_to_blocked_needs_a_reason(root):
+    with pytest.raises(ValueError, match="needs --blocked-by"):
+        transition.move_brief("rotate-the-api-key", "blocked", root)
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+
+
+def test_move_to_blocked_rejects_self_and_unknown_ids(root):
+    with pytest.raises(ValueError, match="by itself"):
+        transition.move_brief("rotate-the-api-key", "blocked", root,
+                              blocked_by=["rotate-the-api-key"])
+    with pytest.raises(ValueError, match="unknown blocker"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["nope"])
+
+
+def test_leaving_blocked_clears_blocked_by(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    new = transition.move_brief("rotate-the-api-key", "ready", root)
+    assert transition.fm(new.read_text())["blocked_by"] == "[]"
+
+
+def test_blocked_briefs_are_resolvable(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    assert [h["status"] for h in transition.resolve_brief("rotate api key", root)] == ["blocked"]
+
+
+def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
+    msgs = []
+    monkeypatch.setattr(transition, "sync_commit", lambda msg, r=None: msgs.append(msg))
+    dep = "build-the-billing-checkout-app"
+    transition.main(["move", "rotate-the-api-key", "blocked", "--blocked-by", dep,
+                     "--root", str(root), "--today", "2026-06-02"])
+    assert (root / "blocked" / "rotate-the-api-key.md").exists()
+    transition.main(["move", dep, "done", "--root", str(root), "--today", "2026-06-03"])
+    assert "unblocked rotate-the-api-key" in capsys.readouterr().out
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+    assert (root / "done" / f"{dep}.md").exists()
+    assert len(msgs) == 2
+
+
+def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
+    with pytest.raises(SystemExit):
+        transition.main(["move", "rotate-the-api-key", "blocked", "--root", str(root),
+                         "--no-sync"])
+    assert "needs --blocked-by" in capsys.readouterr().err

@@ -20,7 +20,7 @@ import pathlib
 import re
 from collections.abc import Mapping
 
-TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
+TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 ENV_VAR = "CLAUDE_TASKS_DIR"
 PROJECT_MARKER = ".tasks"
 CONFIG_FILE = "tasks.toml"

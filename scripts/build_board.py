@@ -17,10 +17,12 @@ from typing import Any
 from _concurrency import atomic_write
 from _paths import require_queue, resolve_root, strip_comment
 from config import load_config
+from deps import parse_list
+from milestones import MilestonesError, progress
 
-DIRS = ["inbox", "ready", "in-progress", "done", "parked"]
+DIRS = ["inbox", "ready", "in-progress", "blocked", "done", "parked"]
 COL_TITLE = {"inbox": "Inbox (raw)", "ready": "Ready", "in-progress": "In progress",
-             "done": "Done", "parked": "Parked"}
+             "blocked": "Blocked", "done": "Done", "parked": "Parked"}
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -66,7 +68,8 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
                 "type": fm.get("type", "todo"), "importance": fm.get("importance", "3"),
                 "autonomy": fm.get("autonomy", "needs-input"), "effort": fm.get("estimated-effort", ""),
                 "domain": fm.get("domain", ""), "parent": fm.get("parent", "") or "",
-                "assignee": fm.get("assignee", ""),
+                "assignee": fm.get("assignee", ""), "milestone": fm.get("milestone", ""),
+                "blocked_by": parse_list(fm.get("blocked_by", "")),
                 "goal": goal if goal != "# TODO" else "", "crit": crit,
                 "crit_done": done, "crit_total": total,
             })
@@ -111,15 +114,36 @@ def card_html(b: dict[str, Any], child_of_epic: bool = False) -> str:
     effort = f'<span class="chip eff">{html.escape(b["effort"])}</span>' if b["effort"].strip() else ""
     domain = f'<span class="chip dom">{html.escape(b["domain"])}</span>' if b["domain"] else ""
     who = f'<span class="chip who">{html.escape(b["assignee"])}</span>' if b["assignee"] else ""
+    waits = (f'<span class="chip wait">waiting on: {html.escape(", ".join(b["blocked_by"]))}</span>'
+             if b["blocked_by"] else "")
+    ms = f'<span class="chip ms">{html.escape(b["milestone"])}</span>' if b["milestone"] else ""
     return f'''<div class="card {('child' if child_of_epic else '')}" data-autonomy="{b['autonomy']}" data-text="{html.escape(search_text(b))}">
   <div class="head" onclick="this.parentNode.classList.toggle('open')">
     <span class="pri p{p}">P{p}</span>
     <span class="title">{html.escape(b['title'])}</span>
     <span class="auto {a_cls}" title="{a_tip}">{a_label}</span>
   </div>
-  <div class="meta"><span class="chip id">{pid}</span>{who}{domain}{effort}{prog}</div>
+  <div class="meta"><span class="chip id">{pid}</span>{ms}{who}{domain}{effort}{prog}</div>
+  {waits}
   {body}
 </div>'''
+
+
+def milestone_strip(root: pathlib.Path) -> str:
+    """Progress per milestone, only for a queue whose tasks.toml points at a milestones file."""
+    try:
+        rows = progress(root)
+    except MilestonesError as e:
+        return f'<div class="ms-strip"><span class="empty">{html.escape(str(e))}</span></div>'
+    if rows is None:
+        return ""
+    cells = ""
+    for m in rows:
+        pct = round(100 * m.done / m.total) if m.total else 0
+        cells += (f'<div class="ms"><b>{html.escape(m.id)}</b> {html.escape(m.title)} '
+                  f'<span class="pct">{m.done}/{m.total}</span>'
+                  f'<div class="prog"><div class="bar" style="width:{pct}%"></div></div></div>')
+    return f'<div class="ms-strip">{cells}</div>'
 
 
 def build(root: pathlib.Path, project: str = "tasks") -> None:
@@ -149,7 +173,7 @@ def build(root: pathlib.Path, project: str = "tasks") -> None:
     out_dir = root / "view"
     out_dir.mkdir(exist_ok=True)
     atomic_write(out_dir / "board.html", PAGE.format(
-        cols=cols, stamp=stamp, total=len(briefs), n_auto=n_auto, n_needs=n_needs,
+        strip=milestone_strip(root), cols=cols, stamp=stamp, total=len(briefs), n_auto=n_auto, n_needs=n_needs,
         project=html.escape(project)))
     print(f"Wrote {out_dir/'board.html'} — {len(briefs)} briefs, {n_auto} autonomy:full open, {n_needs} need you")
 
@@ -168,8 +192,8 @@ header .sub{{color:var(--mut);font-size:12.5px;margin-top:3px}}
 .controls input{{background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:13px;min-width:220px}}
 .btn{{background:var(--card);border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:7px 11px;font-size:12.5px;cursor:pointer;user-select:none}}
 .btn.on{{color:var(--ink);border-color:var(--accent);background:#1f2740}}
-.board{{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;padding:18px 24px 60px;align-items:start}}
-@media(max-width:1300px){{.board{{grid-template-columns:repeat(3,1fr)}}}}
+.board{{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;padding:18px 24px 60px;align-items:start}}
+@media(max-width:1500px){{.board{{grid-template-columns:repeat(3,1fr)}}}}
 @media(max-width:1100px){{.board{{grid-template-columns:1fr 1fr}}}}
 @media(max-width:680px){{.board{{grid-template-columns:1fr}}}}
 .col h2{{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:0 0 10px;display:flex;gap:8px;align-items:center}}
@@ -203,6 +227,10 @@ ul.crit li.done{{color:var(--ok)}}
 .up{{color:var(--accent)!important}}
 footer{{color:var(--muted);font-size:11.5px;padding:0 24px 30px;text-align:center}}
 .hide{{display:none!important}}
+.chip.wait{{color:var(--warn)}}
+.ms-strip{{display:flex;gap:14px;flex-wrap:wrap;padding:12px 24px 0}}
+.ms-strip .ms{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:200px;font-size:12.5px}}
+.ms-strip .prog{{max-width:none;margin-top:5px}}
 </style></head><body>
 <header>
   <h1>{project} <span style="color:var(--mut);font-weight:400;font-size:13px">· {total} briefs</span></h1>
@@ -215,7 +243,7 @@ footer{{color:var(--muted);font-size:11.5px;padding:0 24px 30px;text-align:cente
     <span class="btn" onclick="document.querySelectorAll('.card').forEach(c=>c.classList.remove('open'))">Collapse all</span>
   </div>
 </header>
-<div class="board">{cols}</div>
+{strip}<div class="board">{cols}</div>
 <footer>Pull-based: nothing here nags you. Ask Claude "what can you handle without me?" · Regenerate with <code>python scripts/build_board.py</code></footer>
 <script>
 let S={{fAuto:false,fNeed:false}};

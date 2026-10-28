@@ -63,3 +63,17 @@ def test_main_creates_queue_and_prints(tmp_path, capsys):
     assert "Initialised task queue" in out
     assert _paths.is_queue(tmp_path / "q")
     assert config.load_config(tmp_path / "q")["name"] == "viamain"
+
+
+def test_creates_the_blocked_folder_and_template_fields(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q")
+    assert (root / "blocked" / ".keep").exists()
+    template = (root / "_template.md").read_text()
+    assert "blocked_by:" in template and "milestone:" in template
+
+
+def test_config_documents_milestones_but_leaves_them_off(tmp_path):
+    import config
+    root = init_queue.init_queue(tmp_path / "q")
+    assert "# milestones =" in (root / "tasks.toml").read_text()
+    assert "milestones" not in config.load_config(root)
