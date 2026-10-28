@@ -26,6 +26,7 @@ flowchart TD
         ready["✅ ready/<br/>structured briefs"]
         inprog["🔨 in-progress/"]
         done["📚 done/<br/>the record"]
+        blocked["⛔ blocked/<br/>waiting on blocked_by"]
         parked["⏸️ parked/"]
     end
 
@@ -38,7 +39,8 @@ flowchart TD
     ready -->|prioritise, then action-task| inprog
     inprog --> done
     ready -.->|handoff to parked| parked
-    done -.->|unblocks dependents| ready
+    inprog -.->|waiting on something| blocked
+    blocked -->|every blocker done: unblock.py| ready
 ```
 
 A brief only moves forward when it's earned it: raw notes get **enriched** into briefs,
@@ -97,6 +99,36 @@ Dependencies are declared with `blockers: [other-id]` or a `depends:<id>` tag, a
 stays blocked until its dependency reaches `done/`, so the queue self-unblocks as work
 lands. Define your own priority-tag weights (e.g. an `urgent`/`frog` convention) under
 `[priority]` in `tasks.toml`; the base ranking is otherwise purely mechanical.
+
+### Blocked state, dependency check, optional milestones
+
+A brief that cannot proceed moves to `blocked/` with what it waits for:
+
+```
+python scripts/transition.py move <id> blocked --blocked-by other-id,external:vendor reply
+```
+
+`blocked_by` lists brief ids and/or `external:<reason>` entries (a login, a decision, a
+vendor; reasons may not contain commas). When every id is `done` and no external entry
+remains, `unblock.py` returns the brief to `ready/` with `blocked_by` cleared, releasing
+several at once in priority order. It runs automatically after `transition.py move <id>
+done`, and can be run any time (`--dry-run` to preview). An external blocker is cleared by
+hand once true: `python scripts/unblock.py resolve <id> "vendor reply"` (`--dry-run` previews it without writing).
+A brief whose last external blocker is cleared while ids or `depends:` tags are still open stays in
+`blocked/` and is released automatically once they are done.
+
+`python scripts/check_deps.py` lints the graph and exits 1 on: dependency **cycles**,
+**dangling** ids, **in-progress** briefs with unmet dependencies, blocked briefs with no
+reason, and blocked briefs that are already releasable. `blockers:` and `depends:<id>`
+keep working and take part in all of it.
+
+**Milestones are optional and owned by the project, not the queue.** Set
+`milestones = "docs/milestones.toml"` in `tasks.toml` (path relative to the directory
+holding the queue) and a brief's `milestone:` is validated against that file and the board
+shows progress per milestone. The only contract with the file is that the keys of its
+`[milestone]` table are the ids, in display order, each with an optional `title`; every
+other field is the project's. A queue without the setting behaves exactly as before.
+`python scripts/milestones.py progress --json` prints the counts.
 
 ### Sharing a queue: claiming with `assignee`
 
@@ -206,6 +238,7 @@ completion is what unblocked anything waiting on *it*.
 inbox/        raw, un-enriched captures (pre-briefs)
 ready/        enriched, executable briefs
 in-progress/  briefs being worked
+blocked/      briefs waiting on `blocked_by` (released by unblock.py)
 done/         completed briefs (kept — they are the record)
 parked/       suspended briefs
 view/         generated board.html (read-only; never hand-edited)
@@ -234,6 +267,7 @@ Everything user-specific is a *value*, not code. `tasks.toml` at the queue root:
 name = "My Queue"           # shown in the board title
 domains = ["work", "home"]  # the allowed set for a brief's `domain:`
 timezone = "UTC"
+# milestones = "docs/milestones.toml"   # optional, project-owned; see Blocked state above
 ```
 
 The engine (scripts, skills, board) is identical for everyone; only the config differs.

@@ -15,7 +15,7 @@ def test_public_constants_are_the_documented_contract():
     assert _paths.PROJECT_MARKER == ".tasks"
     assert _paths.DEFAULT_ROOT == "~/tasks"
     assert _paths.CONFIG_FILE == "tasks.toml"
-    assert _paths.TASK_DIRS == ("inbox", "ready", "in-progress", "done", "parked")
+    assert _paths.TASK_DIRS == ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
 def test_env_var_wins(tmp_path):

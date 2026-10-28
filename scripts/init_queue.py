@@ -23,7 +23,7 @@ id: # short-kebab-case, used as the filename
 title: # one-line human title
 created: # YYYY-MM-DD
 updated: # YYYY-MM-DD
-status: ready # inbox (raw, un-enriched) | ready | in-progress | done | parked
+status: ready # inbox (raw, un-enriched) | ready | in-progress | blocked | done | parked
 type: # todo | project | research | decision
 importance: # 1 (critical) | 2 (high) | 3 (medium) | 4 (low)
 autonomy: # full | needs-input | blocked
@@ -34,7 +34,9 @@ tags: [] # OPTIONAL free-form labels, e.g. [security, depends:other-brief-id].
 parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-level.
 assignee: # OPTIONAL who (person or agent) has claimed this. Empty = unclaimed. Advisory, not a lock.
 source: # who created it: user | claude.
-blockers: [] # list of brief ids or external blockers
+blockers: [] # list of brief ids or external blockers (original form; blocked_by is preferred)
+blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.
+milestone: # OPTIONAL id from the project's milestones file; only checked if tasks.toml sets `milestones`.
 related: [] # list of brief ids
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
 requires-local: # OPTIONAL true, when the brief needs files only on a local machine.
@@ -69,6 +71,10 @@ domains = []
 
 # Timezone for any date logic.
 timezone = "UTC"
+
+# OPTIONAL. Path (relative to the directory holding this queue) of a milestones file the
+# project owns. Unset, the queue has no milestones and `milestone:` is ignored.
+# milestones = "docs/milestones.toml"
 """
 
 GITIGNORE = """\

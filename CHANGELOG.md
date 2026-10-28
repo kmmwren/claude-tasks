@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- **A first-class `blocked/` lifecycle state.** `transition.py move <id> blocked --blocked-by
+  <ids|external:reason>` records what a brief waits for; moving it anywhere else clears the
+  list. Unknown ids and self-blocks are refused.
+- **`unblock.py`** returns blocked briefs to `ready/` once every blocker is `done`, in priority
+  order, automatically after `move ... done` and on demand. `unblock.py resolve` clears an
+  `external:` blocker.
+- **`check_deps.py`** reports dependency cycles, dangling ids, in-progress briefs with unmet
+  dependencies, reasonless blocked briefs and releasable ones.
+- **Optional, project-owned milestones.** `milestones = "<path>"` in `tasks.toml` validates a
+  brief's `milestone:` against that file and groups board progress by it; unset, nothing
+  changes. The board also gains a Blocked column showing each brief's reasons.
+
 ### Fixed
 - **Claiming no longer overwrites someone else's claim.** `move --assignee` now reads the
   current `assignee` under the same move lock and refuses a *different* non-empty claimant

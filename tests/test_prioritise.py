@@ -300,3 +300,38 @@ def test_fm_parses_the_shipped_template_without_comment_pollution():
     assert parsed["status"] == "ready"
     assert parsed["importance"] == ""
     assert parsed["autonomy"] == ""
+
+
+# ── blocked_by (first-class dependency form) ──────────────────────────────────
+
+def _blocked_by_brief(bid, blocked_by):
+    return _brief(bid).replace("related: []", f"blocked_by: {blocked_by}\nrelated: []")
+
+
+def test_parse_deps_includes_blocked_by_ids_but_not_externals():
+    b = {"blocked_by": "[task-a, external:login]"}
+    assert prioritise.parse_deps(b) == {"task-a"}
+
+
+def test_external_blocker_keeps_a_brief_blocked_forever():
+    blocked, unmet = prioritise.is_blocked({"autonomy": "full", "blocked_by": "[external:login]"},
+                                           done_ids={"external:login", "x"})
+    assert blocked is True and unmet == ["external:login"]
+
+
+def test_blocked_by_dependency_counts_as_unlock_and_is_met_when_done(tmp_path):
+    root = _queue(tmp_path, [
+        ("done", "dep.md", _brief("dep", status="done")),
+        ("ready", "w.md", _blocked_by_brief("w", "[dep]")),
+    ])
+    ranked = prioritise.rank(root, today=TODAY)
+    assert ranked[0]["_blocked"] is False
+
+
+def test_blocked_folder_briefs_are_indexed_for_unlock_counts(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "dep.md", _brief("dep")),
+        ("blocked", "w.md", _blocked_by_brief("w", "[dep]")),
+    ])
+    status, unlocks = prioritise.index_queue(root)
+    assert status["w"] == "blocked" and unlocks["dep"] == 1

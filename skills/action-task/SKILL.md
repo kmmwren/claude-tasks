@@ -37,7 +37,10 @@ the contract** — that list is what "done" means.
 - `autonomy: needs-input` or an open question in Notes → this brief is waiting on the
   user. Surface the specific decision and ask it; do not silently upgrade and charge ahead.
 - `autonomy: blocked` or listed blockers unmet → name the blocker; offer to action the
-  blocker first, or do the unblocked part. Don't start the blocked work.
+  blocker first, or do the unblocked part. Don't start the blocked work. If work already
+  under way hits a blocker, park it where it is visible:
+  `transition.py move <id> blocked --blocked-by <id|external:reason>`; completing the
+  blocker with `move <blocker> done` returns it to `ready/` automatically.
 
 ### 4. Claim it and move it to in-progress
 On a shared queue, `git pull` first so you see other people's claims, then claim and move in

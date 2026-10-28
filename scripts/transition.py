@@ -30,38 +30,29 @@ import json
 import pathlib
 import re
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root, strip_comment
+from _paths import resolve_root
+from deps import fm, is_external, load_queue, parse_list
 from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
-VALID_STATUSES = ("inbox", "ready", "in-progress", "done", "parked")
+VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # Folders that actually hold briefs (inbox = raw pre-briefs, never resolvable as briefs).
-BRIEF_DIRS = ("ready", "in-progress", "parked", "done")
+BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
 # What "action a task" should consider: actionable, not raw and not already finished.
-RESOLVE_STATUSES = ("ready", "in-progress", "parked")
+RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
 # Default execution-log line per target state when the caller gives none.
 DEFAULT_LOG = {
     "in-progress": "started",
     "done": "completed",
     "parked": "parked",
+    "blocked": "blocked",
     "ready": "moved back to ready",
     "inbox": "returned to inbox",
 }
-
-
-def fm(text: str) -> dict[str, str]:
-    """Parse the YAML-ish frontmatter block into a flat dict (same shape as the other scripts)."""
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-    d: dict[str, str] = {}
-    if m:
-        for line in m.group(1).splitlines():
-            if ":" in line:
-                k, _, v = line.partition(":")
-                d[k.strip()] = strip_comment(v)
-    return d
 
 
 def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
@@ -131,12 +122,21 @@ def resolve_brief(query: str, root: pathlib.Path,
     return hits
 
 
+def _set_field(block: str, key: str, value: str) -> str:
+    """Set `key: value` in a frontmatter block, appending the line when the key is absent."""
+    line = f"{key}: {value}".rstrip()
+    block, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _: line, block, count=1)
+    return block if n else block + "\n" + line
+
+
 def _update_frontmatter(text: str, new_status: str, today: str,
-                        assignee: str | None = None) -> str:
-    """Set `status:`/`updated:` (and `assignee:` when given) in the frontmatter block only.
+                        assignee: str | None = None,
+                        blocked_by: list[str] | None = None) -> str:
+    """Set `status:`/`updated:` (plus `assignee:` and `blocked_by:` when given) in the block.
 
     `assignee=None` leaves any existing claim untouched, so briefs written before the field
-    existed keep transitioning unchanged; pass "" to release a claim.
+    existed keep transitioning unchanged; pass "" to release a claim. `blocked_by=None`
+    leaves the list alone; a list replaces it.
     """
     m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
     if not m:
@@ -145,10 +145,9 @@ def _update_frontmatter(text: str, new_status: str, today: str,
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
     if assignee is not None:
-        line = f"assignee: {assignee}".rstrip()
-        block, n = re.subn(r"(?m)^assignee:.*$", line, block, count=1)
-        if not n:
-            block = block + "\n" + line
+        block = _set_field(block, "assignee", assignee)
+    if blocked_by is not None:
+        block = _set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
     return text[: m.start(2)] + block + text[m.end(2):]
 
 
@@ -160,9 +159,21 @@ def _append_log(text: str, today: str, message: str) -> str:
     return text.rstrip("\n") + "\n\n## Execution log\n\n" + line + "\n"
 
 
+def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
+    """Refuse a self-block or a blocker id that is not a brief (externals are free text)."""
+    if brief_id in blocked_by:
+        raise ValueError(f"{brief_id!r} cannot be blocked by itself")
+    known = {b.id for b in load_queue(root)}
+    unknown = [b for b in blocked_by if not is_external(b) and b not in known]
+    if unknown:
+        raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
+
+
 def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                log: str | None = None, today: str | None = None,
-               assignee: str | None = None) -> pathlib.Path:
+               assignee: str | None = None,
+               blocked_by: list[str] | None = None,
+               only_if: Callable[[], bool] | None = None) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
@@ -175,12 +186,20 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
 
     A non-empty `assignee` is also checked against the current one under the lock and
     raises ValueError rather than stealing another actor's claim; `assignee=""` releases
-    whoever holds it. Callers commit separately via sync_commit. Returns the new path.
+    whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
+    `external:<reason>`) so a blocked brief always says what it waits for; any other target
+    clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
+    left alone and ValueError is raised. Callers commit separately via sync_commit.
+    Returns the new path.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")
     if assignee is not None:
         assignee = assignee.strip()  # a whitespace-only claim is a release, not a claimant
+    if new_status == "blocked" and not blocked_by:
+        raise ValueError("moving to blocked needs --blocked-by (brief ids or external:<reason>)")
+    blocked_by = (blocked_by or []) if new_status == "blocked" else []
+    _check_blockers(brief_id, blocked_by, root)
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
@@ -197,6 +216,8 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
             raise ValueError(
                 f"no brief with id {brief_id!r} (claimed by another actor)"
             )
+        if only_if is not None and not only_if():
+            raise ValueError(f"{brief_id!r} changed while waiting for the lock; not moved")
         text = path.read_text()
         if assignee:
             held = fm(text).get("assignee", "")
@@ -206,7 +227,8 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                     f"to {assignee!r}. Coordinate with them, or release it first with "
                     f'--assignee "".'
                 )
-        text = _update_frontmatter(text, new_status, today, assignee=assignee)
+        text = _update_frontmatter(text, new_status, today, assignee=assignee,
+                                   blocked_by=blocked_by)
         text = _append_log(text, today, message)
         new_path = root / new_status / f"{brief_id}.md"
         atomic_write(new_path, text)
@@ -237,6 +259,8 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--log", default=None, help="execution-log line (default per target state)")
     m.add_argument("--assignee", default=None,
                    help="claim the brief for someone (person or agent); '' releases it")
+    m.add_argument("--blocked-by", default=None,
+                   help="comma-separated brief ids or external:<reason> (required for blocked)")
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
@@ -265,10 +289,16 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
-                              assignee=a.assignee)
+                              assignee=a.assignee, blocked_by=parse_list(a.blocked_by or ""))
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+    if a.status == "done":
+        from unblock import (
+            release_unblocked,  # unblock imports this module; defer to break the cycle
+        )
+        for released in release_unblocked(root, today=a.today):
+            print(f"unblocked {released} → ready")
     if not a.no_sync:
         sync_commit(f"brief({a.brief_id}): → {a.status}", root)
     print(f"{a.brief_id} → {a.status}: {new_path}")

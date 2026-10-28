@@ -32,7 +32,7 @@ import pathlib
 import time
 from collections.abc import Iterable, Iterator
 
-TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
+TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
 def lock_path(root: pathlib.Path) -> pathlib.Path:
