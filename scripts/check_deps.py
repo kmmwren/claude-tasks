@@ -21,7 +21,7 @@ import pathlib
 import sys
 
 from _paths import require_queue, resolve_root
-from deps import Brief, dependency_edges, load_queue, unmet
+from deps import Brief, awaits_release, dependency_edges, load_queue
 from milestones import MilestonesError, milestone_titles
 
 
@@ -80,10 +80,11 @@ def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
         if waiting:
             out.append(Problem("in-progress-unmet", b.id, ", ".join(waiting)))
     if b.status == "blocked":
-        if not b.blocked_by:
+        if not (b.blocked_by or b.declared_ids or b.legacy_tokens):
             out.append(Problem("blocked-no-reason", b.id, "blocked/ brief has no blocked_by"))
-        elif not unmet(b, done):
-            out.append(Problem("releasable", b.id, ", ".join(b.blocked_by)))
+        elif awaits_release(b, done):
+            out.append(Problem("releasable", b.id,
+                               ", ".join(b.blocked_by or sorted(b.declared_ids | b.legacy_tokens))))
     return out
 
 

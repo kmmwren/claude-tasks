@@ -109,6 +109,47 @@ def test_resolve_last_external_keeps_brief_blocked_if_a_depends_tag_is_open(tmp_
     assert (root / "blocked" / "w.md").exists()
 
 
+def test_clearing_last_external_then_finishing_the_depends_tag_releases_the_brief(tmp_path):
+    root = make_queue(tmp_path, {
+        "open": {},
+        "w": {"status": "blocked", "blocked_by": "[external:login]", "tags": "[depends:open]"}})
+    assert unblock.resolve_external(root, "w", "login", today=TODAY) is False
+    assert unblock.release_unblocked(root, today=TODAY) == []
+    (root / "ready" / "open.md").rename(root / "done" / "open.md")
+    assert unblock.release_unblocked(root, today=TODAY) == ["w"]
+    assert (root / "ready" / "w.md").exists()
+
+
+def test_dry_run_resolve_changes_nothing_and_reports_the_outcome(tmp_path):
+    root = make_queue(tmp_path, {"w": {"status": "blocked", "blocked_by": "[external:login]"}})
+    before = _read(root, "blocked", "w")
+    assert unblock.resolve_external(root, "w", "login", today=TODAY, dry_run=True) is True
+    assert _read(root, "blocked", "w") == before
+
+
+def test_cli_dry_run_resolve_is_read_only(tmp_path, capsys):
+    root = make_queue(tmp_path, {"w": {"status": "blocked", "blocked_by": "[external:login]"}})
+    before = _read(root, "blocked", "w")
+    unblock.main(["--root", str(root), "--dry-run", "resolve", "w", "login"])
+    assert "would release: w" in capsys.readouterr().out
+    assert _read(root, "blocked", "w") == before
+
+
+def test_release_rechecks_state_under_the_lock(tmp_path, monkeypatch):
+    root = make_queue(tmp_path, {
+        "dep": {"status": "done"}, "w": {"status": "blocked", "blocked_by": "[dep]"}})
+    real = unblock.releasable
+
+    def stale_then_change(r, today=None):
+        found = real(r, today)
+        text = _read(r, "blocked", "w").replace("[dep]", "[dep, external:new wait]")
+        (r / "blocked" / "w.md").write_text(text)
+        return found
+    monkeypatch.setattr(unblock, "releasable", stale_then_change)
+    assert unblock.release_unblocked(root, today=TODAY) == []
+    assert (root / "blocked" / "w.md").exists()
+
+
 def test_resolve_external_rejects_unknown_blocker_and_unknown_brief(tmp_path):
     root = make_queue(tmp_path, {"w": {"status": "blocked", "blocked_by": "[external:login]"}})
     with pytest.raises(ValueError, match="no blocker"):

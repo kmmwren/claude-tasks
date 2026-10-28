@@ -95,6 +95,12 @@ def unmet(brief: Brief, done_ids: set[str]) -> list[str]:
     return sorted({d for d in ids if d not in done_ids} | set(brief.external_blockers))
 
 
+def awaits_release(brief: Brief, done_ids: set[str]) -> bool:
+    """A blocked brief that names something to wait for, all of it now satisfied."""
+    named = brief.blocked_by or brief.declared_ids or brief.legacy_tokens
+    return bool(named) and not unmet(brief, done_ids)
+
+
 def dependency_edges(brief: Brief, known_ids: set[str]) -> set[str]:
     """Brief ids `brief` waits on: the strict forms, plus legacy words that are real ids.
 

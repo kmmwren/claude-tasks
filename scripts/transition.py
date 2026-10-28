@@ -30,6 +30,7 @@ import json
 import pathlib
 import re
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
@@ -171,7 +172,8 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
 def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                log: str | None = None, today: str | None = None,
                assignee: str | None = None,
-               blocked_by: list[str] | None = None) -> pathlib.Path:
+               blocked_by: list[str] | None = None,
+               only_if: Callable[[], bool] | None = None) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
@@ -186,7 +188,9 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     raises ValueError rather than stealing another actor's claim; `assignee=""` releases
     whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
     `external:<reason>`) so a blocked brief always says what it waits for; any other target
-    clears the list. Callers commit separately via sync_commit. Returns the new path.
+    clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
+    left alone and ValueError is raised. Callers commit separately via sync_commit.
+    Returns the new path.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")
@@ -212,6 +216,8 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
             raise ValueError(
                 f"no brief with id {brief_id!r} (claimed by another actor)"
             )
+        if only_if is not None and not only_if():
+            raise ValueError(f"{brief_id!r} changed while waiting for the lock; not moved")
         text = path.read_text()
         if assignee:
             held = fm(text).get("assignee", "")

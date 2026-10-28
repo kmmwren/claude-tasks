@@ -103,3 +103,12 @@ def test_cli_exit_codes_and_output(tmp_path, capsys):
     with pytest.raises(SystemExit):
         check_deps.main(["--root", str(bad), "--json"])
     assert json.loads(capsys.readouterr().out)[0]["kind"] == "dangling"
+
+
+def test_blocked_brief_waiting_only_on_a_finished_depends_tag_is_releasable(tmp_path):
+    root = make_queue(tmp_path, {
+        "dep": {"status": "done"},
+        "w": {"status": "blocked", "tags": "[depends:dep]"}})
+    kinds = {(p.kind, p.brief) for p in check_deps.check(root)}
+    assert ("releasable", "w") in kinds
+    assert ("blocked-no-reason", "w") not in kinds

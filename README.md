@@ -113,7 +113,9 @@ vendor; reasons may not contain commas). When every id is `done` and no external
 remains, `unblock.py` returns the brief to `ready/` with `blocked_by` cleared, releasing
 several at once in priority order. It runs automatically after `transition.py move <id>
 done`, and can be run any time (`--dry-run` to preview). An external blocker is cleared by
-hand once true: `python scripts/unblock.py resolve <id> "vendor reply"`.
+hand once true: `python scripts/unblock.py resolve <id> "vendor reply"` (`--dry-run` previews it without writing).
+A brief whose last external blocker is cleared while ids or `depends:` tags are still open stays in
+`blocked/` and is released automatically once they are done.
 
 `python scripts/check_deps.py` lints the graph and exits 1 on: dependency **cycles**,
 **dangling** ids, **in-progress** briefs with unmet dependencies, blocked briefs with no
