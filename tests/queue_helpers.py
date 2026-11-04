@@ -6,10 +6,7 @@ import init_queue
 
 def brief_text(bid: str, *, status: str = "ready", blocked_by: str = "[]", milestone: str = "",
                tags: str = "[]", blockers: str = "[]", importance: str = "3",
-               autonomy: str = "full", probed: bool = True) -> str:
-    items = [i.strip() for i in blocked_by.strip("[]").split(",") if i.strip()]
-    probes = "".join(f"blocked_probe: {n}: exit 10\n" for n, i in enumerate(items, 1)
-                     if probed and i.startswith("external:"))
+               autonomy: str = "full") -> str:
     return f"""---
 id: {bid}
 title: Title of {bid}
@@ -22,7 +19,7 @@ tags: {tags}
 blockers: {blockers}
 blocked_by: {blocked_by}
 milestone: {milestone}
-{probes}---
+---
 
 ## Goal
 

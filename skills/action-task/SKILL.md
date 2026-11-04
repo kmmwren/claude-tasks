@@ -50,7 +50,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transition.py" move <id> in-progress \
   --assignee "<who is doing the work>" --log "started"
 ```
 (Commits via the shared lock automatically. Pass `--no-sync` only if you'll batch the
-commit yourself with `scripts/git_sync.py '<message>' <id>`. Omit `--assignee` on later transitions and the
+commit yourself with `scripts/git_sync.py`. Omit `--assignee` on later transitions and the
 existing claim is left alone; pass `--assignee ""` to release it.)
 
 That commit **is** the claim: it lands before any of the actual work, so everyone else sees
@@ -75,7 +75,7 @@ Execute against the success criteria using the right approach (TDD for code, etc
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transition.py" move <id> in-progress --log "ESCALATED — <exact decision/access needed>"
   ```
   then edit the brief to set `autonomy: needs-input`, write the precise question under
-  `## Notes / open questions`, commit with `scripts/git_sync.py '<message>' <id>`, and stop. The
+  `## Notes / open questions`, commit with `scripts/git_sync.py`, and stop. The
   `ESCALATED —` spelling is exact (an autonomy tracker can grep for it).
 - **Park** (no longer worth doing now): `transition.py move <id> parked --log "<why>"`.
 

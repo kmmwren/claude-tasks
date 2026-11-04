@@ -31,7 +31,7 @@ from _paths import require_queue, resolve_root
 from deps import EXTERNAL_PREFIX, Brief, awaits_release, fm, load_queue, unmet
 from git_sync import sync_commit
 from prioritise import index_queue, score
-from transition import _append_log, _set_field, drop_blocker_lines, find_brief, move_brief
+from transition import _append_log, _set_field, find_brief, move_brief
 
 
 def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[Brief]:
@@ -101,7 +101,7 @@ def resolve_external(root: pathlib.Path, brief_id: str, reason: str,
             return frees
         header = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
         assert header is not None  # a brief with blocked_by always has frontmatter
-        block = _set_field(drop_blocker_lines(header.group(2), current.index(item) + 1), "blocked_by", remaining)
+        block = _set_field(header.group(2), "blocked_by", remaining)
         text = text[: header.start(2)] + block + text[header.end(2):]
         atomic_write(path, _append_log(text, day, f"cleared {item}"))
     if not frees:
@@ -140,8 +140,7 @@ def main(argv: list[str] | None = None) -> None:
     released += release_unblocked(root, dry_run=a.dry_run)
     changed = bool(released) or a.cmd == "resolve"
     if changed and not a.dry_run and not a.no_sync:
-        sync_commit(_commit_message(a.brief_id if a.cmd else None, released), root,
-                    ids=[*released, *([a.brief_id] if a.cmd else [])])
+        sync_commit(_commit_message(a.brief_id if a.cmd else None, released), root)
     if a.json:
         print(json.dumps({"released": released, "dry_run": a.dry_run}))
         return

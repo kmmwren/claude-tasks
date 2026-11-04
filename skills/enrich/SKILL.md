@@ -59,5 +59,4 @@ mv "$CLAUDE_TASKS_DIR/inbox/<file>.md" "$CLAUDE_TASKS_DIR/inbox/.processed/<file
 ## Inbox hygiene
 - `inbox/` items are **not briefs** — never present them as the actionable queue.
 - If inbox grows to 20+ items, flag it: "Inbox has N items — consider an enrich session."
-- After enrichment, commit all new `ready/` briefs and the `.processed/` archives together, naming every brief id involved so their moves land whole:
-  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/git_sync.py" 'enrich: <n> briefs' <raw-file-id...> <new-brief-id...>`
+- After enrichment, commit all new `ready/` briefs and the `.processed/` archives together.

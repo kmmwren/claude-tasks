@@ -112,8 +112,3 @@ def test_blocked_brief_waiting_only_on_a_finished_depends_tag_is_releasable(tmp_
     kinds = {(p.kind, p.brief) for p in check_deps.check(root)}
     assert ("releasable", "w") in kinds
     assert ("blocked-no-reason", "w") not in kinds
-
-
-def test_blocked_brief_with_external_blocker_and_no_probe_is_flagged(tmp_path):
-    root = make_queue(tmp_path, {"a": {"status": "blocked", "blocked_by": "[external:x]", "probed": False}})
-    assert [p.kind for p in check_deps.check(root)] == ["blocked-no-probe"]
