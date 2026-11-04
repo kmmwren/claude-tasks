@@ -61,9 +61,11 @@ def indexed(values: list[str]) -> dict[int, str]:
     return out
 
 
-def probe_gaps(blocked_by: list[str], probes: dict[int, str]) -> list[int]:
-    """Numbers of the `external:` blockers with no probe. A brief-id blocker resolves when that brief is done."""
-    return [i for i, b in enumerate(blocked_by, 1) if is_external(b) and i not in probes]
+def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[int]:
+    """Numbers of the `external:` blockers with no probe, or a `human` probe nobody has confirmed."""
+    probes, confirmed = indexed(repeated.get(PROBE_KEY, [])), indexed(repeated.get(CONFIRMED_KEY, []))
+    return [i for i, b in enumerate(blocked_by, 1)
+            if is_external(b) and (i not in probes or (probes[i] == HUMAN_PROBE and i not in confirmed))]
 
 
 def parse_list(raw: str) -> list[str]:
@@ -89,7 +91,7 @@ class Brief:
 
     @property
     def probe_gaps(self) -> list[int]:
-        return probe_gaps(self.blocked_by, self.probes)
+        return probe_gaps(self.blocked_by, self.repeated)
 
     @property
     def blocked_by(self) -> list[str]:

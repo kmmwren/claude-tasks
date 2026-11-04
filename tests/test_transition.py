@@ -779,3 +779,17 @@ def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
         transition.main(["move", "rotate-the-api-key", "blocked", "--root", str(root),
                          "--no-sync"])
     assert "needs --blocked-by" in capsys.readouterr().err
+
+
+def test_a_human_probe_needs_a_dated_confirmation(root):
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: human"])
+    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"],
+                                probes=["1: human"], confirmed=["1: 2026-06-02 katherine"])
+    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == ["1: 2026-06-02 katherine"]
+
+
+def test_dropping_a_middle_blocker_renumbers_later_probes_and_confirmations():
+    block = "id: a\nblocked_probe: 1: exit 10\nblocked_probe: 2: exit 10\nblocked_probe: 3: human\nblocked_confirmed: 3: 2026-06-02 k"
+    assert transition.drop_blocker_lines(block, 2).splitlines()[1:] == [
+        "blocked_probe: 1: exit 10", "blocked_probe: 2: human", "blocked_confirmed: 2: 2026-06-02 k"]
