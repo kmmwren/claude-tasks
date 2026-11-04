@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--domain", default="")
     ap.add_argument("--tags", default="")
     ap.add_argument("--parent", default="")
+    ap.add_argument("--requirements", default="",
+                    help="comma-separated requirement ids from requirements.md this brief covers")
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
     ap.add_argument("--status", choices=["inbox", "ready", "parked"], default=None,
                     help="lifecycle state to file the brief in (default: inbox)")
@@ -64,6 +66,7 @@ def main(argv: list[str] | None = None) -> None:
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
+    reqs = "[" + ", ".join(r.strip() for r in a.requirements.split(",") if r.strip()) + "]"
     crit = "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else "# TODO"
     fm = f"""---
 id: {nid}
@@ -82,6 +85,7 @@ parent: {a.parent}
 source: {a.source}
 blockers: []
 related: []
+requirements: {reqs}
 ---
 
 ## Goal

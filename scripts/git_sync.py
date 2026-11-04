@@ -62,6 +62,10 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
     another tool removed is never lost in this writer's commit. Returns False if deferred.
     """
     root = resolve_root() if root is None else root
+    # Every git call below fails silently outside a repo, which used to report a commit that never happened.
+    if _git(root, "rev-parse", "--git-dir", capture_output=True, text=True).returncode != 0:
+        print(f"  (not a git repo: {root}; brief saved on disk, nothing committed or pushed)")
+        return False
     with repo_lock(root) as acquired:
         if not acquired:
             print("  (sync deferred: lock held; new files and completed moves are safe on "

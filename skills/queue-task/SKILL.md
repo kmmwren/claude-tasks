@@ -64,3 +64,7 @@ briefs beat many thin ones.
 - Don't inflate `importance`. Default 3 unless it's genuinely urgent/strategic.
 - If you can't fill out the goal, that's fine — drop it in `inbox/` and let enrichment
   handle it. Capturing badly beats losing the idea.
+
+## Linking the session ledger to a brief
+
+For a large project (a queue in the repo's `.tasks/`), the session ledger item that tracks a brief carries `metadata.brief` (the brief's absolute path, or repo-relative plus `metadata.repo`) on its `TaskCreate`/`TaskUpdate`. The ledger item then completes only when the brief is in `done/` (locally, or on the origin default branch) with every `- [ ]` criterion ticked; the `require-evidence-on-task-complete` gate refuses the `TaskUpdate` otherwise. Small one-off work gets no brief and stays on the ledger alone; in a queue repo, completing an unlinked item only draws a nudge.

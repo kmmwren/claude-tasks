@@ -9,6 +9,11 @@ Turn this session's still-open work into queue briefs so nothing is lost when th
 stops. Over-capture into `inbox/`; the `enrich` skill filters and structures later. Do
 **not** make the user approve each item — capture quietly, then let enrichment shrink it.
 
+**Never work an item during a handoff.** No commits, pushes, PR actions, CI waits or fixes,
+even when an item looks one step from done and even after a compaction tells you to
+resume. Record its exact state and next step in the brief instead. The resume and
+open-ledger hooks detect a handoff in the transcript and say the same.
+
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
 `.tasks/` → `~/tasks` (or pass `--root <path>`).
 
@@ -24,6 +29,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   --context "<what + why + where; note it came from this session's open work>" \
   --source claude --commit
 ```
+
+Then close that ledger item (`TaskUpdate` status `completed`, `metadata.evidence` = the brief's path).
+A handoff ends this session's ownership; an item left open makes the session keep
+claiming and chasing work that now lives in the queue.
 
 ## Step 2 — The judgement layer (discussed but never tracked)
 
