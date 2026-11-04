@@ -44,6 +44,14 @@ def is_external(item: str) -> bool:
     return item.startswith(EXTERNAL_PREFIX)
 
 
+PR_HOLD = re.compile(r"^(?:[\w.-]+/[\w.-]+#\d+|split)$")
+
+
+def is_pr_hold(item: str) -> bool:
+    """An `owner/repo#n` or `split` entry written by the PR queue sync, which drops it when the PR merges."""
+    return bool(PR_HOLD.match(item))
+
+
 @dataclasses.dataclass(frozen=True)
 class Brief:
     """One brief as the dependency tools see it: its folder (status) and parsed frontmatter."""
@@ -71,7 +79,7 @@ class Brief:
     @property
     def declared_ids(self) -> set[str]:
         """Ids this brief names as dependencies in the strict forms (blocked_by, depends:)."""
-        return {b for b in self.blocked_by if not is_external(b)} | self.depends_tags
+        return {b for b in self.blocked_by if not is_external(b) and not is_pr_hold(b)} | self.depends_tags
 
     @property
     def legacy_tokens(self) -> set[str]:

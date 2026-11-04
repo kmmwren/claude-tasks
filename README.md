@@ -117,6 +117,17 @@ hand once true: `python scripts/unblock.py resolve <id> "vendor reply"` (`--dry-
 A brief whose last external blocker is cleared while ids or `depends:` tags are still open stays in
 `blocked/` and is released automatically once they are done.
 
+Raise a brief's importance from any session with `bump.py`; it only raises, and records the
+reason and time in a `## Bump` section of the brief:
+
+```
+python scripts/bump.py <ref> --importance 1 --reason "why it matters now"
+```
+
+`<ref>` is a brief id, or `<repo>#<n>` for a brief tagged `pr:<repo>#<n>` (the PR queue). The PR
+queue also writes `blocked_by: [owner/repo#n, split]` on PR briefs; those entries are not brief
+ids, are re-evaluated on every sync, and clear when the PR they name merges.
+
 `python scripts/check_deps.py` lints the graph and exits 1 on: dependency **cycles**,
 **dangling** ids, **in-progress** briefs with unmet dependencies, blocked briefs with no
 reason, and blocked briefs that are already releasable. `blockers:` and `depends:<id>`
