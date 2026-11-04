@@ -399,8 +399,8 @@ def test_main_resolve_no_match_message(root, capsys):
 def test_main_move_commits(root, monkeypatch, capsys):
     calls = {}
 
-    def fake_sync(msg, rootpath=None):
-        calls["msg"] = msg
+    def fake_sync(msg, rootpath=None, ids=()):
+        calls.update(msg=msg, ids=list(ids))
         return True
 
     monkeypatch.setattr(transition, "sync_commit", fake_sync)
@@ -408,6 +408,7 @@ def test_main_move_commits(root, monkeypatch, capsys):
                      "--root", str(root), "--today", "2026-06-02"])
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
     assert "brief(rotate-the-api-key)" in calls["msg"]
+    assert calls["ids"] == ["rotate-the-api-key"]
 
 
 def test_main_move_accepts_assignee_flag(root, monkeypatch):
@@ -762,7 +763,7 @@ def test_blocked_briefs_are_resolvable(root):
 
 def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
     msgs = []
-    monkeypatch.setattr(transition, "sync_commit", lambda msg, r=None: msgs.append(msg))
+    monkeypatch.setattr(transition, "sync_commit", lambda msg, r=None, ids=(): msgs.append(msg))
     dep = "build-the-billing-checkout-app"
     transition.main(["move", "rotate-the-api-key", "blocked", "--blocked-by", dep,
                      "--root", str(root), "--today", "2026-06-02"])

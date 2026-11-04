@@ -140,7 +140,8 @@ def main(argv: list[str] | None = None) -> None:
     released += release_unblocked(root, dry_run=a.dry_run)
     changed = bool(released) or a.cmd == "resolve"
     if changed and not a.dry_run and not a.no_sync:
-        sync_commit(_commit_message(a.brief_id if a.cmd else None, released), root)
+        sync_commit(_commit_message(a.brief_id if a.cmd else None, released), root,
+                    ids=[*released, *([a.brief_id] if a.cmd else [])])
     if a.json:
         print(json.dumps({"released": released, "dry_run": a.dry_run}))
         return

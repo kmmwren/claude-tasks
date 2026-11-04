@@ -115,7 +115,7 @@ _none_
     print(f"{status}/{nid}.md")
 
     if a.commit:
-        _sync_commit(f"brief({nid}): captured ({a.source})", root)
+        _sync_commit(f"brief({nid}): captured ({a.source})", root, ids=[nid])
 
 
 if __name__ == "__main__":

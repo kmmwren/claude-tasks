@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> None:
         for released in release_unblocked(root, today=a.today):
             print(f"unblocked {released} → ready")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root)
+        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id])
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 
