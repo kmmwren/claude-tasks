@@ -14,7 +14,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/init_queue.py" ${ARGUMENTS:-~/tasks}
 
 This creates the lifecycle folders (`inbox/ ready/ in-progress/ done/ parked/`), a
 `view/` directory, a `tasks.toml` config, a `_template.md` brief template, and a
-`.gitignore`. The presence of `tasks.toml` is what marks a directory as a queue.
+`.gitignore`, and an empty `requirements.md` register (id prefix from `--name`, or
+`--prefix`; an existing register is never overwritten). The presence of `tasks.toml` is what marks a directory as a queue.
 
 After it runs:
 
