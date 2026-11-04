@@ -243,11 +243,40 @@ done/         completed briefs (kept — they are the record)
 parked/       suspended briefs
 view/         generated board.html (read-only; never hand-edited)
 tasks.toml    per-queue config (name, domains, timezone)
+requirements.md  the requirements register (large projects; see below)
 _template.md  the brief schema
 ```
 
 A brief's `status:` always matches its folder. The board is a *view*, regenerated from the
 briefs — the briefs are the source of truth.
+
+### Requirements register (large projects)
+
+A large project's brain dump is split into atomic requirements (`PL-R001`, each with the
+user's verbatim quote and message timestamp) in `requirements.md`, and every requirement is
+covered by a brief that lists it in `requirements: [PL-R001]` with concrete `- [ ]`
+criteria. The `requirements-extract` skill does the extraction; `requirements_register.py
+append` is the only writer, so re-running on new messages appends ids and never renumbers.
+
+A project is large when it has at least 5 atomic requirements, or at least 3 that span
+several sessions or several repos. Smaller work stays on the session ledger.
+
+`requirements_check.py <queue-dir>` reads the register in the queue or, for a project's
+`.tasks/`, beside it (entry blocks or a table with a Briefs column). It exits 1 when a
+requirement has no brief, a brief cites an unknown id or has no criteria, a table row and the
+briefs disagree, or a brief in `done/` has an unticked criterion (exit 2 when there is no
+register). Wire it into a repo that holds a queue by copying
+`_paths.py`, `requirements_register.py` and `requirements_check.py` into the repo (stdlib
+only) and calling it from `make check`, which CI already runs:
+
+```make
+check: requirements-check
+requirements-check:
+	python3 scripts/requirements_check.py .tasks
+```
+
+Or call the same command as a CI step after checkout. `/tasks-init` scaffolds the empty
+register with an id prefix from `--name` (override with `--prefix`).
 
 ### Where the queue lives (root resolution)
 
