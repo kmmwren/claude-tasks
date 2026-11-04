@@ -35,7 +35,16 @@ from typing import Any
 
 from _concurrency import atomic_write, repo_lock
 from _paths import resolve_root
-from deps import CONFIRMED_KEY, PROBE_KEY, fm, fm_repeated, is_external, load_queue, parse_list, probe_gaps
+from deps import (
+    CONFIRMED_KEY,
+    PROBE_KEY,
+    fm,
+    fm_repeated,
+    is_external,
+    load_queue,
+    parse_list,
+    probe_gaps,
+)
 from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
@@ -348,14 +357,16 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+    released: list[str] = []
     if a.status == "done":
         from unblock import (
             release_unblocked,  # unblock imports this module; defer to break the cycle
         )
-        for released in release_unblocked(root, today=a.today):
-            print(f"unblocked {released} → ready")
+        released = list(release_unblocked(root, today=a.today))
+        for released_id in released:
+            print(f"unblocked {released_id} → ready")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root)
+        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 

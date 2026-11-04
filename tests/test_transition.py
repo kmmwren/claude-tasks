@@ -89,6 +89,10 @@ def test_fm_empty_on_no_frontmatter():
 # --------------------------------------------------------------------------- #
 # find_brief()
 # --------------------------------------------------------------------------- #
+def test_update_probes_leaves_text_without_frontmatter_unchanged():
+    assert transition._update_probes("no frontmatter", "ready", ["1: human"], []) == "no frontmatter"
+
+
 def test_find_brief_locates_across_folders(root):
     p = transition.find_brief("build-the-billing-checkout-app", root)
     assert p == root / "in-progress" / "build-the-billing-checkout-app.md"
@@ -399,8 +403,8 @@ def test_main_resolve_no_match_message(root, capsys):
 def test_main_move_commits(root, monkeypatch, capsys):
     calls = {}
 
-    def fake_sync(msg, rootpath=None):
-        calls["msg"] = msg
+    def fake_sync(msg, rootpath=None, ids=()):
+        calls.update(msg=msg, ids=list(ids))
         return True
 
     monkeypatch.setattr(transition, "sync_commit", fake_sync)
@@ -408,6 +412,7 @@ def test_main_move_commits(root, monkeypatch, capsys):
                      "--root", str(root), "--today", "2026-06-02"])
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
     assert "brief(rotate-the-api-key)" in calls["msg"]
+    assert calls["ids"] == ["rotate-the-api-key"]
 
 
 def test_main_move_accepts_assignee_flag(root, monkeypatch):
@@ -761,8 +766,9 @@ def test_blocked_briefs_are_resolvable(root):
 
 
 def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
-    msgs = []
-    monkeypatch.setattr(transition, "sync_commit", lambda msg, r=None: msgs.append(msg))
+    msgs, named = [], []
+    monkeypatch.setattr(transition, "sync_commit",
+                        lambda msg, r=None, ids=(): (msgs.append(msg), named.append(list(ids))))
     dep = "build-the-billing-checkout-app"
     transition.main(["move", "rotate-the-api-key", "blocked", "--blocked-by", dep,
                      "--root", str(root), "--today", "2026-06-02"])
@@ -772,6 +778,7 @@ def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
     assert (root / "ready" / "rotate-the-api-key.md").exists()
     assert (root / "done" / f"{dep}.md").exists()
     assert len(msgs) == 2
+    assert named[-1] == [dep, "rotate-the-api-key"]
 
 
 def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
