@@ -75,7 +75,7 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
-            if _git(root, "pull", "--rebase", "-q", "origin", "main").returncode != 0:
+            if _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main").returncode != 0:
                 _git(root, "rebase", "--abort", capture_output=True, text=True)
                 print("  (push deferred: remote diverged; committed locally — "
                       "next sync will push)")

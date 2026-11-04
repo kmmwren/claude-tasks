@@ -239,3 +239,27 @@ def test_cli_stages_a_named_deletion(tmp_path, monkeypatch):
     git_sync.main(["brief(mine): removed", "mine"])
 
     assert "ready/mine.md" not in committed_files(repo)
+
+
+def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "inbox", "kept-by-other-tool")
+    git(repo, "push", "-q", "origin", "main")
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(tmp_path / "remote"), str(other)], check=True)
+    git(other, "config", "user.email", "o@o.o")
+    git(other, "config", "user.name", "o")
+    (other / "inbox" / "from-other-clone.md").write_text("x\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "other clone")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "kept-by-other-tool.md").unlink()
+    (repo / "inbox" / "new-brief.md").write_text("y\n")
+
+    assert git_sync.sync_commit("add: new-brief", root=repo, ids=["new-brief"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    pushed = committed_files(repo, "origin/main")
+    assert {"inbox/new-brief.md", "inbox/from-other-clone.md",
+            "inbox/kept-by-other-tool.md"} <= pushed
+    assert not (repo / "inbox" / "kept-by-other-tool.md").exists()
