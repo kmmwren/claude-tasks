@@ -246,7 +246,9 @@ def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
     _seed_brief(repo, "inbox", "kept-by-other-tool")
     git(repo, "push", "-q", "origin", "main")
     other = tmp_path / "other"
-    subprocess.run(["git", "clone", "-q", str(tmp_path / "remote"), str(other)], check=True)
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    git(other, "config", "commit.gpgsign", "false")
     git(other, "config", "user.email", "o@o.o")
     git(other, "config", "user.name", "o")
     (other / "inbox" / "from-other-clone.md").write_text("x\n")
