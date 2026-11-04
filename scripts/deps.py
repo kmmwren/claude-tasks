@@ -35,6 +35,37 @@ def fm(text: str) -> dict[str, str]:
     return d
 
 
+PROBE_KEY = "blocked_probe"
+CONFIRMED_KEY = "blocked_confirmed"
+HUMAN_PROBE = "human"
+
+
+def fm_repeated(text: str) -> dict[str, list[str]]:
+    """Every frontmatter key with all its values, in order, for keys that repeat (`blocked_probe:`)."""
+    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    out: dict[str, list[str]] = {}
+    for line in (m.group(1).splitlines() if m else []):
+        if ":" in line:
+            k, _, v = line.partition(":")
+            out.setdefault(k.strip(), []).append(strip_comment(v))
+    return out
+
+
+def indexed(values: list[str]) -> dict[int, str]:
+    """`N: <text>` lines keyed by blocker number N (1-based, the position in `blocked_by`)."""
+    out: dict[int, str] = {}
+    for v in values:
+        n, _, rest = v.partition(":")
+        if n.strip().isdigit() and rest.strip():
+            out[int(n)] = rest.strip()
+    return out
+
+
+def probe_gaps(blocked_by: list[str], probes: dict[int, str]) -> list[int]:
+    """Numbers of the `external:` blockers with no probe. A brief-id blocker resolves when that brief is done."""
+    return [i for i, b in enumerate(blocked_by, 1) if is_external(b) and i not in probes]
+
+
 def parse_list(raw: str) -> list[str]:
     """Items of a `[a, b, c]` frontmatter list, in order. Reasons may not contain commas."""
     return [t.strip() for t in (raw or "").strip().strip("[]").split(",") if t.strip()]
@@ -50,6 +81,15 @@ class Brief:
     id: str
     status: str
     fields: dict[str, str]
+    repeated: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+
+    @property
+    def probes(self) -> dict[int, str]:
+        return indexed(self.repeated.get(PROBE_KEY, []))
+
+    @property
+    def probe_gaps(self) -> list[int]:
+        return probe_gaps(self.blocked_by, self.probes)
 
     @property
     def blocked_by(self) -> list[str]:
@@ -84,8 +124,9 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
     out: list[Brief] = []
     for d in BRIEF_DIRS:
         for f in sorted((root / d).glob("*.md")):
-            fields = fm(f.read_text())
-            out.append(Brief(fields.get("id", f.stem), d, fields))
+            text = f.read_text()
+            fields = fm(text)
+            out.append(Brief(fields.get("id", f.stem), d, fields, fm_repeated(text)))
     return out
 
 

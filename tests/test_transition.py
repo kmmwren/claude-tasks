@@ -704,7 +704,7 @@ def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
 def test_move_to_blocked_records_blockers_and_moves_the_file(root):
     new = transition.move_brief("rotate-the-api-key", "blocked", root,
                                 blocked_by=["build-the-billing-checkout-app", "external:key vault access"],
-                                today="2026-06-02")
+                                probes=["2: exit 10"], today="2026-06-02")
     assert new == root / "blocked" / "rotate-the-api-key.md"
     text = new.read_text()
     assert transition.fm(text)["blocked_by"] == "[build-the-billing-checkout-app, external:key vault access]"
@@ -727,13 +727,36 @@ def test_move_to_blocked_rejects_self_and_unknown_ids(root):
 
 
 def test_leaving_blocked_clears_blocked_by(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
     new = transition.move_brief("rotate-the-api-key", "ready", root)
     assert transition.fm(new.read_text())["blocked_by"] == "[]"
+    assert "blocked_probe" not in new.read_text()
+
+
+def test_move_to_blocked_without_a_probe_is_refused(root):
+    with pytest.raises(ValueError, match="no probe"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+    assert not (root / "blocked" / "rotate-the-api-key.md").exists()
+
+
+def test_a_second_external_blocker_needs_its_own_probe(root):
+    with pytest.raises(ValueError, match=r"\[2\]"):
+        transition.move_brief("rotate-the-api-key", "blocked", root,
+                              blocked_by=["external:a", "external:b"], probes=["1: exit 10"])
+
+
+def test_probes_survive_the_move_and_dropping_a_blocker_renumbers_them(root):
+    import unblock
+    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:a", "external:b"],
+                                probes=["1: exit 0", "2: exit 10"])
+    assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 0", "2: exit 10"]
+    assert unblock.resolve_external(root, "rotate-the-api-key", "a") is False
+    assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 10"]
 
 
 def test_blocked_briefs_are_resolvable(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
     assert [h["status"] for h in transition.resolve_brief("rotate api key", root)] == ["blocked"]
 
 
