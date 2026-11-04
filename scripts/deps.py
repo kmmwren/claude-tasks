@@ -86,10 +86,6 @@ class Brief:
     repeated: dict[str, list[str]] = dataclasses.field(default_factory=dict)
 
     @property
-    def probes(self) -> dict[int, str]:
-        return indexed(self.repeated.get(PROBE_KEY, []))
-
-    @property
     def probe_gaps(self) -> list[int]:
         return probe_gaps(self.blocked_by, self.repeated)
 

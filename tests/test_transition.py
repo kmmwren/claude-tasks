@@ -89,6 +89,10 @@ def test_fm_empty_on_no_frontmatter():
 # --------------------------------------------------------------------------- #
 # find_brief()
 # --------------------------------------------------------------------------- #
+def test_update_probes_leaves_text_without_frontmatter_unchanged():
+    assert transition._update_probes("no frontmatter", "ready", ["1: human"], []) == "no frontmatter"
+
+
 def test_find_brief_locates_across_folders(root):
     p = transition.find_brief("build-the-billing-checkout-app", root)
     assert p == root / "in-progress" / "build-the-billing-checkout-app.md"
