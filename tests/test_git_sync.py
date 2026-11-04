@@ -18,6 +18,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 class _FakeProc:
     def __init__(self, rc):
         self.returncode = rc
+        self.stdout = ""
 
 
 @contextlib.contextmanager
@@ -187,3 +188,54 @@ def test_sync_commits_the_named_briefs_move(tmp_path):
     files = committed_files(repo)
     assert "done/mine.md" in files
     assert "ready/mine.md" not in files
+
+
+def test_deferred_move_is_completed_by_the_next_writer(tmp_path):
+    """A move left on disk by a deferred sync lands whole when another brief syncs."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "alpha")
+    (repo / "ready" / "alpha.md").rename(repo / "done" / "alpha.md")
+    (repo / "inbox" / "beta.md").write_text("new")
+
+    git_sync.sync_commit("brief(beta): captured", root=repo, ids=["beta"])
+
+    files = committed_files(repo)
+    assert "done/alpha.md" in files
+    assert "ready/alpha.md" not in files
+
+
+def test_inbox_archive_move_lands_without_ids(tmp_path):
+    """enrich's inbox/<f>.md -> inbox/.processed/<f>.md archive is a move, not a loss."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "inbox", "raw-thought")
+    (repo / "inbox" / ".processed").mkdir()
+    (repo / "inbox" / "raw-thought.md").rename(repo / "inbox" / ".processed" / "raw-thought.md")
+
+    git_sync.sync_commit("enrich: 1 brief", root=repo)
+
+    files = committed_files(repo)
+    assert "inbox/.processed/raw-thought.md" in files
+    assert "inbox/raw-thought.md" not in files
+
+
+def test_unknown_id_warns_and_still_stages_the_valid_one(tmp_path, capsys):
+    """One unmatched id must not make git drop the other named deletions."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "mine")
+    (repo / "ready" / "mine.md").unlink()
+
+    git_sync.sync_commit("brief(mine): removed", root=repo, ids=["ghost", "mine"])
+
+    assert "ready/mine.md" not in committed_files(repo)
+    assert "'ghost'" in capsys.readouterr().out
+
+
+def test_cli_stages_a_named_deletion(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "mine")
+    (repo / "ready" / "mine.md").unlink()
+    monkeypatch.setattr(git_sync, "resolve_root", lambda: repo)
+
+    git_sync.main(["brief(mine): removed", "mine"])
+
+    assert "ready/mine.md" not in committed_files(repo)

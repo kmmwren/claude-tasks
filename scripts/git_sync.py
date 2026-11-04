@@ -29,31 +29,49 @@ def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProc
     return subprocess.run(["git", "-C", str(root), *args], **kw)
 
 
-def _brief_pathspecs(ids: Sequence[str]) -> list[str]:
-    return [f":(glob)*/{brief_id}.md" for brief_id in ids]
+def _brief_pathspec(brief_id: str) -> str:
+    return f":(glob)*/{brief_id}.md"
+
+
+def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
+    out = _git(root, "ls-files", "-z", *flags, capture_output=True, text=True).stdout
+    return [path for path in out.split("\0") if path]
+
+
+def _completed_moves(root: pathlib.Path) -> list[str]:
+    """Deleted brief paths whose filename is still tracked elsewhere: a move, not a loss."""
+    deleted = set(_tracked(root, "--deleted"))
+    surviving = {pathlib.PurePath(p).name for p in _tracked(root) if p not in deleted}
+    return [p for p in deleted if p.endswith(".md") and pathlib.PurePath(p).name in surviving]
+
+
+def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str]) -> None:
+    for brief_id in ids:
+        staged = _git(root, "add", "--all", "--", _brief_pathspec(brief_id),
+                      capture_output=True, text=True)
+        if staged.returncode != 0:
+            print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
 
 
 def sync_commit(message: str, root: pathlib.Path | None = None,
                 ids: Sequence[str] = ()) -> bool:
     """Commit queue changes under the cross-process lock and push.
 
-    New and modified files are swept in (respecting .gitignore) so a deferred write still
-    lands, but a deletion is staged only for the briefs named in `ids`: another tool's
-    uncommitted removal must never ride along in this writer's commit.
-
-    Returns True if the commit+push succeeded, False if deferred (lock timeout or remote
-    divergence). Deferred means the changes are safe on disk; the next call sweeps them in.
+    New and modified files and completed moves are swept in, so a deferred write still
+    lands; any other deletion is staged only for the briefs named in `ids`, so a brief
+    another tool removed is never lost in this writer's commit. Returns False if deferred.
     """
     root = resolve_root() if root is None else root
     with repo_lock(root) as acquired:
         if not acquired:
-            print("  (sync deferred: lock held; changes are safe on disk and will be "
-                  "committed by the next writer that acquires the lock)")
+            print("  (sync deferred: lock held; new files and completed moves are safe on "
+                  "disk and will be committed by the next writer that acquires the lock)")
             return False
         _git(root, "add", "--ignore-removal", ".")
-        if ids:
-            _git(root, "add", "--all", "--", *_brief_pathspecs(ids),
-                 capture_output=True, text=True)
+        moves = _completed_moves(root)
+        if moves:
+            _git(root, "add", "--", *moves)
+        _stage_named_briefs(root, ids)
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
