@@ -7,6 +7,7 @@ Finds, in one pass:
   dangling           a `blocked_by` / `depends:` id that names no brief
   in-progress-unmet  a brief being worked whose dependencies are not all done
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
+  blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
   releasable         a blocked brief whose blockers are all done (run unblock.py)
   unknown-milestone  a `milestone:` not in the project's milestones file (only checked when
                      tasks.toml sets `milestones`)
@@ -85,6 +86,9 @@ def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
         elif awaits_release(b, done):
             out.append(Problem("releasable", b.id,
                                ", ".join(b.blocked_by or sorted(b.declared_ids | b.legacy_tokens))))
+        out += [Problem("blocked-no-probe", b.id,
+                        f"blocker {n} ({b.blocked_by[n - 1]}) has no `blocked_probe: {n}: <command>` line")
+                for n in b.probe_gaps]
     return out
 
 

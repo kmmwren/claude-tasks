@@ -70,10 +70,11 @@ def test_add_task_appends_stdin_to_context(queue, monkeypatch):
 def test_add_task_commit_invokes_sync(queue, monkeypatch):
     calls = {}
     monkeypatch.setattr(add_task, "_sync_commit",
-                        lambda msg, root: calls.update(msg=msg, root=root))
+                        lambda msg, root, ids: calls.update(msg=msg, root=root, ids=ids))
     add_task.main(["--title", "Ship it", "--root", str(queue), "--commit"])
     assert "brief(ship-it)" in calls["msg"]
     assert calls["root"] == queue
+    assert calls["ids"] == ["ship-it"]
 
 
 def test_add_task_refuses_uninitialised_dir(tmp_path):
