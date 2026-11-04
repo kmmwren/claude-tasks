@@ -35,7 +35,16 @@ from typing import Any
 
 from _concurrency import atomic_write, repo_lock
 from _paths import resolve_root
-from deps import CONFIRMED_KEY, PROBE_KEY, fm, fm_repeated, is_external, load_queue, parse_list, probe_gaps
+from deps import (
+    CONFIRMED_KEY,
+    PROBE_KEY,
+    fm,
+    fm_repeated,
+    is_external,
+    load_queue,
+    parse_list,
+    probe_gaps,
+)
 from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
