@@ -823,7 +823,6 @@ def _reblock(root, blocked_by, **kw):
         transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=blocked_by, **kw).read_text())
 
 
-
 def test_an_unchanged_list_keeps_probes_and_a_new_probe_wins_for_its_number(root):
     _reblock(root, ["external:a", "external:b"], probes=["1: exit 10", "2: exit 10"])
     assert _reblock(root, ["external:a", "external:b"])["blocked_probe"] == ["1: exit 10", "2: exit 10"]
