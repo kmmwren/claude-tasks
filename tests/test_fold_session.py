@@ -1,4 +1,5 @@
 """Tests for fold_session.py — a session-linked queue folds its open briefs into its parent."""
+import contextlib
 import subprocess
 
 import _paths
@@ -113,3 +114,19 @@ def test_owns_repo_only_at_the_repo_top(tmp_path):
     (tmp_path / ".tasks").mkdir()
     assert git_sync.owns_repo(tmp_path)
     assert not git_sync.owns_repo(tmp_path / ".tasks")
+
+
+def test_a_lock_timeout_aborts_the_fold_with_nothing_moved(queues, monkeypatch):
+    parent, child, env = queues
+
+    @contextlib.contextmanager
+    def timed_out(root):
+        yield False
+
+    monkeypatch.setattr(fold_session, "repo_lock", timed_out)
+    with pytest.raises(SystemExit, match="lock"):
+        fold_session.SessionQueue.load(child).fold(env)
+    assert not (parent / "ready" / "a.md").exists()
+    assert (child / "ready" / "a.md").read_text().endswith("body a\n")
+    assert config.load_config(child)["session"]["lifecycle"] == "session"
+    assert _paths.binding_path("s1", env).exists()

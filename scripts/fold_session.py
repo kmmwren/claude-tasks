@@ -56,7 +56,9 @@ class SessionQueue:
 
     def fold(self, env: Mapping[str, str] | None = None) -> list[Move]:
         binding = binding_path(self.id, env)
-        with repo_lock(self.root):
+        with repo_lock(self.root) as acquired:
+            if not acquired:
+                raise SystemExit(f"Could not take the queue lock for {self.root}; nothing was folded.")
             moves = [self._move(path) for path in self.open_briefs()]
             self._mark_folded()
         binding.unlink(missing_ok=True)
