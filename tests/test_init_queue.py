@@ -77,3 +77,32 @@ def test_config_documents_milestones_but_leaves_them_off(tmp_path):
     root = init_queue.init_queue(tmp_path / "q")
     assert "# milestones =" in (root / "tasks.toml").read_text()
     assert "milestones" not in config.load_config(root)
+
+
+def _session(tmp_path):
+    parent = init_queue.init_queue(tmp_path / "parent")
+    return init_queue.SessionLink("s1", parent.resolve()), {_paths.SESSIONS_ENV: str(tmp_path / "sessions")}
+
+
+def test_session_writes_the_session_table(tmp_path):
+    link, env = _session(tmp_path)
+    root = init_queue.init_queue(tmp_path / "child", session=link, env=env)
+    session = config.load_config(root)["session"]
+    assert session == {"id": "s1", "lifecycle": "session", "fold_to": str(link.fold_to)}
+
+
+def test_session_binds_the_queue(tmp_path):
+    link, env = _session(tmp_path)
+    root = init_queue.init_queue(tmp_path / "child", session=link, env=env)
+    assert _paths.resolve_root(env={**env, _paths.SESSION_ENV: "s1"}, cwd=tmp_path) == root.resolve()
+
+
+def test_fold_to_must_be_a_queue(tmp_path):
+    link = init_queue.SessionLink("s1", tmp_path / "nowhere")
+    with pytest.raises(SystemExit, match="No task queue"):
+        init_queue.init_queue(tmp_path / "child", session=link, env={})
+
+
+def test_session_and_fold_to_go_together(tmp_path):
+    with pytest.raises(SystemExit):
+        init_queue.main([str(tmp_path / "q"), "--session", "s1"])

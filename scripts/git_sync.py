@@ -28,6 +28,12 @@ def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProc
     return subprocess.run(["git", "-C", str(root), *args], **kw)
 
 
+def owns_repo(root: pathlib.Path) -> bool:
+    """True when `root` is the top of its own git repo, so `add --all` stages only the queue."""
+    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
+    return top.returncode == 0 and pathlib.Path(top.stdout.strip()).resolve() == root.resolve()
+
+
 def sync_commit(message: str, root: pathlib.Path | None = None) -> bool:
     """Commit all queue changes under the cross-process lock and push.
 

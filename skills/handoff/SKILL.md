@@ -1,6 +1,7 @@
 ---
 name: handoff
-description: Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: "handoff", "I'm done with this session", "stop and queue what's left", "offload this session", "park this and pick it up later", "hand off everything to parked", or pastes a claude.ai artifact link and asks to hand it off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends.
+description: >-
+  Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: "handoff", "I'm done with this session", "stop and queue what's left", "offload this session", "park this and pick it up later", "hand off everything to parked", or pastes a claude.ai artifact link and asks to hand it off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends.
 ---
 
 # handoff
@@ -42,8 +43,8 @@ the session, and every step below runs the same way with these substitutions:
 
 A message that asks for both runs two handoffs, the artifact first.
 
-All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
-`.tasks/` → `~/tasks` (or pass `--root <path>`).
+All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → the queue
+bound to `$CLAUDE_CODE_SESSION_ID` → nearest `.tasks/` → `~/tasks` (or pass `--root <path>`).
 
 ## Step 0: Project mode (project work goes home, never into the generic queue)
 
@@ -70,6 +71,10 @@ For each project item, add `milestone: <id>` frontmatter when one of the returne
   `project-coordinator` skill says for that repo.
 
 If the router is absent or errors, warn in the report and file everything generically.
+
+In a session-linked queue (`[session]` in `tasks.toml`), items stay in that queue while the
+session lives; `fold_session.py` folds them into the `fold_to` queue when the session ends,
+so never move them by hand.
 
 ## Step 1 — The tracked-but-open items
 

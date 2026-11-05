@@ -135,3 +135,48 @@ def test_strip_comment_reads_a_lone_hash_as_empty():
 def test_strip_comment_keeps_a_leading_hash_value_that_is_indented():
     # a value that is nothing but a comment, however indented, is an empty value
     assert _paths.strip_comment("   # just a comment") == ""
+
+
+# --------------------------------------------------------------------------- #
+# session bindings
+# --------------------------------------------------------------------------- #
+def test_session_constants_are_the_documented_contract():
+    assert _paths.SESSION_ENV == "CLAUDE_CODE_SESSION_ID"
+    assert _paths.SESSIONS_ENV == "CLAUDE_TASKS_SESSIONS"
+    assert _paths.DEFAULT_SESSIONS == "~/.claude-tasks/sessions"
+
+
+def _bound(tmp_path, root_line):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "s1.toml").write_text(root_line)
+    return {_paths.SESSIONS_ENV: str(sessions), _paths.SESSION_ENV: "s1"}
+
+
+def test_bound_session_queue_is_used(tmp_path):
+    queue = tmp_path / "q"
+    queue.mkdir()
+    (queue / _paths.CONFIG_FILE).write_text("")
+    env = _bound(tmp_path, f'root = "{queue}"\n')
+    assert _paths.resolve_root(env=env, cwd=tmp_path) == queue
+
+
+def test_env_override_beats_the_binding(tmp_path):
+    env = _bound(tmp_path, f'root = "{tmp_path}"\n')
+    assert _paths.resolve_root(env={**env, _paths.ENV_VAR: "/x"}, cwd=tmp_path) == _paths.pathlib.Path("/x")
+
+
+@pytest.mark.parametrize("root_line", ['root = "/no/such/queue"\n', "root = [\n", "root = 3\n"])
+def test_unusable_binding_falls_through(tmp_path, root_line):
+    env = _bound(tmp_path, root_line)
+    assert _paths.resolve_root(env=env, cwd=tmp_path) == _paths.pathlib.Path(_paths.DEFAULT_ROOT).expanduser()
+
+
+def test_invalid_session_id_is_ignored(tmp_path):
+    env = {_paths.SESSION_ENV: "../etc", _paths.SESSIONS_ENV: str(tmp_path)}
+    assert _paths.session_root(env) is None
+
+
+def test_binding_path_refuses_traversal():
+    with pytest.raises(ValueError):
+        _paths.binding_path("../x", {})
