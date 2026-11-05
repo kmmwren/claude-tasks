@@ -58,10 +58,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--reason", required=True)
     ap.add_argument("--root", default=None)
     args = ap.parse_args(argv)
-    root = resolve_root(args.root)
+    root = pathlib.Path(args.root) if args.root else resolve_root()
     require_queue(root)
     print(bump(root, args.ref, args.importance, args.reason))
 
 
 if __name__ == "__main__":
-    main()
+    main()  # pragma: no cover

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: "handoff", "I'm done with this session", "stop and queue what's left", "offload this session", "park this and pick it up later", "hand off everything to parked", or pastes a claude.ai artifact link and asks to hand it off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends.
+description: "Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: \"handoff\", \"I'm done with this session\", \"stop and queue what's left\", \"offload this session\", \"park this and pick it up later\", \"hand off everything to parked\", or pastes a claude.ai artifact link and asks to hand it off, or pastes Slack message links (each optionally with her notes) and asks to hand them off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends."
 ---
 
 # handoff
@@ -35,7 +35,7 @@ script is missing or errors, carry on in-session. A session whose post-compact f
 handoff's own needs exceed its autocompact window thrashes mid-handoff, so it hands off from
 outside instead.
 
-## Input: this session, an artifact, or a session digest
+## Input: this session, an artifact, Slack links, or a session digest
 
 When her message carries a claude.ai artifact link (`claude.ai/artifact/…` or
 `claude.ai/code/artifact/…`) and asks to hand it off, the artifact is the input in place of
@@ -50,7 +50,35 @@ the session, and every step below runs the same way with these substitutions:
 - **Provenance:** each brief's `--context` opens with
   `From artifact <url> (snapshot <page date>); re-check before acting.`
 
-A message that asks for both runs two handoffs, the artifact first.
+When her message carries Slack permalinks (`https://<workspace>.slack.com/archives/...`) and
+asks to hand them off, each link is one task and the text she put beside it is what she is
+thinking about it:
+
+- **Split:** pipe her whole message to `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slack_links.py"`.
+  It returns `direction` (her text before the first link, applied to every item through
+  Directed handoff below) and one `links` entry per permalink with `channel`, `message_ts`,
+  `thread_ts` and `note` (her text after that link, up to the next one). Exit 2 means no
+  permalink was found: say so and stop.
+- **Read:** `slack_read_thread` with `channel` and `thread_ts`, and anchor on the message at
+  `message_ts`. Read that thread only; never browse the channel around it.
+- **Items:** one brief per link. Her note is the intent: it sets the title and goal and
+  outranks your reading of the thread. With no note, the task is what the message asks of
+  her; if that is unclear, file with `--autonomy needs-input`.
+- **Name:** the channel name is the `<session name>` for `router.py which` in Step 0, with
+  her note and the message text as `--text`.
+- **No ledger, no judgement layer:** Step 1 files the links without closing anything and
+  Step 2 is skipped. Step 3 greps the queue for the permalink, so a re-pasted link sharpens
+  its existing brief.
+- **Provenance:** each brief's `--context` opens with
+  `From Slack <url> (#<channel>, <message date>); re-check the thread before acting.`, then
+  `Her note: <note verbatim>`, then a summary of the thread.
+- **Unreadable link** (private channel, deleted message): file the brief from her note alone
+  with `--autonomy needs-input` and say the thread could not be read.
+- **Customer data:** a thread may carry pasted customer security data (log extracts, asset
+  rows); the brief carries conclusions, never those records.
+- **Report:** `Filed N Slack handoffs to <state>/ (M unreadable).`
+
+A message that mixes inputs runs one handoff per input, artifacts and Slack links before the session.
 
 When the prompt names a session id and a digest path (`Hand off session <sid> ("<name>") from
 its digest at <path>`), the digest is the input in place of the session:
