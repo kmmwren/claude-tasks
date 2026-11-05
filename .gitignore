@@ -12,3 +12,4 @@ htmlcov/
 mutmut-cache
 .mypy_cache/
 .ruff_cache/
+.claude/worktrees/
