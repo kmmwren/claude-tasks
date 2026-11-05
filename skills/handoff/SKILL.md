@@ -17,7 +17,7 @@ open-ledger hooks detect a handoff in the transcript and say the same.
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
 `.tasks/` → `~/tasks` (or pass `--root <path>`).
 
-## Step 0 — Project mode (project work goes home, never into the generic queue)
+## Step 0: Project mode (project work goes home, never into the generic queue)
 
 If `~/.claude/tools/project-coordinator/router.py` exists, ask it which project owns this
 session, passing the session name and the open items' text:
