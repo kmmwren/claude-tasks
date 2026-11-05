@@ -27,7 +27,7 @@ from collections.abc import Mapping
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 ENV_VAR = "CLAUDE_TASKS_DIR"
 SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
-SESSIONS_ENV = "CLAUDE_TASKS_SESSIONS"
+SESSIONS_ENV = None
 PROJECT_MARKER = ".tasks"
 CONFIG_FILE = "tasks.toml"
 DEFAULT_ROOT = "~/tasks"
