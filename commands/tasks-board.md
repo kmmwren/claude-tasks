@@ -20,3 +20,6 @@ If it reports "No task queue", the user needs to run `/tasks-init` first.
 
 After it runs, tell the user the path to `view/board.html` and offer to open it
 (`open` on macOS, `xdg-open` on Linux).
+
+A queue that holds a `project.toml` also renders as a per-project overview (outcome, health,
+milestones, rollout, structure, sources): `python scripts/project_view.py <queue-dir> > page.html`.

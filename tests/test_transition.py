@@ -89,6 +89,10 @@ def test_fm_empty_on_no_frontmatter():
 # --------------------------------------------------------------------------- #
 # find_brief()
 # --------------------------------------------------------------------------- #
+def test_update_probes_leaves_text_without_frontmatter_unchanged():
+    assert transition._update_probes("no frontmatter", "ready", ["1: human"], []) == "no frontmatter"
+
+
 def test_find_brief_locates_across_folders(root):
     p = transition.find_brief("build-the-billing-checkout-app", root)
     assert p == root / "in-progress" / "build-the-billing-checkout-app.md"
@@ -399,8 +403,8 @@ def test_main_resolve_no_match_message(root, capsys):
 def test_main_move_commits(root, monkeypatch, capsys):
     calls = {}
 
-    def fake_sync(msg, rootpath=None):
-        calls["msg"] = msg
+    def fake_sync(msg, rootpath=None, ids=()):
+        calls.update(msg=msg, ids=list(ids))
         return True
 
     monkeypatch.setattr(transition, "sync_commit", fake_sync)
@@ -408,6 +412,7 @@ def test_main_move_commits(root, monkeypatch, capsys):
                      "--root", str(root), "--today", "2026-06-02"])
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
     assert "brief(rotate-the-api-key)" in calls["msg"]
+    assert calls["ids"] == ["rotate-the-api-key"]
 
 
 def test_main_move_accepts_assignee_flag(root, monkeypatch):
@@ -704,7 +709,7 @@ def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
 def test_move_to_blocked_records_blockers_and_moves_the_file(root):
     new = transition.move_brief("rotate-the-api-key", "blocked", root,
                                 blocked_by=["build-the-billing-checkout-app", "external:key vault access"],
-                                today="2026-06-02")
+                                probes=["2: exit 10"], today="2026-06-02")
     assert new == root / "blocked" / "rotate-the-api-key.md"
     text = new.read_text()
     assert transition.fm(text)["blocked_by"] == "[build-the-billing-checkout-app, external:key vault access]"
@@ -727,19 +732,43 @@ def test_move_to_blocked_rejects_self_and_unknown_ids(root):
 
 
 def test_leaving_blocked_clears_blocked_by(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
     new = transition.move_brief("rotate-the-api-key", "ready", root)
     assert transition.fm(new.read_text())["blocked_by"] == "[]"
+    assert "blocked_probe" not in new.read_text()
+
+
+def test_move_to_blocked_without_a_probe_is_refused(root):
+    with pytest.raises(ValueError, match="no probe"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    assert (root / "ready" / "rotate-the-api-key.md").exists()
+    assert not (root / "blocked" / "rotate-the-api-key.md").exists()
+
+
+def test_a_second_external_blocker_needs_its_own_probe(root):
+    with pytest.raises(ValueError, match=r"\[2\]"):
+        transition.move_brief("rotate-the-api-key", "blocked", root,
+                              blocked_by=["external:a", "external:b"], probes=["1: exit 10"])
+
+
+def test_probes_survive_the_move_and_dropping_a_blocker_renumbers_them(root):
+    import unblock
+    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:a", "external:b"],
+                                probes=["1: exit 0", "2: exit 10"])
+    assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 0", "2: exit 10"]
+    assert unblock.resolve_external(root, "rotate-the-api-key", "a") is False
+    assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 10"]
 
 
 def test_blocked_briefs_are_resolvable(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"])
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
     assert [h["status"] for h in transition.resolve_brief("rotate api key", root)] == ["blocked"]
 
 
 def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
-    msgs = []
-    monkeypatch.setattr(transition, "sync_commit", lambda msg, r=None: msgs.append(msg))
+    msgs, named = [], []
+    monkeypatch.setattr(transition, "sync_commit",
+                        lambda msg, r=None, ids=(): (msgs.append(msg), named.append(list(ids))))
     dep = "build-the-billing-checkout-app"
     transition.main(["move", "rotate-the-api-key", "blocked", "--blocked-by", dep,
                      "--root", str(root), "--today", "2026-06-02"])
@@ -749,6 +778,7 @@ def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
     assert (root / "ready" / "rotate-the-api-key.md").exists()
     assert (root / "done" / f"{dep}.md").exists()
     assert len(msgs) == 2
+    assert named[-1] == [dep, "rotate-the-api-key"]
 
 
 def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
@@ -756,3 +786,17 @@ def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
         transition.main(["move", "rotate-the-api-key", "blocked", "--root", str(root),
                          "--no-sync"])
     assert "needs --blocked-by" in capsys.readouterr().err
+
+
+def test_a_human_probe_needs_a_dated_confirmation(root):
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: human"])
+    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"],
+                                probes=["1: human"], confirmed=["1: 2026-06-02 katherine"])
+    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == ["1: 2026-06-02 katherine"]
+
+
+def test_dropping_a_middle_blocker_renumbers_later_probes_and_confirmations():
+    block = "id: a\nblocked_probe: 1: exit 10\nblocked_probe: 2: exit 10\nblocked_probe: 3: human\nblocked_confirmed: 3: 2026-06-02 k"
+    assert transition.drop_blocker_lines(block, 2).splitlines()[1:] == [
+        "blocked_probe: 1: exit 10", "blocked_probe: 2: human", "blocked_confirmed: 2: 2026-06-02 k"]

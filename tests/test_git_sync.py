@@ -1,9 +1,8 @@
 """
 Tests for git_sync.sync_commit staging scope.
 
-sync_commit stages the whole working tree (`git add --all`, respecting .gitignore), so a
-root-level file or a new top-level dir is committed rather than silently left dirty — the
-self-healing sweep these tests pin.
+sync_commit sweeps new and modified files (respecting .gitignore) so a deferred write
+still lands, and stages a deletion only for the briefs the caller names.
 """
 import contextlib
 import pathlib
@@ -19,6 +18,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 class _FakeProc:
     def __init__(self, rc):
         self.returncode = rc
+        self.stdout = ""
 
 
 @contextlib.contextmanager
@@ -151,6 +151,117 @@ def test_main_usage_error_exits_1(capsys):
 
 def test_main_passes_message_to_sync_commit(monkeypatch):
     seen = {}
-    monkeypatch.setattr(git_sync, "sync_commit", lambda msg: seen.setdefault("msg", msg))
-    git_sync.main(["a commit message"])
-    assert seen["msg"] == "a commit message"
+    monkeypatch.setattr(git_sync, "sync_commit",
+                        lambda msg, ids: seen.update(msg=msg, ids=list(ids)))
+    git_sync.main(["a commit message", "brief-a"])
+    assert seen == {"msg": "a commit message", "ids": ["brief-a"]}
+
+
+def _seed_brief(repo, status, brief_id):
+    (repo / status / f"{brief_id}.md").write_text(brief_id)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", f"seed {brief_id}")
+
+
+def test_sync_leaves_another_tools_deletion_unstaged(tmp_path):
+    """A brief another tool removed but never committed stays tracked: no silent loss."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "theirs")
+    (repo / "ready" / "theirs.md").unlink()
+    (repo / "inbox" / "mine.md").write_text("new")
+
+    git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"])
+
+    files = committed_files(repo)
+    assert "inbox/mine.md" in files
+    assert "ready/theirs.md" in files
+
+
+def test_sync_commits_the_named_briefs_move(tmp_path):
+    """The caller's own transition (old path removed, new path written) lands whole."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "mine")
+    (repo / "ready" / "mine.md").rename(repo / "done" / "mine.md")
+
+    git_sync.sync_commit("brief(mine): → done", root=repo, ids=["mine"])
+
+    files = committed_files(repo)
+    assert "done/mine.md" in files
+    assert "ready/mine.md" not in files
+
+
+def test_deferred_move_is_completed_by_the_next_writer(tmp_path):
+    """A move left on disk by a deferred sync lands whole when another brief syncs."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "alpha")
+    (repo / "ready" / "alpha.md").rename(repo / "done" / "alpha.md")
+    (repo / "inbox" / "beta.md").write_text("new")
+
+    git_sync.sync_commit("brief(beta): captured", root=repo, ids=["beta"])
+
+    files = committed_files(repo)
+    assert "done/alpha.md" in files
+    assert "ready/alpha.md" not in files
+
+
+def test_inbox_archive_move_lands_without_ids(tmp_path):
+    """enrich's inbox/<f>.md -> inbox/.processed/<f>.md archive is a move, not a loss."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "inbox", "raw-thought")
+    (repo / "inbox" / ".processed").mkdir()
+    (repo / "inbox" / "raw-thought.md").rename(repo / "inbox" / ".processed" / "raw-thought.md")
+
+    git_sync.sync_commit("enrich: 1 brief", root=repo)
+
+    files = committed_files(repo)
+    assert "inbox/.processed/raw-thought.md" in files
+    assert "inbox/raw-thought.md" not in files
+
+
+def test_unknown_id_warns_and_still_stages_the_valid_one(tmp_path, capsys):
+    """One unmatched id must not make git drop the other named deletions."""
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "mine")
+    (repo / "ready" / "mine.md").unlink()
+
+    git_sync.sync_commit("brief(mine): removed", root=repo, ids=["ghost", "mine"])
+
+    assert "ready/mine.md" not in committed_files(repo)
+    assert "'ghost'" in capsys.readouterr().out
+
+
+def test_cli_stages_a_named_deletion(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "mine")
+    (repo / "ready" / "mine.md").unlink()
+    monkeypatch.setattr(git_sync, "resolve_root", lambda: repo)
+
+    git_sync.main(["brief(mine): removed", "mine"])
+
+    assert "ready/mine.md" not in committed_files(repo)
+
+
+def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "inbox", "kept-by-other-tool")
+    git(repo, "push", "-q", "origin", "main")
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    git(other, "config", "commit.gpgsign", "false")
+    git(other, "config", "user.email", "o@o.o")
+    git(other, "config", "user.name", "o")
+    (other / "inbox" / "from-other-clone.md").write_text("x\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "other clone")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "kept-by-other-tool.md").unlink()
+    (repo / "inbox" / "new-brief.md").write_text("y\n")
+
+    assert git_sync.sync_commit("add: new-brief", root=repo, ids=["new-brief"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    pushed = committed_files(repo, "origin/main")
+    assert {"inbox/new-brief.md", "inbox/from-other-clone.md",
+            "inbox/kept-by-other-tool.md"} <= pushed
+    assert not (repo / "inbox" / "kept-by-other-tool.md").exists()
