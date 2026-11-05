@@ -99,6 +99,15 @@ def test_main_reports_the_count(queues, capsys, monkeypatch):
     assert "Folded 2 brief(s)" in capsys.readouterr().out
 
 
+def test_each_queue_that_owns_its_repo_is_committed(queues, monkeypatch):
+    parent, child, env = queues
+    subprocess.run(["git", "init", "-q", str(parent)], check=True)
+    commits = []
+    monkeypatch.setattr(fold_session, "sync_commit", lambda message, root: commits.append((message, root)))
+    fold_session.SessionQueue.load(child).fold(env)
+    assert commits == [("fold session s1: 2 brief(s) into parent", parent.resolve())]
+
+
 def test_owns_repo_only_at_the_repo_top(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / ".tasks").mkdir()
