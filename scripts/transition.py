@@ -166,6 +166,16 @@ def _set_repeated(block: str, key: str, values: list[str]) -> str:
     return "\n".join(kept + [f"{key}: {v}" for v in values])
 
 
+def _override_numbered(block: str, key: str, values: list[str]) -> str:
+    """Set `key:` lines for the blocker numbers in `values`, keeping the lines of every other blocker."""
+    numbers = {v.partition(":")[0].strip() for v in values}
+    kept = [ln for ln in block.splitlines()
+            if not (ln.startswith(f"{key}:") and ln.partition(":")[2].partition(":")[0].strip() in numbers)]
+    return _set_repeated("\n".join(kept), key, sorted(
+        [ln.partition(":")[2].strip() for ln in kept if ln.startswith(f"{key}:")] + values,
+        key=lambda v: int(v.partition(":")[0]) if v.partition(":")[0].strip().isdigit() else 0))
+
+
 def drop_blocker_lines(block: str, number: int) -> str:
     """Remove blocker `number`'s probe and confirmation lines and renumber the later ones down by one."""
     out = []
@@ -208,7 +218,7 @@ def _update_probes(text: str, new_status: str, probes: list[str], confirmed: lis
     else:
         for key, values in ((PROBE_KEY, probes), (CONFIRMED_KEY, confirmed)):
             if values:
-                block = _set_repeated(block, key, values)
+                block = _override_numbered(block, key, values)
     return text[: m.start(2)] + block + text[m.end(2):]
 
 
