@@ -35,7 +35,16 @@ from typing import Any
 
 from _concurrency import atomic_write, repo_lock
 from _paths import resolve_root
-from deps import fm, is_external, load_queue, parse_list
+from deps import (
+    CONFIRMED_KEY,
+    PROBE_KEY,
+    fm,
+    fm_repeated,
+    is_external,
+    load_queue,
+    parse_list,
+    probe_gaps,
+)
 from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
@@ -151,6 +160,52 @@ def _update_frontmatter(text: str, new_status: str, today: str,
     return text[: m.start(2)] + block + text[m.end(2):]
 
 
+def _set_repeated(block: str, key: str, values: list[str]) -> str:
+    """Replace every `key:` line in a frontmatter block with one line per value (none removes them)."""
+    kept = [ln for ln in block.splitlines() if not ln.startswith(f"{key}:")]
+    return "\n".join(kept + [f"{key}: {v}" for v in values])
+
+
+def drop_blocker_lines(block: str, number: int) -> str:
+    """Remove blocker `number`'s probe and confirmation lines and renumber the later ones down by one."""
+    out = []
+    for line in block.splitlines():
+        key, _, rest = line.partition(":")
+        n, _, text = rest.partition(":")
+        if key in (PROBE_KEY, CONFIRMED_KEY) and n.strip().isdigit():
+            if int(n) == number:
+                continue
+            if int(n) > number:
+                line = f"{key}: {int(n) - 1}:{text}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _update_probes(text: str, new_status: str, probes: list[str], confirmed: list[str]) -> str:
+    """Blocked briefs carry their `blocked_probe:` lines; leaving blocked/ drops them with the blocker."""
+    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    if not m:
+        return text
+    block = m.group(2)
+    if new_status != "blocked":
+        block = _set_repeated(_set_repeated(block, PROBE_KEY, []), CONFIRMED_KEY, [])
+    else:
+        for key, values in ((PROBE_KEY, probes), (CONFIRMED_KEY, confirmed)):
+            if values:
+                block = _set_repeated(block, key, values)
+    return text[: m.start(2)] + block + text[m.end(2):]
+
+
+def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
+    """Refuse a move into blocked/ while any `external:` blocker has no probe a script can run."""
+    gaps = probe_gaps(blocked_by, fm_repeated(text))
+    if gaps:
+        raise ValueError(
+            f"{brief_id!r} cannot enter blocked/: blocker(s) {gaps} have no probe. Add `blocked_probe: N: <command>` "
+            "(exit 0 = cleared, 10 = still blocked, anything else = unverified) or `blocked_probe: N: human` "
+            "with a dated `blocked_confirmed: N: <YYYY-MM-DD> <who>` line, via --probe and --confirmed.")
+
+
 def _append_log(text: str, today: str, message: str) -> str:
     """Append a dated line to the Execution log (creating the section if it is missing)."""
     line = f"{today}: {message}"
@@ -173,7 +228,8 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                log: str | None = None, today: str | None = None,
                assignee: str | None = None,
                blocked_by: list[str] | None = None,
-               only_if: Callable[[], bool] | None = None) -> pathlib.Path:
+               only_if: Callable[[], bool] | None = None,
+               probes: list[str] | None = None, confirmed: list[str] | None = None) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
@@ -229,6 +285,9 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                 )
         text = _update_frontmatter(text, new_status, today, assignee=assignee,
                                    blocked_by=blocked_by)
+        text = _update_probes(text, new_status, probes or [], confirmed or [])
+        if new_status == "blocked":
+            _require_probes(brief_id, text, blocked_by)
         text = _append_log(text, today, message)
         new_path = root / new_status / f"{brief_id}.md"
         atomic_write(new_path, text)
@@ -261,6 +320,10 @@ def main(argv: list[str] | None = None) -> None:
                    help="claim the brief for someone (person or agent); '' releases it")
     m.add_argument("--blocked-by", default=None,
                    help="comma-separated brief ids or external:<reason> (required for blocked)")
+    m.add_argument("--probe", action="append", default=None,
+                   help="`N: <command>` probe for blocker N of --blocked-by (repeatable; `N: human` needs --confirmed)")
+    m.add_argument("--confirmed", action="append", default=None,
+                   help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N is still blocked (repeatable)")
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
@@ -289,18 +352,21 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
-                              assignee=a.assignee, blocked_by=parse_list(a.blocked_by or ""))
+                              assignee=a.assignee, blocked_by=parse_list(a.blocked_by or ""), probes=a.probe,
+                              confirmed=a.confirmed)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+    released: list[str] = []
     if a.status == "done":
         from unblock import (
             release_unblocked,  # unblock imports this module; defer to break the cycle
         )
-        for released in release_unblocked(root, today=a.today):
-            print(f"unblocked {released} → ready")
+        released = list(release_unblocked(root, today=a.today))
+        for released_id in released:
+            print(f"unblocked {released_id} → ready")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root)
+        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 

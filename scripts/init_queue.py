@@ -9,13 +9,19 @@ clobber an existing queue.
 Usage:
   python scripts/init_queue.py ~/tasks --name my-project
   python scripts/init_queue.py ./.tasks --name my-repo --force
+  python scripts/init_queue.py ./.tasks --name panaseer-lite --prefix LITE
+
+It also scaffolds requirements.md, the register a large project's requirements are extracted
+into (see the requirements-extract skill). An existing register is never overwritten.
 """
 import argparse
 import os
 import pathlib
+import re
 import sys
 
 from _paths import CONFIG_FILE, TASK_DIRS, is_queue
+from requirements_register import REGISTER_FILE, stub
 
 QUEUE_TEMPLATE = """\
 ---
@@ -38,6 +44,7 @@ blockers: [] # list of brief ids or external blockers (original form; blocked_by
 blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.
 milestone: # OPTIONAL id from the project's milestones file; only checked if tasks.toml sets `milestones`.
 related: [] # list of brief ids
+requirements: [] # OPTIONAL requirement ids from requirements.md this brief covers, e.g. [LITE-R001].
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
 requires-local: # OPTIONAL true, when the brief needs files only on a local machine.
 ---
@@ -89,11 +96,27 @@ __pycache__/
 """
 
 
-def init_queue(root: str | os.PathLike[str], name: str | None = None, force: bool = False) -> pathlib.Path:
+def default_prefix(name: str) -> str:
+    """Requirement id prefix from a project name: initials of a multi-word name, else its first 4 letters."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", name) if w]
+    raw = "".join(w[0] for w in words) if len(words) > 1 else "".join(words)[:4]
+    return raw.upper().lstrip("0123456789") or "REQ"
+
+
+def init_queue(
+    root: str | os.PathLike[str],
+    name: str | None = None,
+    force: bool = False,
+    prefix: str | None = None,
+) -> pathlib.Path:
     """Scaffold a queue at `root`. Refuses an existing queue unless `force`."""
     root = pathlib.Path(root).expanduser()
     if is_queue(root) and not force:
         raise SystemExit(f"{root} is already a task queue (has {CONFIG_FILE}). Use --force to reinitialise.")
+    project = name or root.name
+    chosen = (prefix or default_prefix(project)).upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9]*", chosen):
+        raise SystemExit(f"--prefix must be letters and digits starting with a letter, got {chosen!r}")
     for d in (*TASK_DIRS, "view"):
         (root / d).mkdir(parents=True, exist_ok=True)
     for d in TASK_DIRS:
@@ -106,6 +129,9 @@ def init_queue(root: str | os.PathLike[str], name: str | None = None, force: boo
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(GITIGNORE)
+    register = root / REGISTER_FILE
+    if not register.exists():
+        register.write_text(stub(project, chosen))
     (root / CONFIG_FILE).write_text(TASKS_TOML.format(name=name or root.name))
     return root
 
@@ -114,9 +140,10 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Scaffold a new task queue.")
     ap.add_argument("root", help="where to create the queue (e.g. ~/tasks or ./.tasks)")
     ap.add_argument("--name", default=None, help="project name (default: the directory name)")
+    ap.add_argument("--prefix", default=None, help="requirement id prefix (default: from the name)")
     ap.add_argument("--force", action="store_true", help="reinitialise even if a queue exists")
     a = ap.parse_args(argv)
-    root = init_queue(a.root, name=a.name, force=a.force)
+    root = init_queue(a.root, name=a.name, force=a.force, prefix=a.prefix)
     print(f"Initialised task queue at {root}")
 
 

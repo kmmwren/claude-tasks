@@ -35,6 +35,39 @@ def fm(text: str) -> dict[str, str]:
     return d
 
 
+PROBE_KEY = "blocked_probe"
+CONFIRMED_KEY = "blocked_confirmed"
+HUMAN_PROBE = "human"
+
+
+def fm_repeated(text: str) -> dict[str, list[str]]:
+    """Every frontmatter key with all its values, in order, for keys that repeat (`blocked_probe:`)."""
+    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    out: dict[str, list[str]] = {}
+    for line in (m.group(1).splitlines() if m else []):
+        if ":" in line:
+            k, _, v = line.partition(":")
+            out.setdefault(k.strip(), []).append(strip_comment(v))
+    return out
+
+
+def indexed(values: list[str]) -> dict[int, str]:
+    """`N: <text>` lines keyed by blocker number N (1-based, the position in `blocked_by`)."""
+    out: dict[int, str] = {}
+    for v in values:
+        n, _, rest = v.partition(":")
+        if n.strip().isdigit() and rest.strip():
+            out[int(n)] = rest.strip()
+    return out
+
+
+def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[int]:
+    """Numbers of the `external:` blockers with no probe, or a `human` probe nobody has confirmed."""
+    probes, confirmed = indexed(repeated.get(PROBE_KEY, [])), indexed(repeated.get(CONFIRMED_KEY, []))
+    return [i for i, b in enumerate(blocked_by, 1)
+            if is_external(b) and (i not in probes or (probes[i] == HUMAN_PROBE and i not in confirmed))]
+
+
 def parse_list(raw: str) -> list[str]:
     """Items of a `[a, b, c]` frontmatter list, in order. Reasons may not contain commas."""
     return [t.strip() for t in (raw or "").strip().strip("[]").split(",") if t.strip()]
@@ -44,12 +77,25 @@ def is_external(item: str) -> bool:
     return item.startswith(EXTERNAL_PREFIX)
 
 
+PR_HOLD = re.compile(r"^(?:[\w.-]+/[\w.-]+#\d+|split)$")
+
+
+def is_pr_hold(item: str) -> bool:
+    """An `owner/repo#n` or `split` entry written by the PR queue sync, which drops it when the PR merges."""
+    return bool(PR_HOLD.match(item))
+
+
 @dataclasses.dataclass(frozen=True)
 class Brief:
     """One brief as the dependency tools see it: its folder (status) and parsed frontmatter."""
     id: str
     status: str
     fields: dict[str, str]
+    repeated: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+
+    @property
+    def probe_gaps(self) -> list[int]:
+        return probe_gaps(self.blocked_by, self.repeated)
 
     @property
     def blocked_by(self) -> list[str]:
@@ -71,7 +117,7 @@ class Brief:
     @property
     def declared_ids(self) -> set[str]:
         """Ids this brief names as dependencies in the strict forms (blocked_by, depends:)."""
-        return {b for b in self.blocked_by if not is_external(b)} | self.depends_tags
+        return {b for b in self.blocked_by if not is_external(b) and not is_pr_hold(b)} | self.depends_tags
 
     @property
     def legacy_tokens(self) -> set[str]:
@@ -84,8 +130,9 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
     out: list[Brief] = []
     for d in BRIEF_DIRS:
         for f in sorted((root / d).glob("*.md")):
-            fields = fm(f.read_text())
-            out.append(Brief(fields.get("id", f.stem), d, fields))
+            text = f.read_text()
+            fields = fm(text)
+            out.append(Brief(fields.get("id", f.stem), d, fields, fm_repeated(text)))
     return out
 
 
