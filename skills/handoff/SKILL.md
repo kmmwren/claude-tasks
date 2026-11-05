@@ -14,6 +14,17 @@ even when an item looks one step from done and even after a compaction tells you
 resume. Record its exact state and next step in the brief instead. The resume and
 open-ledger hooks detect a handoff in the transcript and say the same.
 
+## Long-running sessions: capture, keep the ledger, keep running
+
+First run `python3 ~/.claude/hooks/lib/long_running.py check`. Exit 0 means this session is on the
+shortlist in `~/.claude/long-running-sessions.json`. For a long-running session a handoff is a capture
+check, not an ending: do Steps 1 to 3 so every open item has a queue brief, but **never close a ledger
+item** (record the brief path in its `metadata.brief` instead), and **keep working** the items
+afterwards; the "never work an item" rule above does not apply. The Step 4 report names how many
+briefs were filed or sharpened and that the session carries on.
+
+Add a session to the shortlist with `long_running.py add <session-id> "<name>"`. There are only a few.
+
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
 `.tasks/` → `~/tasks` (or pass `--root <path>`).
 
@@ -30,7 +41,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   --source claude --commit
 ```
 
-Then close that ledger item (`TaskUpdate` status `completed`, `metadata.evidence` = the brief's path).
+Then close that ledger item (`TaskUpdate` status `completed`, `metadata.evidence` = the brief's path),
+unless the session is long-running, where the item stays open with `metadata.brief` = the path.
 A handoff ends this session's ownership; an item left open makes the session keep
 claiming and chasing work that now lives in the queue.
 
