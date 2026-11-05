@@ -28,6 +28,32 @@ Add a session to the shortlist with `long_running.py add <session-id> "<name>"`.
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
 `.tasks/` → `~/tasks` (or pass `--root <path>`).
 
+## Step 0 — Project mode (project work goes home, never into the generic queue)
+
+If `~/.claude/tools/project-coordinator/router.py` exists, ask it which project owns this
+session, passing the session name and the open items' text:
+
+```bash
+printf '%s' "<open items, one per line>" | \
+  python3 ~/.claude/tools/project-coordinator/router.py which "<session name>" --text -
+```
+
+An empty `project` means the session is generic: carry on with Step 1 unchanged. Otherwise
+split the items. **Project-specific** ones (about that project's code, milestones, decisions
+or deliverables) go to the project's own queue. Everything else (tooling, harness, other
+repos' chores) goes to the generic queue as usual.
+
+For each project item, add `milestone: <id>` frontmatter when one of the returned
+`milestones` fits; the project's `check_deps` validates it against its milestones file.
+
+- `queue_mode: direct`: `add_task.py --root <queue> ... --commit`.
+- `queue_mode: pr`: make a worktree of `sync_repo`, rerun `which ... --dest-root <worktree>`
+  to get the queue path inside it, file with `add_task.py --root <that queue>` (no
+  `--commit`), add the milestone frontmatter, commit in the worktree and land it as the
+  `project-coordinator` skill says for that repo.
+
+If the router is absent or errors, warn in the report and file everything generically.
+
 ## Step 1 — The tracked-but-open items
 
 List everything still open in this session's task state — your current TodoWrite /
