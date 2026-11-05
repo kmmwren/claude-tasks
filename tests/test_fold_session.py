@@ -4,6 +4,7 @@ import subprocess
 
 import _paths
 import config
+import deps
 import fold_session
 import git_sync
 import init_queue
@@ -130,3 +131,31 @@ def test_a_lock_timeout_aborts_the_fold_with_nothing_moved(queues, monkeypatch):
     assert (child / "ready" / "a.md").read_text().endswith("body a\n")
     assert config.load_config(child)["session"]["lifecycle"] == "session"
     assert _paths.binding_path("s1", env).exists()
+
+
+def test_a_bumped_brief_gets_its_id_rewritten(queues):
+    parent, child, env = queues
+    (parent / "ready" / "a.md").write_text("theirs\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert deps.fm((parent / "ready" / "a-2.md").read_text())["id"] == "a-2"
+
+
+def test_deps_among_folded_briefs_follow_a_bumped_id(queues):
+    parent, child, env = queues
+    (parent / "ready" / "a.md").write_text("theirs\n")
+    (child / "blocked" / "b.md").write_text(
+        "---\nid: b\nblocked_by: [a, external:vendor]\ntags: [x, depends:a]\nblockers: waiting on a, alpha\n---\nbody b\n"
+    )
+    fold_session.SessionQueue.load(child).fold(env)
+    fields = deps.fm((parent / "blocked" / "b.md").read_text())
+    assert fields["blocked_by"] == "[a-2, external:vendor]"
+    assert fields["tags"] == "[x, depends:a-2]"
+    assert fields["blockers"] == "waiting on a-2, alpha"
+
+
+def test_a_brief_without_frontmatter_moves_unchanged_when_ids_are_bumped(queues):
+    parent, child, env = queues
+    (parent / "ready" / "a.md").write_text("theirs\n")
+    (child / "ready" / "plain.md").write_text("no frontmatter\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "ready" / "plain.md").read_text() == "no frontmatter\n"

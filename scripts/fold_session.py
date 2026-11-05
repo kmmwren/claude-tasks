@@ -20,10 +20,14 @@ from dataclasses import dataclass
 from _concurrency import atomic_write, repo_lock, reserve_name
 from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue
 from config import load_config
+from deps import fm
 from git_sync import owns_repo, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
 _STUB = re.compile(r"\A---\n(?:(?!---\n).*\n)*?moved_to:")
+_FRONTMATTER = re.compile(r"\A---\n.*?\n---", re.DOTALL)
+_WORD = re.compile(r"(?<![\w:-])[\w-]+")
+_DEPENDS_TAG = re.compile(r"(?<=depends:)[\w-]+")
 _LIFECYCLE = re.compile(r'(?m)^lifecycle\s*=\s*"session"\s*$')
 
 
@@ -59,19 +63,26 @@ class SessionQueue:
         with repo_lock(self.root) as acquired:
             if not acquired:
                 raise SystemExit(f"Could not take the queue lock for {self.root}; nothing was folded.")
-            moves = [self._move(path) for path in self.open_briefs()]
+            moves = [self._reserve(path) for path in self.open_briefs()]
+            renames = {_brief_id(m.source): m.dest.stem for m in moves if m.dest.stem != m.source.stem}
+            for move in moves:
+                self._move(move, renames)
             self._mark_folded()
         binding.unlink(missing_ok=True)
         self._sync(moves)
         return moves
 
-    def _move(self, source: pathlib.Path) -> Move:
+    def _reserve(self, source: pathlib.Path) -> Move:
         target = self.fold_to / source.parent.name
         name = reserve_name(target, source.stem, [self.fold_to / d for d in TASK_DIRS])
-        dest = target / f"{name}.md"
-        atomic_write(dest, source.read_text())
-        atomic_write(source, f"---\nmoved_to: {dest}\n---\n\nFolded when session {self.id} ended.\n")
-        return Move(source, dest)
+        return Move(source, target / f"{name}.md")
+
+    def _move(self, move: Move, renames: Mapping[str, str]) -> None:
+        text = move.source.read_text()
+        if renames:
+            text = _retarget(text, renames, renames.get(_brief_id(move.source)))
+        atomic_write(move.dest, text)
+        atomic_write(move.source, f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n")
 
     def _mark_folded(self) -> None:
         config = self.root / CONFIG_FILE
@@ -82,6 +93,34 @@ class SessionQueue:
         for root in (self.fold_to, self.root):
             if owns_repo(root):
                 sync_commit(message, root)
+
+
+def _brief_id(path: pathlib.Path) -> str:
+    return fm(path.read_text()).get("id", path.stem)
+
+
+def _retarget(text: str, renames: Mapping[str, str], own_id: str | None) -> str:
+    """Rewrite a brief's own `id:` and its dependency references to the ids bumped in this fold."""
+    match = _FRONTMATTER.match(text)
+    if not match:
+        return text
+    lines = [_retarget_line(line, renames, own_id) for line in match.group().split("\n")]
+    return "\n".join(lines) + text[match.end():]
+
+
+def _retarget_line(line: str, renames: Mapping[str, str], own_id: str | None) -> str:
+    key, sep, value = line.partition(":")
+    def swap(m: re.Match[str]) -> str:
+        return renames.get(m.group(), m.group())
+
+    match key.strip():
+        case "id" if own_id:
+            return f"{key}{sep} {own_id}"
+        case "blocked_by" | "blockers":
+            return f"{key}{sep}{_WORD.sub(swap, value)}"
+        case "tags":
+            return f"{key}{sep}{_DEPENDS_TAG.sub(swap, value)}"
+    return line
 
 
 def main(argv: list[str] | None = None) -> None:
