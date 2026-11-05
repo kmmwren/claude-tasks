@@ -6,16 +6,25 @@ Creates the lifecycle folders, a tasks.toml (which is what makes a directory a *
 the brief template, and a .gitignore. Idempotent only with --force, so you can't silently
 clobber an existing queue.
 
+With --session, the queue is session-linked: one long-running Claude Code session owns it,
+the session is bound to it (so resolve_root finds it), and fold_session.py folds its open
+briefs into --fold-to when the session ends.
+
 Usage:
   python scripts/init_queue.py ~/tasks --name my-project
   python scripts/init_queue.py ./.tasks --name my-repo --force
+  python scripts/init_queue.py ~/q/s1 --session "$CLAUDE_CODE_SESSION_ID" --fold-to ~/tasks
 """
 import argparse
+import json
 import os
 import pathlib
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 
-from _paths import CONFIG_FILE, TASK_DIRS, is_queue
+from _concurrency import atomic_write
+from _paths import CONFIG_FILE, TASK_DIRS, binding_path, is_queue, require_queue
 
 QUEUE_TEMPLATE = """\
 ---
@@ -89,11 +98,36 @@ __pycache__/
 """
 
 
-def init_queue(root: str | os.PathLike[str], name: str | None = None, force: bool = False) -> pathlib.Path:
+@dataclass(frozen=True)
+class SessionLink:
+    """The session that owns a queue, and the queue its open briefs fold into."""
+
+    id: str
+    fold_to: pathlib.Path
+
+    def toml(self) -> str:
+        fold_to = json.dumps(str(self.fold_to))
+        return f'\n[session]\nid = {json.dumps(self.id)}\nlifecycle = "session"\nfold_to = {fold_to}\n'
+
+    def bind(self, root: pathlib.Path, env: Mapping[str, str] | None = None) -> pathlib.Path:
+        path = binding_path(self.id, env)
+        atomic_write(path, f"root = {json.dumps(str(root.resolve()))}\n")
+        return path
+
+
+def init_queue(
+    root: str | os.PathLike[str],
+    name: str | None = None,
+    force: bool = False,
+    session: SessionLink | None = None,
+    env: Mapping[str, str] | None = None,
+) -> pathlib.Path:
     """Scaffold a queue at `root`. Refuses an existing queue unless `force`."""
     root = pathlib.Path(root).expanduser()
     if is_queue(root) and not force:
         raise SystemExit(f"{root} is already a task queue (has {CONFIG_FILE}). Use --force to reinitialise.")
+    if session is not None:
+        require_queue(session.fold_to)
     for d in (*TASK_DIRS, "view"):
         (root / d).mkdir(parents=True, exist_ok=True)
     for d in TASK_DIRS:
@@ -106,7 +140,10 @@ def init_queue(root: str | os.PathLike[str], name: str | None = None, force: boo
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(GITIGNORE)
-    (root / CONFIG_FILE).write_text(TASKS_TOML.format(name=name or root.name))
+    config = TASKS_TOML.format(name=name or root.name)
+    (root / CONFIG_FILE).write_text(config + (session.toml() if session else ""))
+    if session is not None:
+        session.bind(root, env)
     return root
 
 
@@ -115,8 +152,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("root", help="where to create the queue (e.g. ~/tasks or ./.tasks)")
     ap.add_argument("--name", default=None, help="project name (default: the directory name)")
     ap.add_argument("--force", action="store_true", help="reinitialise even if a queue exists")
+    ap.add_argument("--session", default=None, help="Claude Code session id that owns this queue")
+    ap.add_argument("--fold-to", default=None, help="queue the open briefs fold into at session end")
     a = ap.parse_args(argv)
-    root = init_queue(a.root, name=a.name, force=a.force)
+    if bool(a.session) != bool(a.fold_to):
+        ap.error("--session and --fold-to go together")
+    session = SessionLink(a.session, pathlib.Path(a.fold_to).expanduser().resolve()) if a.session else None
+    root = init_queue(a.root, name=a.name, force=a.force, session=session)
     print(f"Initialised task queue at {root}")
 
 
