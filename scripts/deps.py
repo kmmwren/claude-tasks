@@ -51,14 +51,16 @@ def fm_repeated(text: str) -> dict[str, list[str]]:
     return out
 
 
+def blocker_number(value: str) -> int | None:
+    """The blocker number N of an `N: <text>` value (1-based, the position in `blocked_by`), else None."""
+    n = value.partition(":")[0].strip()
+    return int(n) if n.isdigit() else None
+
+
 def indexed(values: list[str]) -> dict[int, str]:
-    """`N: <text>` lines keyed by blocker number N (1-based, the position in `blocked_by`)."""
-    out: dict[int, str] = {}
-    for v in values:
-        n, _, rest = v.partition(":")
-        if n.strip().isdigit() and rest.strip():
-            out[int(n)] = rest.strip()
-    return out
+    """`N: <text>` values keyed by blocker number N."""
+    pairs = ((blocker_number(v), v.partition(":")[2].strip()) for v in values)
+    return {n: text for n, text in pairs if n is not None and text}
 
 
 def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[int]:

@@ -38,6 +38,7 @@ from _paths import resolve_root
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
+    blocker_number,
     fm,
     fm_repeated,
     is_external,
@@ -166,17 +167,25 @@ def _set_repeated(block: str, key: str, values: list[str]) -> str:
     return "\n".join(kept + [f"{key}: {v}" for v in values])
 
 
+def _override_numbered(block: str, key: str, values: list[str]) -> str:
+    """Set `key:` lines for the blocker numbers in `values`, keeping the lines of every other blocker."""
+    numbers = {blocker_number(v) for v in values}
+    kept = [v for v in (ln.partition(":")[2].strip() for ln in block.splitlines() if ln.startswith(f"{key}:"))
+            if blocker_number(v) not in numbers]
+    return _set_repeated(block, key, sorted(kept + values, key=lambda v: blocker_number(v) or 0))
+
+
 def drop_blocker_lines(block: str, number: int) -> str:
     """Remove blocker `number`'s probe and confirmation lines and renumber the later ones down by one."""
     out = []
     for line in block.splitlines():
         key, _, rest = line.partition(":")
-        n, _, text = rest.partition(":")
-        if key in (PROBE_KEY, CONFIRMED_KEY) and n.strip().isdigit():
-            if int(n) == number:
+        n = blocker_number(rest)
+        if key in (PROBE_KEY, CONFIRMED_KEY) and n is not None:
+            if n == number:
                 continue
-            if int(n) > number:
-                line = f"{key}: {int(n) - 1}:{text}"
+            if n > number:
+                line = f"{key}: {n - 1}:{rest.partition(':')[2]}"
         out.append(line)
     return "\n".join(out)
 
@@ -186,13 +195,13 @@ def carry_blocker_lines(block: str, old: list[str], new: list[str]) -> str:
     kept, carried = [], []
     for line in block.splitlines():
         key, _, rest = line.partition(":")
-        n, _, text = rest.partition(":")
-        if key not in (PROBE_KEY, CONFIRMED_KEY) or not n.strip().isdigit():
+        n = blocker_number(rest)
+        if key not in (PROBE_KEY, CONFIRMED_KEY) or n is None:
             kept.append(line)
             continue
-        blocker = old[int(n) - 1] if 0 < int(n) <= len(old) else None
+        blocker = old[n - 1] if 0 < n <= len(old) else None
         if blocker in new:
-            carried.append((key, new.index(blocker) + 1, text))
+            carried.append((key, new.index(blocker) + 1, rest.partition(":")[2]))
     return "\n".join(kept + [f"{k}: {n}:{t}" for k, n, t in sorted(carried)])
 
 
@@ -208,7 +217,7 @@ def _update_probes(text: str, new_status: str, probes: list[str], confirmed: lis
     else:
         for key, values in ((PROBE_KEY, probes), (CONFIRMED_KEY, confirmed)):
             if values:
-                block = _set_repeated(block, key, values)
+                block = _override_numbered(block, key, values)
     return text[: m.start(2)] + block + text[m.end(2):]
 
 
