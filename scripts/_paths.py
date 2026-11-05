@@ -58,7 +58,7 @@ def resolve_root(
     bound = session_root(env)
     if bound is not None:
         return bound
-    cwd = pathlib.Path.cwd() if cwd is None else pathlib.Path(cwd)
+    cwd = None
     for parent in (cwd, *cwd.parents):
         candidate = parent / PROJECT_MARKER
         if candidate.is_dir():
@@ -76,8 +76,8 @@ def binding_path(session_id: str, env: Mapping[str, str] | None = None) -> pathl
 
 def session_root(env: Mapping[str, str]) -> pathlib.Path | None:
     """The queue bound to the session in `env`, or None so resolution falls through."""
-    session_id = env.get(SESSION_ENV) or ""
-    if not _SESSION_ID.fullmatch(session_id):
+    session_id = env.get(SESSION_ENV)
+    if not session_id or not _SESSION_ID.fullmatch(session_id):
         return None
     try:
         root = tomllib.loads(binding_path(session_id, env).read_text()).get("root")
