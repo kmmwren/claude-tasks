@@ -23,8 +23,8 @@ from config import load_config
 from git_sync import owns_repo, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
-_STUB = re.compile(r"\A---\n(?:.*\n)*?moved_to:")
-_LIFECYCLE = re.compile(r'(?m)^lifecycle = "session"$')
+_STUB = re.compile(r"\A---\n(?:(?!---\n).*\n)*?moved_to:")
+_LIFECYCLE = re.compile(r'(?m)^lifecycle\s*=\s*"session"\s*$')
 
 
 @dataclass(frozen=True)
@@ -55,10 +55,11 @@ class SessionQueue:
                     yield path
 
     def fold(self, env: Mapping[str, str] | None = None) -> list[Move]:
+        binding = binding_path(self.id, env)
         with repo_lock(self.root):
             moves = [self._move(path) for path in self.open_briefs()]
             self._mark_folded()
-        binding_path(self.id, env).unlink(missing_ok=True)
+        binding.unlink(missing_ok=True)
         self._sync(moves)
         return moves
 

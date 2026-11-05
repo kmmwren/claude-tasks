@@ -62,6 +62,30 @@ def test_a_name_clash_in_the_parent_is_bumped(queues):
     assert (parent / "ready" / "a-2.md").read_text().endswith("body a\n")
 
 
+def test_a_body_line_naming_moved_to_is_still_a_brief(queues):
+    parent, child, env = queues
+    (child / "ready" / "d.md").write_text("---\nid: d\n---\nmoved_to: nowhere\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "ready" / "d.md").exists()
+
+
+def test_a_hand_edited_lifecycle_still_folds(queues):
+    _, child, env = queues
+    config_path = child / "tasks.toml"
+    config_path.write_text(config_path.read_text().replace('lifecycle = "session"', 'lifecycle="session"'))
+    fold_session.SessionQueue.load(child).fold(env)
+    assert config.load_config(child)["session"]["lifecycle"] == "folded"
+
+
+def test_an_invalid_session_id_moves_nothing(queues):
+    parent, child, env = queues
+    toml = child / "tasks.toml"
+    toml.write_text(toml.read_text().replace('id = "s1"', 'id = "../x"'))
+    with pytest.raises(ValueError):
+        fold_session.SessionQueue.load(child).fold(env)
+    assert not (parent / "ready" / "a.md").exists()
+
+
 def test_refuses_a_queue_with_no_session(tmp_path):
     root = init_queue.init_queue(tmp_path / "plain")
     with pytest.raises(SystemExit, match="not session-linked"):
