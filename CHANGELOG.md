@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
+  note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
+  before the first link as a shared direction.
 - **A first-class `blocked/` lifecycle state.** `transition.py move <id> blocked --blocked-by
   <ids|external:reason>` records what a brief waits for; moving it anywhere else clears the
   list. Unknown ids and self-blocks are refused.
