@@ -178,5 +178,5 @@ def test_invalid_session_id_is_ignored(tmp_path):
 
 
 def test_binding_path_refuses_traversal():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^invalid session id '\.\./x'$"):
         _paths.binding_path("../x", {})
