@@ -59,8 +59,8 @@ def blocker_number(value: str) -> int | None:
 
 def indexed(values: list[str]) -> dict[int, str]:
     """`N: <text>` values keyed by blocker number N."""
-    return {blocker_number(v): v.partition(":")[2].strip() for v in values
-            if blocker_number(v) is not None and v.partition(":")[2].strip()}
+    pairs = ((blocker_number(v), v.partition(":")[2].strip()) for v in values)
+    return {n: text for n, text in pairs if n is not None and text}
 
 
 def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[int]:
