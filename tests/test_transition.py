@@ -90,7 +90,7 @@ def test_fm_empty_on_no_frontmatter():
 # find_brief()
 # --------------------------------------------------------------------------- #
 def test_update_probes_leaves_text_without_frontmatter_unchanged():
-    assert transition._update_probes("no frontmatter", "ready", ["1: human"], []) == "no frontmatter"
+    assert transition._update_probes("no frontmatter", "ready", ["1: human"], [], [], []) == "no frontmatter"
 
 
 def test_find_brief_locates_across_folders(root):
@@ -800,3 +800,19 @@ def test_dropping_a_middle_blocker_renumbers_later_probes_and_confirmations():
     block = "id: a\nblocked_probe: 1: exit 10\nblocked_probe: 2: exit 10\nblocked_probe: 3: human\nblocked_confirmed: 3: 2026-06-02 k"
     assert transition.drop_blocker_lines(block, 2).splitlines()[1:] == [
         "blocked_probe: 1: exit 10", "blocked_probe: 2: human", "blocked_confirmed: 2: 2026-06-02 k"]
+
+
+def test_replacing_a_blocker_drops_the_old_blockers_probe_and_confirmation(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:old"],
+                          probes=["1: human"], confirmed=["1: 2026-06-02 alice"])
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:new"])
+
+
+def test_reordering_blockers_carries_each_probe_with_its_blocker(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:a", "external:b"],
+                          probes=["1: exit 10", "2: human"], confirmed=["2: 2026-06-02 alice"])
+    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:b", "external:a"])
+    repeated = transition.fm_repeated(new.read_text())
+    assert repeated["blocked_probe"] == ["1: human", "2: exit 10"]
+    assert repeated["blocked_confirmed"] == ["1: 2026-06-02 alice"]

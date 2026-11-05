@@ -181,12 +181,28 @@ def drop_blocker_lines(block: str, number: int) -> str:
     return "\n".join(out)
 
 
-def _update_probes(text: str, new_status: str, probes: list[str], confirmed: list[str]) -> str:
+def carry_blocker_lines(block: str, old: list[str], new: list[str]) -> str:
+    """Renumber probe and confirmation lines to follow their blocker into `new`; a removed blocker's lines go."""
+    kept, carried = [], []
+    for line in block.splitlines():
+        key, _, rest = line.partition(":")
+        n, _, text = rest.partition(":")
+        if key not in (PROBE_KEY, CONFIRMED_KEY) or not n.strip().isdigit():
+            kept.append(line)
+            continue
+        blocker = old[int(n) - 1] if 0 < int(n) <= len(old) else None
+        if blocker in new:
+            carried.append((key, new.index(blocker) + 1, text))
+    return "\n".join(kept + [f"{k}: {n}:{t}" for k, n, t in sorted(carried)])
+
+
+def _update_probes(text: str, new_status: str, probes: list[str], confirmed: list[str],
+                   old_blocked_by: list[str], blocked_by: list[str]) -> str:
     """Blocked briefs carry their `blocked_probe:` lines; leaving blocked/ drops them with the blocker."""
     m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
     if not m:
         return text
-    block = m.group(2)
+    block = carry_blocker_lines(m.group(2), old_blocked_by, blocked_by)
     if new_status != "blocked":
         block = _set_repeated(_set_repeated(block, PROBE_KEY, []), CONFIRMED_KEY, [])
     else:
@@ -283,9 +299,10 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                     f"to {assignee!r}. Coordinate with them, or release it first with "
                     f'--assignee "".'
                 )
+        old_blocked_by = parse_list(fm(text).get("blocked_by", ""))
         text = _update_frontmatter(text, new_status, today, assignee=assignee,
                                    blocked_by=blocked_by)
-        text = _update_probes(text, new_status, probes or [], confirmed or [])
+        text = _update_probes(text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by)
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
         text = _append_log(text, today, message)
