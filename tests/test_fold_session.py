@@ -159,3 +159,35 @@ def test_a_brief_without_frontmatter_moves_unchanged_when_ids_are_bumped(queues)
     (child / "ready" / "plain.md").write_text("no frontmatter\n")
     fold_session.SessionQueue.load(child).fold(env)
     assert (parent / "ready" / "plain.md").read_text() == "no frontmatter\n"
+
+
+def _parent_unmet(parent, brief_id):
+    queue = deps.load_queue(parent)
+    done = {b.id for b in queue if b.status == "done"}
+    return deps.unmet(next(b for b in queue if b.id == brief_id), done)
+
+
+def test_a_done_prerequisite_left_in_the_child_stays_satisfied(queues):
+    parent, child, env = queues
+    (child / "ready" / "a.md").write_text("---\nid: a\nblocked_by: [c]\n---\nbody a\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert _parent_unmet(parent, "a") == []
+    assert (child / "done" / "c.md").exists()
+
+
+def test_a_done_prerequisite_is_carried_under_a_free_name_with_its_id(queues):
+    parent, child, env = queues
+    (child / "ready" / "a.md").write_text("---\nid: a\ntags: [depends:c]\n---\nbody a\n")
+    (parent / "done" / "c.md").write_text("---\nid: other\n---\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert _parent_unmet(parent, "a") == []
+    assert (parent / "done" / "c.md").read_text() == "---\nid: other\n---\n"
+
+
+def test_a_prerequisite_the_parent_already_has_is_not_copied(queues):
+    parent, child, env = queues
+    (child / "ready" / "a.md").write_text("---\nid: a\nblocked_by: [c]\n---\nbody a\n")
+    (parent / "ready" / "c.md").write_text("---\nid: c\n---\nlive in parent\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert not (parent / "done" / "c.md").exists()
+    assert _parent_unmet(parent, "a") == ["c"]

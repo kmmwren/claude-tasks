@@ -5,7 +5,9 @@ fold_session.py — fold a session-linked queue back into its parent when the se
 Every brief outside done/ moves to the same status folder in the queue named by
 `[session].fold_to`, leaving a stub whose frontmatter says `moved_to:`. The queue's
 lifecycle becomes "folded" and the session's binding is removed, so later runs in that
-session resolve as usual. Safe to run twice.
+session resolve as usual. A brief renamed on a name clash gets its id: and the references to it
+among the folded briefs rewritten; done briefs the moved ones depend on are copied into the
+parent's done/. Safe to run twice.
 
 Usage:
   python scripts/fold_session.py ~/q/s1
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 from _concurrency import atomic_write, repo_lock, reserve_name
 from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue
 from config import load_config
-from deps import fm
+from deps import Brief, fm, load_queue
 from git_sync import owns_repo, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
@@ -67,6 +69,7 @@ class SessionQueue:
             renames = {_brief_id(m.source): m.dest.stem for m in moves if m.dest.stem != m.source.stem}
             for move in moves:
                 self._move(move, renames)
+            self._carry_done_prerequisites(moves)
             self._mark_folded()
         binding.unlink(missing_ok=True)
         self._sync(moves)
@@ -83,6 +86,18 @@ class SessionQueue:
             text = _retarget(text, renames, renames.get(_brief_id(move.source)))
         atomic_write(move.dest, text)
         atomic_write(move.source, f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n")
+
+    def _carry_done_prerequisites(self, moves: list[Move]) -> None:
+        """Copy done briefs the moved ones depend on, since the parent only counts its own done/ as met."""
+        wanted: set[str] = set()
+        for move in moves:
+            brief = Brief("", "", fm(move.dest.read_text()))
+            wanted |= brief.declared_ids | brief.legacy_tokens
+        wanted -= {b.id for b in load_queue(self.fold_to)}
+        for done in sorted((self.root / "done").glob("*.md")):
+            if _brief_id(done) in wanted:
+                carried = self._reserve(done)
+                atomic_write(carried.dest, done.read_text())
 
     def _mark_folded(self) -> None:
         config = self.root / CONFIG_FILE
