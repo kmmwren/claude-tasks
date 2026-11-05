@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue — "handoff", "I'm done with this session", "stop and queue what's left", "offload this session", "park this and pick it up later", "hand off everything to parked". Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends.
+description: Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: "handoff", "I'm done with this session", "stop and queue what's left", "offload this session", "park this and pick it up later", "hand off everything to parked", or pastes a claude.ai artifact link and asks to hand it off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends.
 ---
 
 # handoff
@@ -24,6 +24,23 @@ afterwards; the "never work an item" rule above does not apply. The Step 4 repor
 briefs were filed or sharpened and that the session carries on.
 
 Add a session to the shortlist with `long_running.py add <session-id> "<name>"`. There are only a few.
+
+## Input: this session, or an artifact
+
+When her message carries a claude.ai artifact link (`claude.ai/artifact/…` or
+`claude.ai/code/artifact/…`) and asks to hand it off, the artifact is the input in place of
+the session, and every step below runs the same way with these substitutions:
+
+- Read it with the `Artifact` tool, `action: "read"`, never WebFetch.
+- **Items:** its open work (tasks, decisions, testing still needed, follow-ups, plans) stands
+  in for the ledger in Step 1, and the page stands in for the conversation in Step 2.
+- **Name:** its title is the `<session name>` passed to `router.py which` in Step 0.
+- **No ledger to close:** its items were never on this session's ledger, so Step 1 files
+  them without closing anything.
+- **Provenance:** each brief's `--context` opens with
+  `From artifact <url> (snapshot <page date>); re-check before acting.`
+
+A message that asks for both runs two handoffs, the artifact first.
 
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → nearest
 `.tasks/` → `~/tasks` (or pass `--root <path>`).
