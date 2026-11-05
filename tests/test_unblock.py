@@ -174,7 +174,7 @@ def test_cli_releases_and_commits(tmp_path, monkeypatch, capsys):
     root = make_queue(tmp_path, {
         "dep": {"status": "done"}, "w": {"status": "blocked", "blocked_by": "[dep]"}})
     commits = []
-    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r: commits.append(msg))
+    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r, ids=(): commits.append(msg))
     unblock.main(["--root", str(root)])
     assert "released: w" in capsys.readouterr().out
     assert commits == ["unblock: released w"]
@@ -207,7 +207,7 @@ def test_cli_dry_run_text(tmp_path, capsys):
 def test_cli_resolve_then_release_commits_both(tmp_path, monkeypatch, capsys):
     root = make_queue(tmp_path, {"w": {"status": "blocked", "blocked_by": "[external:login]"}})
     commits = []
-    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r: commits.append(msg))
+    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r, ids=(): commits.append(msg))
     unblock.main(["--root", str(root), "resolve", "w", "login"])
     assert commits == ["unblock: cleared an external blocker on w; released w"]
     assert (root / "ready" / "w.md").exists()
@@ -217,7 +217,7 @@ def test_cli_resolve_with_remaining_blocker_commits_the_clear_only(tmp_path, mon
     root = make_queue(tmp_path, {
         "w": {"status": "blocked", "blocked_by": "[external:a, external:b]"}})
     commits = []
-    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r: commits.append(msg))
+    monkeypatch.setattr(unblock, "sync_commit", lambda msg, r, ids=(): commits.append(msg))
     unblock.main(["--root", str(root), "resolve", "w", "a"])
     assert commits == ["unblock: cleared an external blocker on w"]
 
