@@ -26,7 +26,17 @@ briefs were filed or sharpened and that the session carries on.
 
 Add a session to the shortlist with `long_running.py add <session-id> "<name>"`. There are only a few.
 
-## Input: this session, or an artifact
+## Headroom check
+
+Unless the input is a session digest, run `python3 ~/.claude/scripts/handoff_external.py check`.
+Exit 0: hand off in-session. Exit 3: run `python3 ~/.claude/scripts/handoff_external.py launch`
+(add `--direction "<target>"` when the user gave one, e.g. "to parked/"), report in one line that
+the handoff runs externally with the log path, and stop: no briefs, no ledger closes. If the
+script is missing or errors, carry on in-session. A session whose post-compact floor plus the
+handoff's own needs exceed its autocompact window thrashes mid-handoff, so it hands off from
+outside instead.
+
+## Input: this session, an artifact, or a session digest
 
 When her message carries a claude.ai artifact link (`claude.ai/artifact/…` or
 `claude.ai/code/artifact/…`) and asks to hand it off, the artifact is the input in place of
@@ -42,6 +52,21 @@ the session, and every step below runs the same way with these substitutions:
   `From artifact <url> (snapshot <page date>); re-check before acting.`
 
 A message that asks for both runs two handoffs, the artifact first.
+
+When the prompt names a session id and a digest path (`Hand off session <sid> ("<name>") from
+its digest at <path>`), the digest is the input in place of the session:
+
+- **Items:** the digest's `## Open ledger items` JSON lines stand in for the ledger in Step 1.
+- **Name:** the digest's `# Handoff digest: <name> (<sid>)` heading.
+- **Judgement layer:** Step 2 reads the digest's `## Her prompts`, `## Last compaction
+  summaries` and `## Recent assistant text` in place of the conversation.
+- **Provenance:** each brief's `--context` opens with
+  `From session <sid> (<name>) via external handoff; re-check before acting.`
+- **Closing:** close each source item with
+  `python3 ~/.claude/scripts/handoff_external.py close <sid> <id> <brief path>` instead of
+  `TaskUpdate`, which edits the current session's ledger, not the source's.
+- **Customer data:** briefs never carry customer security data copied from the digest;
+  summarise as conclusions.
 
 All `add_task.py` calls below resolve the queue via `$CLAUDE_TASKS_DIR` → the queue
 bound to `$CLAUDE_CODE_SESSION_ID` → nearest `.tasks/` → `~/tasks` (or pass `--root <path>`).
@@ -138,6 +163,5 @@ or *"Filed 6 open items to the inbox; run `/enrich` to turn them into briefs."*
 
 ## Note
 
-This is the model-driven handoff. A deterministic SessionEnd auto-capture hook (parsing
-the session transcript for open Task-API/TodoWrite items, idempotent via a marker) is a
-planned add-on — see the project roadmap. Until then, invoke this skill when you stop.
+A `SessionStart(compact)` hook (`catch-compact-thrash.py`) launches the external handoff
+automatically when a session thrashes mid-handoff.
