@@ -3,6 +3,7 @@
 The concurrency suite drives these as subprocesses (for real OS-level lock races), which
 in-process coverage can't see — so these cover the same code paths in-process for the gate.
 """
+
 import io
 
 import add_task
@@ -18,6 +19,7 @@ def queue(tmp_path):
 
 # ── add_task.slug ─────────────────────────────────────────────────────────────
 
+
 def test_slug_lowercases_and_hyphenates():
     assert add_task.slug("Hello World") == "hello-world"
 
@@ -32,10 +34,29 @@ def test_slug_fallback_when_all_specials():
 
 # ── add_task.main ─────────────────────────────────────────────────────────────
 
+
 def test_add_task_writes_ready_brief(queue, capsys):
-    add_task.main(["--title", "Build the thing", "--root", str(queue), "--ready",
-                   "--goal", "It exists.", "--criteria", "first", "--criteria", "second",
-                   "--domain", "work", "--importance", "2", "--autonomy", "full"])
+    add_task.main(
+        [
+            "--title",
+            "Build the thing",
+            "--root",
+            str(queue),
+            "--ready",
+            "--goal",
+            "It exists.",
+            "--criteria",
+            "first",
+            "--criteria",
+            "second",
+            "--domain",
+            "work",
+            "--importance",
+            "2",
+            "--autonomy",
+            "full",
+        ]
+    )
     path = queue / "ready" / "build-the-thing.md"
     text = path.read_text()
     assert "status: ready" in text
@@ -47,6 +68,16 @@ def test_add_task_writes_ready_brief(queue, capsys):
 def test_add_task_defaults_to_inbox(queue):
     add_task.main(["--title", "Quick idea", "--root", str(queue)])
     assert (queue / "inbox" / "quick-idea.md").read_text().count("status: inbox") == 1
+
+
+def test_add_task_title_and_context_only_has_no_todo_placeholder(queue):
+    add_task.main(
+        ["--title", "Drop merged PRs", "--context", "Rollout notes.", "--root", str(queue)]
+    )
+    text = (queue / "inbox" / "drop-merged-prs.md").read_text()
+    assert "# TODO" not in text
+    assert "## Goal\n\nDrop merged PRs\n" in text
+    assert "- [ ] Drop merged PRs is done." in text
 
 
 def test_add_task_status_parked(queue):
@@ -69,8 +100,9 @@ def test_add_task_appends_stdin_to_context(queue, monkeypatch):
 
 def test_add_task_commit_invokes_sync(queue, monkeypatch):
     calls = {}
-    monkeypatch.setattr(add_task, "_sync_commit",
-                        lambda msg, root, ids: calls.update(msg=msg, root=root, ids=ids))
+    monkeypatch.setattr(
+        add_task, "_sync_commit", lambda msg, root, ids: calls.update(msg=msg, root=root, ids=ids)
+    )
     add_task.main(["--title", "Ship it", "--root", str(queue), "--commit"])
     assert "brief(ship-it)" in calls["msg"]
     assert calls["root"] == queue
@@ -90,6 +122,7 @@ def test_add_task_resolves_root_from_env(queue, monkeypatch):
 
 
 # ── raw_capture ───────────────────────────────────────────────────────────────
+
 
 def test_slugify_truncates_and_cleans():
     assert raw_capture.slugify("A Very, Very Long Title!") == "a-very-very-long-title"
