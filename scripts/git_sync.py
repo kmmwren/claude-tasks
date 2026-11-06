@@ -22,7 +22,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import repo_lock  # noqa: E402
-from _paths import resolve_root  # noqa: E402
+from _paths import TASK_DIRS, resolve_root  # noqa: E402
 
 
 def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProcess[Any]":
@@ -51,6 +51,28 @@ def _completed_moves(root: pathlib.Path) -> list[str]:
     return [p for p in deleted if p.endswith(".md") and pathlib.PurePath(p).name in surviving]
 
 
+def _shadowing_briefs(root: pathlib.Path) -> list[str]:
+    """New brief files whose id is already filed in another state dir, here or on origin/main.
+
+    A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
+    re-create the id in its old folder, leaving it in two states at once.
+    """
+    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    remote = _git(root, "ls-tree", "-r", "--name-only", "origin/main",
+                  capture_output=True, text=True)
+    moved_away = set(_tracked(root, "--deleted"))  # the old half of an in-flight move is not a rival
+    filed = [pathlib.PurePath(p) for p in (*_tracked(root), *remote.stdout.splitlines())
+             if p not in moved_away]
+    shadows = []
+    for new in _tracked(root, "--others", "--exclude-standard"):
+        path = pathlib.PurePath(new)
+        if path.parent.name in TASK_DIRS and path.suffix == ".md" and any(
+                f.name == path.name and f.parent.name in TASK_DIRS and f.parent != path.parent
+                for f in filed):
+            shadows.append(new)
+    return shadows
+
+
 def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str]) -> None:
     for brief_id in ids:
         staged = _git(root, "add", "--all", "--", _brief_pathspec(brief_id),
@@ -73,7 +95,11 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
             print("  (sync deferred: lock held; new files and completed moves are safe on "
                   "disk and will be committed by the next writer that acquires the lock)")
             return False
-        _git(root, "add", "--ignore-removal", ".")
+        shadows = _shadowing_briefs(root)
+        for path in shadows:
+            print(f"  (refused: {path} would re-create an id already filed in another state; "
+                  "sharpen the existing brief instead. Left untracked.)")
+        _git(root, "add", "--ignore-removal", ".", *(f":(exclude){p}" for p in shadows))
         moves = _completed_moves(root)
         if moves:
             _git(root, "add", "--", *moves)

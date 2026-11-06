@@ -156,6 +156,10 @@ Before each capture, check for an existing brief and sharpen it instead of dupli
 grep -rl "<keyword>" "$CLAUDE_TASKS_DIR"/{inbox,ready,in-progress,done} 2>/dev/null
 ```
 
+Sharpen the file the grep found, in the folder it is in now. Never append to a remembered
+`inbox/<id>.md` path: if the brief moved meanwhile, the append re-creates it. `git_sync.py`
+refuses to commit such a re-created id.
+
 ## Directed handoff (steer where the items go)
 
 By default everything lands in `inbox/`. When the user gives a **direction**, interpret it
