@@ -149,6 +149,16 @@ def test_main_usage_error_exits_1(capsys):
     assert "Usage:" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h", "--path"])
+def test_main_flag_as_message_never_commits(monkeypatch, capsys, flag):
+    monkeypatch.setattr(git_sync, "sync_commit",
+                        lambda *a, **k: pytest.fail("a flag must not become a commit message"))
+    with pytest.raises(SystemExit) as exc:
+        git_sync.main([flag])
+    assert exc.value.code == (0 if flag in ("-h", "--help") else 1)
+    assert "Usage:" in capsys.readouterr().err
+
+
 def test_main_passes_message_to_sync_commit(monkeypatch):
     seen = {}
     monkeypatch.setattr(git_sync, "sync_commit",

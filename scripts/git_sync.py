@@ -92,10 +92,11 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    if not argv:
+    # A flag in the message slot would otherwise be committed and pushed as the message.
+    if not argv or argv[0].startswith("-"):
         print("Usage: python scripts/git_sync.py '<commit-message>' [brief-id ...]",
               file=sys.stderr)
-        sys.exit(1)
+        sys.exit(0 if argv and argv[0] in ("-h", "--help") else 1)
     sync_commit(argv[0], ids=argv[1:])
 
 
