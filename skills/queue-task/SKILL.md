@@ -41,7 +41,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
 
 - **`--ready`**: add it if you can ALSO fill out goal + criteria + context well enough to
   execute. The script refuses `--ready` (and `--status ready`) unless `--goal`, `--criteria`
-  (alias `--success`) and `--context` are all given, so the brief never carries TODO stubs. Then it lands in `ready/`. Otherwise (default) it lands in `inbox/` for later
+  (alias `--success`) and `--context` are all given, so the brief never carries placeholder stubs. Then it lands in `ready/`. Otherwise (default) it lands in `inbox/` for later
   enrichment (the `enrich` skill turns inbox items into ready briefs).
 - **`--autonomy full`** ONLY if a future agent could complete it end-to-end with zero
   user input. Be honest — over-tagging `full` makes the queue lie about what's delegable.

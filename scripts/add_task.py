@@ -4,7 +4,7 @@ add_task.py — let any Claude session add a well-formed brief to the queue.
 
 Fills out a brief from flags so Claude can self-capture follow-ups, discovered work, and
 improvements without hand-writing the file. Defaults to inbox/ (raw); a ready/ brief
-requires --goal, --criteria and --context so it never carries TODO stubs. Stdlib only.
+requires --goal, --criteria and --context so it never carries placeholder stubs. Stdlib only.
 
 Examples:
   python scripts/add_task.py --title "Rotate the leaked API key" \
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         missing = [flag for flag, value in (("--goal", a.goal.strip()), ("--criteria/--success", a.criteria),
                                             ("--context", context)) if not value]
         if missing:
-            ap.error(f"a ready brief needs {', '.join(missing)}; a brief must not carry TODO stubs "
+            ap.error(f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
                      "(omit --ready to file it in inbox/ instead)")
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()

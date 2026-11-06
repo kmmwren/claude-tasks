@@ -148,3 +148,11 @@ def test_raw_capture_includes_body(queue):
 def test_raw_capture_refuses_uninitialised_dir(tmp_path):
     with pytest.raises(SystemExit, match="tasks-init"):
         raw_capture.main(["x", "--root", str(tmp_path / "nope")])
+
+
+def test_add_task_ready_without_goal_criteria_context_is_refused(queue, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        add_task.main(["--title", "Bare ready", "--root", str(queue), "--ready"])
+    assert exit_info.value.code == 2
+    assert "--goal, --criteria/--success, --context" in capsys.readouterr().err
+    assert not (queue / "ready").exists() or not list((queue / "ready").glob("bare-ready*"))
