@@ -80,3 +80,39 @@ def test_cli_exit_codes(repos, capsys):
     assert append_log.main([ID, "via cli", "--root", str(main)]) == 0
     assert "logged to demo-brief" in capsys.readouterr().out
     assert append_log.main(["nope", "x", "--root", str(main)]) == 1
+
+
+def _failing(real, fragment):
+    """Wrap append_log._run so any git call whose args contain `fragment` fails."""
+    def run(repo, *args):
+        if fragment in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
+        return real(repo, *args)
+    return run
+
+
+@pytest.mark.parametrize("fragment, message", [("fetch", "fetch"), ("worktree", "worktree add")])
+def test_git_setup_failure_is_a_runtime_error(repos, monkeypatch, fragment, message):
+    _, main = repos
+    monkeypatch.setattr(append_log, "_run", _failing(append_log._run, fragment))
+    with pytest.raises(RuntimeError, match=message):
+        append_log.append_log(ID, "x", root=main)
+
+
+def test_commit_failure_is_a_runtime_error(repos):
+    _, main = repos
+    hook = main / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(RuntimeError, match="commit failed"):
+        append_log.append_log(ID, "x", root=main)
+
+
+def test_rejected_push_retries_then_gives_up(repos, capsys):
+    origin, main = repos
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    assert append_log.main([ID, "x", "--root", str(main)]) == 2
+    assert "still rejected after 4 attempts" in capsys.readouterr().err
+    assert git(main, "worktree", "list").count("\n") == 1
