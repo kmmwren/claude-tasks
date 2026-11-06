@@ -47,7 +47,7 @@ context that's already discoverable.
 | `requires-repo` | repo slug if the brief needs a repo other than this queue |
 
 ### 4. Write to ready/
-Use `add_task.py --ready`, or write directly to `ready/` with `status: ready` and commit.
+Use `add_task.py --ready --goal "<end state>" --criteria "<checkable condition>" --context "<...>"` (all three are required with `--ready`), or write directly to `ready/` with `status: ready` and commit.
 
 ### 5. Archive the raw file
 ```bash
