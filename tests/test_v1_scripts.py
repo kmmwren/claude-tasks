@@ -170,3 +170,13 @@ def test_add_task_ready_without_goal_criteria_context_is_refused(queue, capsys):
     assert exit_info.value.code == 2
     assert "--goal, --criteria/--success, --context" in capsys.readouterr().err
     assert not (queue / "ready").exists() or not list((queue / "ready").glob("bare-ready*"))
+
+
+@pytest.mark.parametrize("blank", [["--criteria", ""], ["--context", "   "]])
+def test_add_task_ready_rejects_blank_criteria_and_context(queue, blank):
+    full = ["--goal", "g", "--criteria", "c", "--context", "x"]
+    flag = blank[0]
+    argv = [a for i, a in enumerate(full) if not (full[i - (i % 2)] == flag)]
+    with pytest.raises(SystemExit) as exit_info:
+        add_task.main(["--title", "Blank", "--root", str(queue), "--ready", *argv, *blank])
+    assert exit_info.value.code == 2

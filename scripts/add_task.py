@@ -67,7 +67,8 @@ def main(argv: list[str] | None = None) -> None:
     a = ap.parse_args(argv)
 
     status = a.status or ("ready" if a.ready else "inbox")
-    context = a.context
+    a.criteria = [c.strip() for c in a.criteria if c.strip()]
+    context = a.context.strip()
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     if status == "ready":
