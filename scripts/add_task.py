@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
-    crit = "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else "# TODO"
+    crit = "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {a.title} is done."
     fm = f"""---
 id: {nid}
 title: {a.title}
@@ -86,11 +86,11 @@ related: []
 
 ## Goal
 
-{a.goal or "# TODO"}
+{a.goal or a.title}
 
 ## Context
 
-{context or "# TODO"}
+{context or "_none recorded_"}
 
 ## Success criteria
 

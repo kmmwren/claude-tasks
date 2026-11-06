@@ -49,6 +49,14 @@ def test_add_task_defaults_to_inbox(queue):
     assert (queue / "inbox" / "quick-idea.md").read_text().count("status: inbox") == 1
 
 
+def test_add_task_title_and_context_only_has_no_todo_placeholder(queue):
+    add_task.main(["--title", "Drop merged PRs", "--context", "Rollout notes.", "--root", str(queue)])
+    text = (queue / "inbox" / "drop-merged-prs.md").read_text()
+    assert "# TODO" not in text
+    assert "## Goal\n\nDrop merged PRs\n" in text
+    assert "- [ ] Drop merged PRs is done." in text
+
+
 def test_add_task_status_parked(queue):
     # directed handoff: file the brief straight into parked/
     add_task.main(["--title", "Pause this", "--status", "parked", "--root", str(queue)])
