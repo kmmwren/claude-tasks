@@ -275,3 +275,43 @@ def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
     assert {"inbox/new-brief.md", "inbox/from-other-clone.md",
             "inbox/kept-by-other-tool.md"} <= pushed
     assert not (repo / "inbox" / "kept-by-other-tool.md").exists()
+
+
+# ── a brief whose id already lives in another state dir is never re-created ───
+
+def test_sync_refuses_to_recreate_a_done_brief_in_inbox(tmp_path, capsys):
+    """A capture that writes inbox/<id>.md for an id already in done/ must not be committed."""
+    repo = make_repo(tmp_path)
+    (repo / "done" / "merge-queue.md").write_text("closed\n")
+    git_sync.sync_commit("test: close", root=repo)
+    (repo / "inbox" / "merge-queue.md").write_text("\nnote appended to a moved brief\n")
+    (repo / "inbox" / "fresh.md").write_text("unrelated\n")
+
+    git_sync.sync_commit("test: capture", root=repo)
+
+    files = committed_files(repo)
+    assert "inbox/merge-queue.md" not in files
+    assert "done/merge-queue.md" in files
+    assert "inbox/fresh.md" in files  # only the shadowing file is held back
+    assert "merge-queue" in capsys.readouterr().out
+
+
+def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
+    """A stale checkout cannot see a brief another session closed; the fetched origin can."""
+    repo = make_repo(tmp_path)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    git(other, "config", "user.email", "t@t.t")
+    git(other, "config", "user.name", "t")
+    (other / "done").mkdir(exist_ok=True)
+    (other / "done" / "moved.md").write_text("closed\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "close")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "moved.md").write_text("\nlate note\n")
+
+    git_sync.sync_commit("test: stale capture", root=repo)
+
+    assert "inbox/moved.md" not in committed_files(repo)
+    assert "inbox/moved.md" not in committed_files(repo, "origin/main")

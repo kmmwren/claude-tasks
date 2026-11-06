@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- **A closed brief is no longer re-created.** `git_sync.py` fetches `origin/main` and refuses to
+  commit a new brief file whose id is already filed in another state dir (`done/` included), on
+  disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
+  moved brief cannot leave the id in two states.
+
 ### Added
 - **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
   note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
