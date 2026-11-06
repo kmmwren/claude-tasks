@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-append_log.py — append a dated execution-log line to a brief without touching the main checkout.
+append_log.py: append a dated execution-log line to a brief without touching the main checkout.
 
 Subagents are refused writes in the queue's main checkout (block-main-checkout-writes), and
 `transition.py move --log` only logs as part of a state change. This fetches origin/main into a
