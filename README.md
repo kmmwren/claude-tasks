@@ -100,6 +100,16 @@ stays blocked until its dependency reaches `done/`, so the queue self-unblocks a
 lands. Define your own priority-tag weights (e.g. an `urgent`/`frog` convention) under
 `[priority]` in `tasks.toml`; the base ranking is otherwise purely mechanical.
 
+### Logging without writing the main checkout
+
+```
+python scripts/append_log.py <id> "what happened"
+```
+
+Appends a dated line to the brief's Execution log from a temporary worktree off `origin/main`,
+commits, pushes and removes the worktree. Use it where writes to the queue's main checkout are
+blocked (a subagent); `transition.py move --log` remains the way to log a state change.
+
 ### Blocked state, dependency check, optional milestones
 
 A brief that cannot proceed moves to `blocked/` with what it waits for:
