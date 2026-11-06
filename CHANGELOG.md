@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- **`append_log.py <id> "<line>"`** appends a dated Execution log line to a brief from a
+  temporary worktree of origin/main, pushes with retry, and never writes the main checkout.
 - **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
   note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
   before the first link as a shared direction.
