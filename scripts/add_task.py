@@ -14,6 +14,7 @@ Examples:
   echo "idea: a hook that blocks committing secrets" | \
      python scripts/add_task.py --stdin --title "Pre-commit secret scanner"
 """
+
 import argparse
 import datetime
 import re
@@ -45,8 +46,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--tags", default="")
     ap.add_argument("--parent", default="")
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
-    ap.add_argument("--status", choices=["inbox", "ready", "parked"], default=None,
-                    help="lifecycle state to file the brief in (default: inbox)")
+    ap.add_argument(
+        "--status",
+        choices=["inbox", "ready", "parked"],
+        default=None,
+        help="lifecycle state to file the brief in (default: inbox)",
+    )
     ap.add_argument("--ready", action="store_true", help="alias for --status ready")
     ap.add_argument("--stdin", action="store_true", help="append stdin to Context")
     ap.add_argument("--commit", action="store_true", help="git add+commit+push the new brief")
@@ -64,7 +69,9 @@ def main(argv: list[str] | None = None) -> None:
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
-    crit = "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {a.title} is done."
+    crit = (
+        "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {a.title} is done."
+    )
     fm = f"""---
 id: {nid}
 title: {a.title}
