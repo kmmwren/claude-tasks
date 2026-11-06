@@ -3,12 +3,13 @@
 add_task.py — let any Claude session add a well-formed brief to the queue.
 
 Fills out a brief from flags so Claude can self-capture follow-ups, discovered work, and
-improvements without hand-writing the file. Defaults to inbox/ (raw) unless given enough
-to be ready/. Stdlib only.
+improvements without hand-writing the file. Defaults to inbox/ (raw); a ready/ brief
+requires --goal, --criteria and --context so it never carries placeholder stubs. Stdlib only.
 
 Examples:
   python scripts/add_task.py --title "Rotate the leaked API key" \
      --goal "The leaked key is rotated and the app still works." \
+     --context "Key leaked in PR 123; rotate in the vault." --criteria "Old key rejected by the API" \
      --domain security --importance 1 --autonomy needs-input --due 2026-06-05 --ready --commit
 
   echo "idea: a hook that blocks committing secrets" | \
@@ -36,7 +37,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--title", required=True)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
-    ap.add_argument("--criteria", action="append", default=[], help="repeatable success criterion")
+    ap.add_argument(
+        "--criteria",
+        "--success",
+        dest="criteria",
+        action="append",
+        default=[],
+        help="repeatable success criterion (alias --success)",
+    )
     ap.add_argument("--type", default="todo", choices=["todo", "project", "research", "decision"])
     ap.add_argument("--importance", default="3", choices=["1", "2", "3", "4"])
     ap.add_argument("--autonomy", default="needs-input", choices=["full", "needs-input", "blocked"])
@@ -58,15 +66,31 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
     a = ap.parse_args(argv)
 
+    status = a.status or ("ready" if a.ready else "inbox")
+    a.criteria = [c.strip() for c in a.criteria if c.strip()]
+    context = a.context.strip()
+    if a.stdin and not sys.stdin.isatty():
+        context = (context + "\n\n" + sys.stdin.read().strip()).strip()
+    if status == "ready":
+        missing = [
+            flag
+            for flag, value in (
+                ("--goal", a.goal.strip()),
+                ("--criteria/--success", a.criteria),
+                ("--context", context),
+            )
+            if not value
+        ]
+        if missing:
+            ap.error(
+                f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
+                "(omit --ready to file it in inbox/ instead)"
+            )
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()
-    status = a.status or ("ready" if a.ready else "inbox")
     # Atomically claim a unique filename BEFORE writing, so two sessions capturing the
     # same title at the same instant can't overwrite each other (O_CREAT|O_EXCL).
     nid = reserve_name(root / status, slug(a.title), [root / d for d in TASK_DIRS])
-    context = a.context
-    if a.stdin and not sys.stdin.isatty():
-        context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
     crit = (
