@@ -37,8 +37,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--title", required=True)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
-    ap.add_argument("--criteria", "--success", dest="criteria", action="append", default=[],
-                    help="repeatable success criterion (alias --success)")
+    ap.add_argument(
+        "--criteria",
+        "--success",
+        dest="criteria",
+        action="append",
+        default=[],
+        help="repeatable success criterion (alias --success)",
+    )
     ap.add_argument("--type", default="todo", choices=["todo", "project", "research", "decision"])
     ap.add_argument("--importance", default="3", choices=["1", "2", "3", "4"])
     ap.add_argument("--autonomy", default="needs-input", choices=["full", "needs-input", "blocked"])
@@ -65,11 +71,20 @@ def main(argv: list[str] | None = None) -> None:
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     if status == "ready":
-        missing = [flag for flag, value in (("--goal", a.goal.strip()), ("--criteria/--success", a.criteria),
-                                            ("--context", context)) if not value]
+        missing = [
+            flag
+            for flag, value in (
+                ("--goal", a.goal.strip()),
+                ("--criteria/--success", a.criteria),
+                ("--context", context),
+            )
+            if not value
+        ]
         if missing:
-            ap.error(f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
-                     "(omit --ready to file it in inbox/ instead)")
+            ap.error(
+                f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
+                "(omit --ready to file it in inbox/ instead)"
+            )
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()
     # Atomically claim a unique filename BEFORE writing, so two sessions capturing the

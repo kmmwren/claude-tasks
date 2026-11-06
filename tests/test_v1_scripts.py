@@ -90,8 +90,22 @@ def test_add_task_status_parked(queue):
 
 
 def test_add_task_status_ready_matches_ready_flag(queue):
-    add_task.main(["--title", "Via status", "--status", "ready", "--root", str(queue),
-                   "--goal", "g", "--criteria", "c", "--context", "x"])
+    add_task.main(
+        [
+            "--title",
+            "Via status",
+            "--status",
+            "ready",
+            "--root",
+            str(queue),
+            "--goal",
+            "g",
+            "--criteria",
+            "c",
+            "--context",
+            "x",
+        ]
+    )
     assert (queue / "ready" / "via-status.md").is_file()
 
 
