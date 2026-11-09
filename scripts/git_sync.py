@@ -5,7 +5,7 @@ git_sync.py — commit + push the queue under the cross-process lock.
 Shared commit helper for every writer that touches the queue working tree (add_task.py
 for new briefs, transition.py for status changes). Routing all commits through here means
 concurrent writers take turns on the git index via the same mutex, instead of colliding
-on .git/index.lock and silently dropping commits.
+on .git/index.lock and silently dropping commits. Each writer commits only the briefs it names.
 
 Usage (run from anywhere):
   python scripts/git_sync.py "brief(my-id): completed" my-id
@@ -15,6 +15,7 @@ Exit codes: 0 — committed+pushed or safely deferred; 1 — bad usage.
 import pathlib
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from typing import Any
 
@@ -36,19 +37,12 @@ def owns_repo(root: pathlib.Path) -> bool:
 
 
 def _brief_pathspec(brief_id: str) -> str:
-    return f":(glob)*/{brief_id}.md"
+    return f":(glob)**/{brief_id}.md"
 
 
 def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
     out = _git(root, "ls-files", "-z", *flags, capture_output=True, text=True).stdout
     return [path for path in out.split("\0") if path]
-
-
-def _completed_moves(root: pathlib.Path) -> list[str]:
-    """Deleted brief paths whose filename is still tracked elsewhere: a move, not a loss."""
-    deleted = set(_tracked(root, "--deleted"))
-    surviving = {pathlib.PurePath(p).name for p in _tracked(root) if p not in deleted}
-    return [p for p in deleted if p.endswith(".md") and pathlib.PurePath(p).name in surviving]
 
 
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
@@ -83,39 +77,72 @@ def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequenc
             print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
 
 
-def sync_commit(message: str, root: pathlib.Path | None = None,
-                ids: Sequence[str] = ()) -> bool:
-    """Commit queue changes under the cross-process lock and push.
+def _short_log(root: pathlib.Path, rev_range: str) -> str:
+    out = _git(root, "log", "--format=%h %s", rev_range, capture_output=True, text=True).stdout
+    return "; ".join(out.splitlines()) or "none"
 
-    New and modified files and completed moves are swept in, so a deferred write still
-    lands; any other deletion is staged only for the briefs named in `ids`, so a brief
-    another tool removed is never lost in this writer's commit. Returns False if deferred.
+
+def _report_divergence(root: pathlib.Path, why: str) -> None:
+    print(f"  (push deferred: {why}. Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
+          f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
+          "Resolve in a worktree, rebase onto origin/main and push.)")
+
+
+def _integrate_remote(root: pathlib.Path) -> bool:
+    """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
+
+    Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
+    refuses to move when an edit overlaps an incoming change.
+    """
+    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
+        wt = pathlib.Path(tmp) / "wt"
+        _git(root, "worktree", "add", "-q", "--detach", str(wt), "HEAD", capture_output=True, text=True)
+        try:
+            if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
+                conflicts = _git(wt, "diff", "--name-only", "--diff-filter=U",
+                                 capture_output=True, text=True).stdout.split()
+                _git(wt, "rebase", "--abort", capture_output=True, text=True)
+                _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
+                return False
+            if _git(wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True).returncode != 0:
+                _report_divergence(root, "origin moved again while rebasing")
+                return False
+        finally:
+            _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
+    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    if _git(root, "reset", "--keep", "origin/main", capture_output=True, text=True).returncode != 0:
+        print("  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
+              "commit or move them, then run: git reset --keep origin/main)")
+    return True
+
+
+def sync_commit(message: str, root: pathlib.Path | None = None,
+                ids: Sequence[str] = (), paths: Sequence[str] = ()) -> bool:
+    """Commit and push only what the caller names, under the cross-process lock.
+
+    `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
+    explicit pathspecs (`.` when the caller owns the whole tree). Anything else dirty in the
+    checkout stays unstaged. Returns False if deferred; a deferred caller re-runs with the same args.
     """
     root = resolve_root() if root is None else root
     with repo_lock(root) as acquired:
         if not acquired:
-            print("  (sync deferred: lock held; new files and completed moves are safe on "
-                  "disk and will be committed by the next writer that acquires the lock)")
+            print("  (sync deferred: lock held; your files are safe on disk. "
+                  "Re-run git_sync.py with the same message and ids to commit them.)")
             return False
         shadows = _shadowing_briefs(root)
         for path in shadows:
             print(f"  (refused: {path} would re-create an id already filed in another state; "
                   "sharpen the existing brief instead. Left untracked.)")
         refused = [f":(exclude){p}" for p in shadows]
-        _git(root, "add", "--ignore-removal", ".", *refused)
-        moves = _completed_moves(root)
-        if moves:
-            _git(root, "add", "--", *moves)
         _stage_named_briefs(root, ids, refused)
+        if paths:
+            _git(root, "add", "--all", "--", *paths, *refused)
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
-            if _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main").returncode != 0:
-                _git(root, "rebase", "--abort", capture_output=True, text=True)
-                print("  (push deferred: remote diverged; committed locally — "
-                      "next sync will push)")
-                return False
-            _git(root, "push", "-q", "origin", "main")
+            return _integrate_remote(root)
     return True
 
 

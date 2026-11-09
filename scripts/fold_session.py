@@ -107,7 +107,7 @@ class SessionQueue:
         message = f"fold session {self.id}: {len(moves)} brief(s) into {self.fold_to.name}"
         for root in (self.fold_to, self.root):
             if owns_repo(root):
-                sync_commit(message, root)
+                sync_commit(message, root, paths=(".",))
 
 
 def _brief_id(path: pathlib.Path) -> str:
