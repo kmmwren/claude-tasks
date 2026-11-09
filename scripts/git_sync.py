@@ -22,6 +22,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import repo_lock  # noqa: E402
+from _log_merge import merge_log_appends  # noqa: E402
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
 
 
@@ -83,6 +84,57 @@ def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequenc
             print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
 
 
+def _stage_text(root: pathlib.Path, stage: int, path: str) -> str | None:
+    """A conflicted file's content at merge stage 1 (base), 2 (upstream) or 3 (replayed commit)."""
+    shown = _git(root, "show", f":{stage}:./{path}", capture_output=True, text=True)
+    return shown.stdout if shown.returncode == 0 else None
+
+
+def _resolve_log_conflict(root: pathlib.Path, path: str) -> bool:
+    """Resolve a conflicted brief as the union of both sides' log appends; False if it is not one."""
+    pure = pathlib.PurePath(path)
+    if pure.suffix != ".md" or pure.parent.name not in TASK_DIRS:
+        return False
+    base, ours, theirs = (_stage_text(root, stage, path) for stage in (1, 2, 3))
+    if base is None or ours is None or theirs is None:
+        return False
+    merged = merge_log_appends(base, ours, theirs)
+    if merged is None:
+        return False
+    (root / path).write_text(merged)
+    return _git(root, "add", "--", path, capture_output=True, text=True).returncode == 0
+
+
+def _conflicted(root: pathlib.Path) -> list[str]:
+    out: str = _git(root, "diff", "--name-only", "--relative", "--diff-filter=U",
+                    capture_output=True, text=True).stdout
+    return out.splitlines()
+
+
+def _pull_rebase(root: pathlib.Path) -> bool:
+    """Rebase local commits onto origin/main, resolving execution-log-only conflicts.
+
+    Any other conflict aborts the rebase (the local commits stay intact) and is reported on
+    stderr by file name, so a stuck queue is never silent.
+    """
+    if _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main").returncode == 0:
+        return True
+    while True:
+        conflicted = _conflicted(root)
+        unresolved = [p for p in conflicted if not _resolve_log_conflict(root, p)]
+        if not conflicted or unresolved:
+            _git(root, "rebase", "--abort", capture_output=True, text=True)
+            names = ", ".join(unresolved) or "none reported by git"
+            print(f"WARNING: queue sync cannot rebase onto origin/main; unresolved conflict in: "
+                  f"{names}. Resolve by hand in {root}; nothing will publish until then.",
+                  file=sys.stderr)
+            return False
+        cont = _git(root, "-c", "core.editor=true", "rebase", "--continue",
+                    capture_output=True, text=True)
+        if cont.returncode == 0:
+            return True
+
+
 def sync_commit(message: str, root: pathlib.Path | None = None,
                 ids: Sequence[str] = ()) -> bool:
     """Commit queue changes under the cross-process lock and push.
@@ -110,8 +162,7 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
-            if _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main").returncode != 0:
-                _git(root, "rebase", "--abort", capture_output=True, text=True)
+            if not _pull_rebase(root):
                 print("  (push deferred: remote diverged; committed locally — "
                       "next sync will push)")
                 return False
