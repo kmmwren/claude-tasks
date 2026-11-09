@@ -65,7 +65,7 @@ def root(tmp_path):
         _brief("parked", "decide-deploy-strategy",
                "Decide the deployment strategy", autonomy="needs-input")
     )
-    # inbox items are NOT briefs and must never be resolved
+    # a brief folded into inbox/ is reachable by exact id; free-text resolve still skips inbox
     (tmp_path / "inbox" / "raw-staging-thought.md").write_text(
         _brief("inbox", "raw-staging-thought", "Random staging thought")
     )
@@ -102,9 +102,39 @@ def test_find_brief_returns_none_when_absent(root):
     assert transition.find_brief("does-not-exist", root) is None
 
 
-def test_find_brief_ignores_inbox(root):
-    # inbox files exist on disk but are pre-briefs, never resolvable as briefs
-    assert transition.find_brief("raw-staging-thought", root) is None
+RAW_CAPTURE = "# a thought with no frontmatter\n"
+RAW_TRUE_CAPTURE = "---\nid: 2026-06-01-0900-a-thought\nraw: true\nstatus: inbox\n---\n\n# a thought\n"
+
+
+def test_find_brief_locates_inbox_brief_with_an_id(root):
+    # a brief folded into inbox/ keeps its id frontmatter and is a real brief
+    assert transition.find_brief("raw-staging-thought", root) == root / "inbox" / "raw-staging-thought.md"
+
+
+@pytest.mark.parametrize("text", [RAW_CAPTURE, RAW_TRUE_CAPTURE])
+def test_find_brief_ignores_raw_capture_in_inbox(root, text):
+    (root / "inbox" / "a-thought.md").write_text(text)
+    assert transition.find_brief("a-thought", root) is None
+
+
+def test_find_brief_prefers_brief_folder_over_inbox(root):
+    (root / "inbox" / "rotate-the-api-key.md").write_text(_brief("inbox", "rotate-the-api-key", "dup"))
+    assert transition.find_brief("rotate-the-api-key", root) == root / "ready" / "rotate-the-api-key.md"
+
+
+@pytest.mark.parametrize("target", ["done", "parked"])
+def test_move_closes_inbox_brief(root, target):
+    newp = transition.move_brief("raw-staging-thought", target, root, today="2026-06-02")
+    assert newp == root / target / "raw-staging-thought.md"
+    assert not (root / "inbox" / "raw-staging-thought.md").exists()
+    assert transition.fm(newp.read_text())["status"] == target
+
+
+def test_move_refuses_raw_capture_in_inbox(root):
+    (root / "inbox" / "a-thought.md").write_text(RAW_CAPTURE)
+    with pytest.raises(ValueError, match="no brief with id"):
+        transition.move_brief("a-thought", "done", root)
+    assert (root / "inbox" / "a-thought.md").exists()
 
 
 # --------------------------------------------------------------------------- #

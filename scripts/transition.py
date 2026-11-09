@@ -50,7 +50,8 @@ from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
-# Folders that actually hold briefs (inbox = raw pre-briefs, never resolvable as briefs).
+# Folders that hold briefs. inbox is left out: free-text resolve skips raw pre-briefs, and
+# find_brief reaches an inbox file only by exact id when it is a folded brief, not a raw capture.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
@@ -65,13 +66,20 @@ DEFAULT_LOG = {
 }
 
 
+def _is_inbox_brief(path: pathlib.Path) -> bool:
+    """A brief folded into inbox/ keeps its `id:`; a raw capture has none, or is marked `raw: true`."""
+    meta = fm(path.read_text())
+    return bool(meta.get("id")) and meta.get("raw") != "true"
+
+
 def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
-    """Locate `<brief_id>.md` across the brief folders (never inbox). None if absent."""
+    """Locate `<brief_id>.md` across the brief folders, then inbox/ for a folded brief. None if absent."""
     for d in BRIEF_DIRS:
         p = root / d / f"{brief_id}.md"
         if p.exists():
             return p
-    return None
+    inbox = root / "inbox" / f"{brief_id}.md"
+    return inbox if inbox.exists() and _is_inbox_brief(inbox) else None
 
 
 def _tokens(query: str) -> list[str]:
