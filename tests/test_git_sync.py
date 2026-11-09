@@ -275,3 +275,72 @@ def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
     assert {"inbox/new-brief.md", "inbox/from-other-clone.md",
             "inbox/kept-by-other-tool.md"} <= pushed
     assert not (repo / "inbox" / "kept-by-other-tool.md").exists()
+
+
+# ── a brief whose id already lives in another state dir is never re-created ───
+
+def test_sync_refuses_to_recreate_a_done_brief_in_inbox(tmp_path, capsys):
+    """A capture that writes inbox/<id>.md for an id already in done/ must not be committed."""
+    repo = make_repo(tmp_path)
+    (repo / "done" / "merge-queue.md").write_text("closed\n")
+    git_sync.sync_commit("test: close", root=repo)
+    (repo / "inbox" / "merge-queue.md").write_text("\nnote appended to a moved brief\n")
+    (repo / "inbox" / "fresh.md").write_text("unrelated\n")
+
+    git_sync.sync_commit("test: capture", root=repo)
+
+    files = committed_files(repo)
+    assert "inbox/merge-queue.md" not in files
+    assert "done/merge-queue.md" in files
+    assert "inbox/fresh.md" in files  # only the shadowing file is held back
+    assert "merge-queue" in capsys.readouterr().out
+
+
+def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
+    """A stale checkout cannot see a brief another session closed; the fetched origin can."""
+    repo = make_repo(tmp_path)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    git(other, "config", "user.email", "t@t.t")
+    git(other, "config", "user.name", "t")
+    (other / "done").mkdir(exist_ok=True)
+    (other / "done" / "moved.md").write_text("closed\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "close")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "moved.md").write_text("\nlate note\n")
+
+    git_sync.sync_commit("test: stale capture", root=repo)
+
+    assert "inbox/moved.md" not in committed_files(repo)
+    assert "inbox/moved.md" not in committed_files(repo, "origin/main")
+
+
+def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
+    """The documented `git_sync.py <msg> <id>` form must not stage the refused file back in."""
+    repo = make_repo(tmp_path)
+    (repo / "done" / "closed.md").write_text("closed\n")
+    git_sync.sync_commit("test: close", root=repo)
+    (repo / "inbox" / "closed.md").write_text("\nlate note\n")
+
+    git_sync.sync_commit("test: named capture", root=repo, ids=["closed"])
+
+    assert "inbox/closed.md" not in committed_files(repo)
+    assert "inbox/closed.md" not in committed_files(repo, "origin/main")
+
+
+def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
+    """A move committed locally but not yet pushed leaves a stale origin path; it is no rival."""
+    repo = make_repo(tmp_path)
+    (repo / "ready" / "moving.md").write_text("b\n")
+    git_sync.sync_commit("test: file", root=repo)
+    git(repo, "mv", "ready/moving.md", "in-progress/moving.md")
+    git(repo, "commit", "-qm", "local move, push deferred")
+    (repo / "in-progress" / "moving.md").rename(repo / "done" / "moving.md")
+    (repo / "inbox" / "other.md").write_text("unrelated\n")
+
+    git_sync.sync_commit("test: unrelated writer", root=repo)
+
+    files = committed_files(repo)
+    assert "done/moving.md" in files and "in-progress/moving.md" not in files
