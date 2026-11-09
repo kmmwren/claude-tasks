@@ -58,7 +58,9 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     re-create the id in its old folder, leaving it in two states at once.
     """
     _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
-    remote = _git(root, "ls-tree", "-r", "--name-only", "origin/main",
+    # Only briefs origin gained since our history diverged are rivals; an older origin path
+    # we already moved away locally (committed but unpushed) is not.
+    remote = _git(root, "diff", "--relative", "--name-only", "--diff-filter=A", "HEAD...origin/main",
                   capture_output=True, text=True)
     moved_away = set(_tracked(root, "--deleted"))  # the old half of an in-flight move is not a rival
     filed = [pathlib.PurePath(p) for p in (*_tracked(root), *remote.stdout.splitlines())
@@ -73,9 +75,9 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     return shadows
 
 
-def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str]) -> None:
+def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequence[str] = ()) -> None:
     for brief_id in ids:
-        staged = _git(root, "add", "--all", "--", _brief_pathspec(brief_id),
+        staged = _git(root, "add", "--all", "--", _brief_pathspec(brief_id), *refused,
                       capture_output=True, text=True)
         if staged.returncode != 0:
             print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
@@ -99,11 +101,12 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
         for path in shadows:
             print(f"  (refused: {path} would re-create an id already filed in another state; "
                   "sharpen the existing brief instead. Left untracked.)")
-        _git(root, "add", "--ignore-removal", ".", *(f":(exclude){p}" for p in shadows))
+        refused = [f":(exclude){p}" for p in shadows]
+        _git(root, "add", "--ignore-removal", ".", *refused)
         moves = _completed_moves(root)
         if moves:
             _git(root, "add", "--", *moves)
-        _stage_named_briefs(root, ids)
+        _stage_named_briefs(root, ids, refused)
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
