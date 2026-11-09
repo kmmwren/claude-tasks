@@ -1,8 +1,8 @@
 """
 Tests for git_sync.sync_commit staging scope.
 
-sync_commit sweeps new and modified files (respecting .gitignore) so a deferred write
-still lands, and stages a deletion only for the briefs the caller names.
+sync_commit stages only the briefs the caller names by id (moves and deletions included) and
+the pathspecs it passes explicitly; any other dirty file stays unstaged.
 """
 import contextlib
 import pathlib
@@ -58,43 +58,44 @@ def committed_files(repo, ref="HEAD"):
     return set(git(repo, "ls-tree", "-r", "--name-only", ref).stdout.splitlines())
 
 
-def test_sync_commit_stages_root_level_file(tmp_path):
-    """A root-level file (not under a task dir) must be committed + pushed."""
+def test_sync_commit_leaves_an_unrelated_dirty_file_unstaged(tmp_path):
     repo = make_repo(tmp_path)
-    (repo / "actions.jsonl").write_text('{"op":"x"}\n')
+    _seed_brief(repo, "ready", "theirs")
+    (repo / "ready" / "theirs.md").write_text("an uncommitted note")
+    (repo / "inbox" / "mine.md").write_text("new")
+    (repo / "scratch.txt").write_text("untracked")
 
-    assert git_sync.sync_commit("test: root file", root=repo) is True
+    git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"])
 
-    assert "actions.jsonl" in committed_files(repo)
-    git(repo, "fetch", "-q", "origin")
-    assert "actions.jsonl" in committed_files(repo, "origin/main")
+    assert "inbox/mine.md" in committed_files(repo)
+    assert git(repo, "show", "HEAD:ready/theirs.md").stdout == "theirs"
+    assert "scratch.txt" not in committed_files(repo)
+    assert git(repo, "status", "--porcelain").stdout.splitlines() == [" M ready/theirs.md", "?? scratch.txt"]
 
 
-def test_sync_commit_stages_new_top_level_dir(tmp_path):
-    """New files under a non-task dir (e.g. docs/) get committed too."""
+def test_sync_commit_stages_explicit_paths(tmp_path):
     repo = make_repo(tmp_path)
     (repo / "docs").mkdir()
     (repo / "docs" / "note.md").write_text("hi")
+    (repo / "other.txt").write_text("not named")
 
-    git_sync.sync_commit("test: docs", root=repo)
+    assert git_sync.sync_commit("test: docs", root=repo, paths=["docs"]) is True
 
     assert "docs/note.md" in committed_files(repo)
+    assert "other.txt" not in committed_files(repo)
+    git(repo, "fetch", "-q", "origin")
+    assert "docs/note.md" in committed_files(repo, "origin/main")
 
 
-def test_sync_commit_respects_gitignore(tmp_path):
-    """--all must not sweep in gitignored secrets."""
+def test_sync_commit_paths_respect_gitignore(tmp_path):
     repo = make_repo(tmp_path)
-    (repo / ".gitignore").write_text(".env\nstate/\n")
+    (repo / ".gitignore").write_text(".env\n")
     (repo / ".env").write_text("SECRET=1")
-    (repo / "state").mkdir()
-    (repo / "state" / "x.json").write_text("{}")
 
-    git_sync.sync_commit("test: gitignore", root=repo)
+    git_sync.sync_commit("test: gitignore", root=repo, paths=["."])
 
-    files = committed_files(repo)
-    assert ".env" not in files
-    assert not any(f.startswith("state/") for f in files)
-    assert ".gitignore" in files  # the .gitignore itself is tracked
+    assert ".env" not in committed_files(repo)
+    assert ".gitignore" in committed_files(repo)
 
 
 # ── branch coverage: deferral, divergence, recovery, resolver, usage ──────────
@@ -102,7 +103,7 @@ def test_sync_commit_respects_gitignore(tmp_path):
 def test_sync_deferred_when_lock_held(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
     assert git_sync.sync_commit("x", root=tmp_path) is False
-    assert "deferred" in capsys.readouterr().out
+    assert "Re-run git_sync.py" in capsys.readouterr().out
 
 
 def test_sync_resolves_root_when_none(tmp_path, monkeypatch):
@@ -114,32 +115,91 @@ def test_sync_resolves_root_when_none(tmp_path, monkeypatch):
     assert called["r"] == tmp_path
 
 
-def test_sync_push_deferred_on_divergence(tmp_path, monkeypatch, capsys):
-    """push fails, pull --rebase fails → abort, return False."""
-    monkeypatch.setattr(git_sync, "repo_lock", _lock_acquired)
-
-    def fake_git(_root, *args, **_kw):
-        return _FakeProc(1 if args[0] in ("push", "pull") else 0)
-
-    monkeypatch.setattr(git_sync, "_git", fake_git)
-    assert git_sync.sync_commit("x", root=tmp_path) is False
-    assert "push deferred" in capsys.readouterr().out
+def _clone_other(tmp_path):
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)], check=True)
+    for key, value in (("commit.gpgsign", "false"), ("user.email", "o@o.o"), ("user.name", "o")):
+        git(other, "config", key, value)
+    return other
 
 
-def test_sync_push_recovers_after_rebase(tmp_path, monkeypatch):
-    """push fails, pull --rebase succeeds, second push succeeds → True."""
-    monkeypatch.setattr(git_sync, "repo_lock", _lock_acquired)
-    pushes = {"n": 0}
+def _push_from_other(other, name, text):
+    (other / name).write_text(text)
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", f"other: {name}")
+    git(other, "push", "-q", "origin", "main")
 
-    def fake_git(_root, *args, **_kw):
-        if args[0] == "push":
-            pushes["n"] += 1
-            return _FakeProc(1 if pushes["n"] == 1 else 0)
-        return _FakeProc(0)  # add, commit, pull all succeed
 
-    monkeypatch.setattr(git_sync, "_git", fake_git)
-    assert git_sync.sync_commit("x", root=tmp_path) is True
-    assert pushes["n"] == 2
+def test_sync_conflict_is_reported_and_local_commits_are_kept(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "shared")
+    git(repo, "push", "-q", "origin", "main")
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "ready/shared.md", "remote edit")
+    (repo / "ready" / "shared.md").write_text("local edit")
+    (repo / "inbox" / "unrelated.md").write_text("dirty")
+
+    assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is False
+
+    out = capsys.readouterr().out
+    assert "rebase conflict in ready/shared.md" in out
+    assert "brief(shared): edited" in out and "other: ready/shared.md" in out
+    assert git(repo, "log", "-1", "--format=%s").stdout.strip() == "brief(shared): edited"
+    assert git(repo, "stash", "list").stdout == ""
+    assert (repo / "inbox" / "unrelated.md").read_text() == "dirty"
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
+
+
+def test_sync_recovers_after_remote_moved_keeping_unrelated_edits(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "theirs")
+    git(repo, "push", "-q", "origin", "main")
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/from-other.md", "x")
+    (repo / "ready" / "theirs.md").write_text("an uncommitted note")
+    (repo / "inbox" / "mine.md").write_text("y")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    assert {"inbox/mine.md", "inbox/from-other.md"} <= committed_files(repo, "origin/main")
+    assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
+    assert (repo / "ready" / "theirs.md").read_text() == "an uncommitted note"
+
+
+def test_sync_pushed_but_checkout_not_advanced_when_an_edit_overlaps(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "theirs")
+    git(repo, "push", "-q", "origin", "main")
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "ready/theirs.md", "remote edit")
+    (repo / "ready" / "theirs.md").write_text("an uncommitted note")
+    (repo / "inbox" / "mine.md").write_text("y")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+
+    assert "checkout was not advanced" in capsys.readouterr().out
+    assert (repo / "ready" / "theirs.md").read_text() == "an uncommitted note"
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/mine.md" in committed_files(repo, "origin/main")
+
+
+def test_sync_reports_when_origin_moves_again_during_the_rebase(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/from-other.md", "x")
+    (repo / "inbox" / "mine.md").write_text("y")
+    real = git_sync._git
+
+    def losing_push(root, *args, **kw):
+        if args[:1] == ("push",) and root != repo:
+            _push_from_other(other, "inbox/another.md", "z")
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(git_sync, "_git", losing_push)
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is False
+    assert "origin moved again while rebasing" in capsys.readouterr().out
 
 
 def test_main_usage_error_exits_1(capsys):
@@ -200,8 +260,7 @@ def test_sync_commits_the_named_briefs_move(tmp_path):
     assert "ready/mine.md" not in files
 
 
-def test_deferred_move_is_completed_by_the_next_writer(tmp_path):
-    """A move left on disk by a deferred sync lands whole when another brief syncs."""
+def test_a_move_left_by_another_writer_is_not_swept_into_this_commit(tmp_path):
     repo = make_repo(tmp_path)
     _seed_brief(repo, "ready", "alpha")
     (repo / "ready" / "alpha.md").rename(repo / "done" / "alpha.md")
@@ -210,18 +269,18 @@ def test_deferred_move_is_completed_by_the_next_writer(tmp_path):
     git_sync.sync_commit("brief(beta): captured", root=repo, ids=["beta"])
 
     files = committed_files(repo)
-    assert "done/alpha.md" in files
-    assert "ready/alpha.md" not in files
+    assert "ready/alpha.md" in files
+    assert "done/alpha.md" not in files
 
 
-def test_inbox_archive_move_lands_without_ids(tmp_path):
+def test_inbox_archive_move_lands_when_its_id_is_named(tmp_path):
     """enrich's inbox/<f>.md -> inbox/.processed/<f>.md archive is a move, not a loss."""
     repo = make_repo(tmp_path)
     _seed_brief(repo, "inbox", "raw-thought")
     (repo / "inbox" / ".processed").mkdir()
     (repo / "inbox" / "raw-thought.md").rename(repo / "inbox" / ".processed" / "raw-thought.md")
 
-    git_sync.sync_commit("enrich: 1 brief", root=repo)
+    git_sync.sync_commit("enrich: 1 brief", root=repo, ids=["raw-thought"])
 
     files = committed_files(repo)
     assert "inbox/.processed/raw-thought.md" in files
@@ -251,43 +310,17 @@ def test_cli_stages_a_named_deletion(tmp_path, monkeypatch):
     assert "ready/mine.md" not in committed_files(repo)
 
 
-def test_recovery_rebase_keeps_another_tools_unstaged_deletion(tmp_path):
-    repo = make_repo(tmp_path)
-    _seed_brief(repo, "inbox", "kept-by-other-tool")
-    git(repo, "push", "-q", "origin", "main")
-    other = tmp_path / "other"
-    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
-                   check=True)
-    git(other, "config", "commit.gpgsign", "false")
-    git(other, "config", "user.email", "o@o.o")
-    git(other, "config", "user.name", "o")
-    (other / "inbox" / "from-other-clone.md").write_text("x\n")
-    git(other, "add", "-A")
-    git(other, "commit", "-qm", "other clone")
-    git(other, "push", "-q", "origin", "main")
-    (repo / "inbox" / "kept-by-other-tool.md").unlink()
-    (repo / "inbox" / "new-brief.md").write_text("y\n")
-
-    assert git_sync.sync_commit("add: new-brief", root=repo, ids=["new-brief"]) is True
-
-    git(repo, "fetch", "-q", "origin")
-    pushed = committed_files(repo, "origin/main")
-    assert {"inbox/new-brief.md", "inbox/from-other-clone.md",
-            "inbox/kept-by-other-tool.md"} <= pushed
-    assert not (repo / "inbox" / "kept-by-other-tool.md").exists()
-
-
 # ── a brief whose id already lives in another state dir is never re-created ───
 
 def test_sync_refuses_to_recreate_a_done_brief_in_inbox(tmp_path, capsys):
     """A capture that writes inbox/<id>.md for an id already in done/ must not be committed."""
     repo = make_repo(tmp_path)
     (repo / "done" / "merge-queue.md").write_text("closed\n")
-    git_sync.sync_commit("test: close", root=repo)
+    git_sync.sync_commit("test: close", root=repo, ids=["merge-queue"])
     (repo / "inbox" / "merge-queue.md").write_text("\nnote appended to a moved brief\n")
     (repo / "inbox" / "fresh.md").write_text("unrelated\n")
 
-    git_sync.sync_commit("test: capture", root=repo)
+    git_sync.sync_commit("test: capture", root=repo, ids=["merge-queue", "fresh"])
 
     files = committed_files(repo)
     assert "inbox/merge-queue.md" not in files
@@ -321,7 +354,7 @@ def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
     """The documented `git_sync.py <msg> <id>` form must not stage the refused file back in."""
     repo = make_repo(tmp_path)
     (repo / "done" / "closed.md").write_text("closed\n")
-    git_sync.sync_commit("test: close", root=repo)
+    git_sync.sync_commit("test: close", root=repo, ids=["closed"])
     (repo / "inbox" / "closed.md").write_text("\nlate note\n")
 
     git_sync.sync_commit("test: named capture", root=repo, ids=["closed"])
@@ -334,13 +367,13 @@ def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
     """A move committed locally but not yet pushed leaves a stale origin path; it is no rival."""
     repo = make_repo(tmp_path)
     (repo / "ready" / "moving.md").write_text("b\n")
-    git_sync.sync_commit("test: file", root=repo)
+    git_sync.sync_commit("test: file", root=repo, ids=["moving"])
     git(repo, "mv", "ready/moving.md", "in-progress/moving.md")
     git(repo, "commit", "-qm", "local move, push deferred")
     (repo / "in-progress" / "moving.md").rename(repo / "done" / "moving.md")
     (repo / "inbox" / "other.md").write_text("unrelated\n")
 
-    git_sync.sync_commit("test: unrelated writer", root=repo)
+    git_sync.sync_commit("test: unrelated writer", root=repo, ids=["moving", "other"])
 
     files = committed_files(repo)
     assert "done/moving.md" in files and "in-progress/moving.md" not in files
