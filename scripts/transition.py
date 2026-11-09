@@ -50,7 +50,8 @@ from git_sync import sync_commit
 
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
-# Folders that actually hold briefs (inbox = raw pre-briefs, never resolvable as briefs).
+# Folders that hold briefs. inbox is left out: free-text resolve skips raw pre-briefs, but
+# find_brief still reaches them by exact id so they can be promoted.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
@@ -66,8 +67,8 @@ DEFAULT_LOG = {
 
 
 def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
-    """Locate `<brief_id>.md` across the brief folders (never inbox). None if absent."""
-    for d in BRIEF_DIRS:
+    """Locate `<brief_id>.md` across the brief folders by exact id; brief folders win over inbox. None if absent."""
+    for d in (*BRIEF_DIRS, "inbox"):
         p = root / d / f"{brief_id}.md"
         if p.exists():
             return p
