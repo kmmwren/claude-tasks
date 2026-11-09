@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **`append_log.py`** appends a dated execution-log line to a brief from a temporary worktree
+  off `origin/main`, commits, pushes and removes the worktree, so a subagent refused writes in
+  the queue's main checkout can still log: `python scripts/append_log.py <id> "<line>"`.
 - **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
   note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
   before the first link as a shared direction.
