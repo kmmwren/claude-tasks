@@ -31,7 +31,14 @@ from _paths import require_queue, resolve_root
 from deps import EXTERNAL_PREFIX, Brief, awaits_release, fm, load_queue, unmet
 from git_sync import sync_commit
 from prioritise import index_queue, score
-from transition import _append_log, _set_field, drop_blocker_lines, find_brief, move_brief
+from transition import (
+    _append_log,
+    _set_field,
+    drop_blocker_lines,
+    find_brief,
+    missing_brief_error,
+    move_brief,
+)
 
 
 def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[Brief]:
@@ -81,7 +88,7 @@ def resolve_external(root: pathlib.Path, brief_id: str, reason: str,
     """
     path = find_brief(brief_id, root)
     if path is None:
-        raise ValueError(f"no brief with id {brief_id!r}")
+        raise missing_brief_error(brief_id, root)
     item = reason if reason.startswith(EXTERNAL_PREFIX) else EXTERNAL_PREFIX + reason
     day = today or datetime.date.today().isoformat()
     with repo_lock(root) as acquired:

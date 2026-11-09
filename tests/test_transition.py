@@ -310,6 +310,11 @@ def test_move_missing_brief_raises(root):
         transition.move_brief("nope", "done", root)
 
 
+def test_move_inbox_capture_says_it_is_not_a_brief(root):
+    with pytest.raises(ValueError, match="raw capture in inbox/"):
+        transition.move_brief("raw-staging-thought", "done", root)
+
+
 def test_move_same_status_updates_in_place(root):
     p = transition.move_brief("rotate-the-api-key", "ready", root, today="2026-06-02")
     assert p == root / "ready" / "rotate-the-api-key.md"

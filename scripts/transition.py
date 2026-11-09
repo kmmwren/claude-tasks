@@ -74,6 +74,16 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
+def missing_brief_error(brief_id: str, root: pathlib.Path) -> ValueError:
+    """The error for an id find_brief missed; names inbox/ when the id is only a raw capture."""
+    if (root / "inbox" / f"{brief_id}.md").exists():
+        return ValueError(
+            f"{brief_id!r} is a raw capture in inbox/, not a brief: enrich it into ready/ "
+            "first (append_log.py accepts inbox ids, transition.py does not)"
+        )
+    return ValueError(f"no brief with id {brief_id!r}")
+
+
 def _tokens(query: str) -> list[str]:
     """Lowercase alphanumeric tokens of length >= 2 (a lone letter would match too much)."""
     return [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 2]
@@ -283,7 +293,7 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     _check_blockers(brief_id, blocked_by, root)
     path = find_brief(brief_id, root)
     if path is None:
-        raise ValueError(f"no brief with id {brief_id!r}")
+        raise missing_brief_error(brief_id, root)
     today = today or datetime.date.today().isoformat()
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
