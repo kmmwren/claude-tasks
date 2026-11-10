@@ -12,12 +12,13 @@ Usage (run from anywhere):
 
 Exit codes: 0 — committed+pushed or safely deferred; 1 — bad usage.
 """
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -85,8 +86,11 @@ def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequenc
 
 def _stage_text(root: pathlib.Path, stage: int, path: str) -> str | None:
     """A conflicted file's content at merge stage 1 (base), 2 (upstream) or 3 (replayed commit)."""
-    shown = _git(root, "show", f":{stage}:{path}", capture_output=True, text=True,
-                 encoding="utf-8")
+    try:
+        shown = _git(root, "show", f":{stage}:{path}", capture_output=True, text=True,
+                     encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
     return shown.stdout if shown.returncode == 0 else None
 
 
@@ -123,21 +127,34 @@ def _rebase_in_progress(root: pathlib.Path) -> bool:
     return False
 
 
-def _rebase_keeping_log_union(wt: pathlib.Path) -> list[str] | None:
+class _Stuck(NamedTuple):
+    """Why a rebase could not finish: the paths git could not merge, else git's own error text."""
+
+    paths: list[str]
+    detail: str
+
+    def describe(self) -> str:
+        if self.paths:
+            return f"unresolved conflict in: {', '.join(self.paths)}"
+        return f"rebase failed: {self.detail or 'git reported no conflicting file'}"
+
+
+def _rebase_keeping_log_union(wt: pathlib.Path) -> _Stuck | None:
     """Rebase `wt` onto origin/main, resolving conflicts that are only Execution-log appends.
 
-    None on success; otherwise the paths git could not merge (empty when it named none).
+    None on success. GIT_EDITOR is forced because it outranks `core.editor`.
     """
     run = _git(wt, "rebase", "origin/main", capture_output=True, text=True)
     while run.returncode != 0:
+        detail = run.stderr.strip()
         if not _rebase_in_progress(wt):
-            return []
+            return _Stuck([], detail)
         conflicted = _conflicted(wt)
         unresolved = [path for path in conflicted if not _resolve_log_conflict(wt, path)]
         if unresolved or not conflicted:
-            return unresolved
-        run = _git(wt, "-c", "core.editor=true", "rebase", "--continue",
-                   capture_output=True, text=True)
+            return _Stuck(unresolved, detail)
+        run = _git(wt, "rebase", "--continue", capture_output=True, text=True,
+                   env={**os.environ, "GIT_EDITOR": "true"})
     return None
 
 
@@ -166,11 +183,10 @@ def _integrate_remote(root: pathlib.Path) -> bool:
             stuck = _rebase_keeping_log_union(wt)
             if stuck is not None:
                 _git(wt, "rebase", "--abort", capture_output=True, text=True)
-                names = ", ".join(stuck) or "none reported by git"
-                print(f"WARNING: queue sync cannot rebase onto origin/main; unresolved conflict in: "
-                      f"{names}. Resolve by hand in {root}; nothing will publish until then.",
+                print(f"WARNING: queue sync cannot rebase onto origin/main; {stuck.describe()}. "
+                      "Resolve by hand in a worktree; nothing will publish until then.",
                       file=sys.stderr)
-                _report_divergence(root, f"rebase conflict in {names}")
+                _report_divergence(root, stuck.describe())
                 return False
             if _git(wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True).returncode != 0:
                 _report_divergence(root, "origin moved again while rebasing")

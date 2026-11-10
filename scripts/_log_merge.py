@@ -60,8 +60,8 @@ def _date_key(entry: str) -> str:
 def merge_log_appends(base: str, ours: str, theirs: str) -> str | None:
     """Merge `ours` and `theirs` onto `base`, or None when they differ by more than log appends.
 
-    None means: the text outside the log changed on both sides, or a side did not keep the base
-    entries as the start of its log. New entries are the union of both sides in date order,
+    None means: the text outside the log changed differently on the two sides, a side did not keep
+    the base entries as the start of its log, or a log layout is not a plain run of dated lines. New entries are the union of both sides in date order,
     `ours` first on a tie; base entries keep their order.
     """
     base_parts, ours_parts, theirs_parts = _split(base), _split(ours), _split(theirs)

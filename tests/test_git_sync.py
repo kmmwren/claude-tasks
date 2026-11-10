@@ -19,6 +19,7 @@ class _FakeProc:
     def __init__(self, rc):
         self.returncode = rc
         self.stdout = ""
+        self.stderr = ""
 
 
 @contextlib.contextmanager
@@ -418,7 +419,8 @@ def _move_to_done_with_log(repo, line):
         _brief(status="done", log="2026-11-09: captured.\n" + line))
 
 
-def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path, capsys):
+def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("GIT_EDITOR", "false")  # an interactive editor must never open
     repo = make_repo(tmp_path)
     _seed_pushed(repo, "inbox/b.md", _brief())
     _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-09: logged on origin.\n")
@@ -478,7 +480,7 @@ def test_sync_defers_loudly_when_a_conflict_is_outside_the_log(tmp_path, capsys)
     captured = capsys.readouterr()
     assert "inbox/b.md" in captured.err and "WARNING" in captured.err
     assert "push deferred" in captured.out
-    assert not (repo / ".git" / "rebase-merge").exists()
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
     assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
 
 
@@ -508,19 +510,19 @@ def test_a_clean_rebase_reports_nothing_stuck(tmp_path, monkeypatch):
 def test_a_rebase_that_fails_without_stopping_names_nothing(tmp_path, monkeypatch):
     _scripted_rebase(monkeypatch, returncodes=[1], in_progress=[False])
 
-    assert git_sync._rebase_keeping_log_union(tmp_path) == []
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
 
 
 def test_a_rebase_that_stops_without_a_conflicting_file_names_nothing(tmp_path, monkeypatch):
     _scripted_rebase(monkeypatch, returncodes=[1], conflicted=[])
 
-    assert git_sync._rebase_keeping_log_union(tmp_path) == []
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
 
 
 def test_a_conflict_outside_the_log_is_returned_for_deferral(tmp_path, monkeypatch):
     calls = _scripted_rebase(monkeypatch, returncodes=[1], conflicted=["done/b.md"], resolves=False)
 
-    assert git_sync._rebase_keeping_log_union(tmp_path) == ["done/b.md"]
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == ["done/b.md"]
     assert not any("--continue" in call for call in calls)
 
 
@@ -535,17 +537,17 @@ def test_a_rebase_that_cannot_continue_is_deferred(tmp_path, monkeypatch):
     _scripted_rebase(monkeypatch, returncodes=[1, 1], in_progress=[True, False],
                      conflicted=["done/b.md"])
 
-    assert git_sync._rebase_keeping_log_union(tmp_path) == []
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
 
 
 def test_integrate_warns_when_git_names_no_conflicting_file(tmp_path, monkeypatch, capsys):
     repo = make_repo(tmp_path)
-    monkeypatch.setattr(git_sync, "_rebase_keeping_log_union", lambda _wt: [])
+    monkeypatch.setattr(git_sync, "_rebase_keeping_log_union", lambda _wt: git_sync._Stuck([], "fatal: no such ref"))
 
     assert git_sync._integrate_remote(repo) is False
 
     captured = capsys.readouterr()
-    assert "none reported by git" in captured.err and "WARNING" in captured.err
+    assert "rebase failed: fatal: no such ref" in captured.err and "WARNING" in captured.err
     assert "push deferred" in captured.out
 
 
@@ -590,3 +592,16 @@ def test_conflicted_lists_unmerged_paths_split_on_nul(tmp_path, monkeypatch):
     monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: listing)
 
     assert git_sync._conflicted(tmp_path) == ["done/b.md", "inbox/café.md"]
+
+
+def test_a_stuck_rebase_without_files_or_error_text_still_says_why():
+    assert git_sync._Stuck([], "").describe() == "rebase failed: git reported no conflicting file"
+
+
+def test_a_stage_that_is_not_utf8_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    def undecodable(*_a, **_k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(git_sync, "_git", undecodable)
+
+    assert git_sync._stage_text(tmp_path, 2, "done/b.md") is None
