@@ -33,7 +33,7 @@ def test_move_commits_only_the_moved_briefs_paths(tmp_path):
     (main / "ready" / "other.md").write_text("---\nid: other\nstatus: ready\n---\nhalf-written note\n")
     (main / "inbox" / "peer-unrelated-1234abcd.md").write_text("---\nid: peer-unrelated-1234abcd\n---\n")
     transition.main(["move", ID, "in-progress", "--root", str(main)])
-    changed = git(origin, "show", "--name-status", "--format=", "main").split("\n")
+    changed = git(origin, "show", "--no-renames", "--name-status", "--format=", "main").split("\n")
     assert sorted(filter(None, changed)) == [f"A\tin-progress/{ID}.md", f"D\tready/{ID}.md"]
-    status = git(main, "status", "--porcelain")
+    status = git(main, "status", "--porcelain", "--untracked-files=all")
     assert " M ready/other.md" in status and "?? inbox/peer-unrelated-1234abcd.md" in status
