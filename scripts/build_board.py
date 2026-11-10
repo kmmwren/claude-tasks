@@ -19,6 +19,7 @@ from _paths import require_queue, resolve_root, strip_comment
 from config import load_config
 from deps import parse_list
 from milestones import MilestonesError, progress
+from readiness import section
 
 DIRS = ["inbox", "ready", "in-progress", "blocked", "done", "parked"]
 COL_TITLE = {"inbox": "Inbox (raw)", "ready": "Ready", "in-progress": "In progress",
@@ -37,11 +38,6 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         k, _, v = line.partition(":")
         fm[k.strip()] = strip_comment(v)
     return fm, body
-
-
-def section(body: str, name: str) -> str:
-    m = re.search(rf"^##\s+{re.escape(name)}\s*\n(.*?)(?=^##\s|\Z)", body, re.DOTALL | re.MULTILINE)
-    return m.group(1).strip() if m else ""
 
 
 def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
