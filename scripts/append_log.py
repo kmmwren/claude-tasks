@@ -5,7 +5,8 @@ append_log.py: append a dated execution-log line to a brief without touching the
 Subagents are refused writes in the queue's main checkout (block-main-checkout-writes), and
 `transition.py move --log` only logs as part of a state change. This fetches origin/main into a
 temporary worktree, appends the line there, commits, pushes and removes the worktree, so the
-main checkout is never written.
+main checkout's files are never written. A brief that exists only uncommitted in the main checkout
+is first committed there through git_sync, so origin carries it and that checkout can still sync.
 
 Usage:
   python scripts/append_log.py <brief-id> "<line>" [--root DIR]
@@ -23,7 +24,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _paths import resolve_root  # noqa: E402
-from git_sync import _git  # noqa: E402
+from git_sync import _git, sync_commit  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
 PUSH_ATTEMPTS = 4
@@ -48,6 +49,15 @@ def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
     return None
 
 
+def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
+    """Pushing a path the main checkout holds untracked would make its next pull refuse, so file it first."""
+    local = _find(root, brief_id)
+    if local is None or _run(root, "ls-files", "--error-unmatch", "--", str(local)).returncode == 0:
+        return
+    if not sync_commit(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
+        raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry")
+
+
 def _try_push(wt: pathlib.Path, queue: pathlib.Path, brief_id: str, line: str, today: str) -> str | None:
     """Append, commit and push in `wt`; return the pushed sha, or None when the push lost a race."""
     path = _find(queue, brief_id)
@@ -67,6 +77,7 @@ def append_log(brief_id: str, line: str, root: pathlib.Path, today: str | None =
     """Append `line` to the brief's Execution log on origin/main; return the pushed commit sha."""
     today = today or datetime.date.today().isoformat()
     prefix = _queue_prefix(root)
+    _commit_if_uncommitted(root, brief_id)
     with tempfile.TemporaryDirectory(prefix="append-log-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         for _ in range(PUSH_ATTEMPTS):
