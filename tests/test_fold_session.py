@@ -105,9 +105,9 @@ def test_each_queue_that_owns_its_repo_is_committed(queues, monkeypatch):
     parent, child, env = queues
     subprocess.run(["git", "init", "-q", str(parent)], check=True)
     commits = []
-    monkeypatch.setattr(fold_session, "sync_commit", lambda message, root: commits.append((message, root)))
+    monkeypatch.setattr(fold_session, "sync_commit", lambda message, root, paths: commits.append((message, root, paths)))
     fold_session.SessionQueue.load(child).fold(env)
-    assert commits == [("fold session s1: 2 brief(s) into parent", parent.resolve())]
+    assert commits == [("fold session s1: 2 brief(s) into parent", parent.resolve(), (".",))]
 
 
 def test_owns_repo_only_at_the_repo_top(tmp_path):
