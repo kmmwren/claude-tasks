@@ -116,3 +116,29 @@ def test_rejected_push_retries_then_gives_up(repos, capsys):
     assert append_log.main([ID, "x", "--root", str(main)]) == 2
     assert "still rejected after 4 attempts" in capsys.readouterr().err
     assert git(main, "worktree", "list").count("\n") == 1
+
+
+PEER = "peer-memory-abc12345"
+
+
+def _file_uncommitted_peer_brief(main):
+    (main / "inbox").mkdir(exist_ok=True)
+    (main / "inbox" / f"{PEER}.md").write_text(f"---\nid: {PEER}\n---\n\n## Execution log\n\n2026-01-01: filed.\n")
+
+
+def test_brief_uncommitted_in_main_checkout_is_logged_and_leaves_sync_working(repos):
+    origin, main = repos
+    _file_uncommitted_peer_brief(main)
+    sha = append_log.append_log(PEER, "no action needed", root=main, today="2026-11-10")
+    assert "2026-11-10: no action needed" in git(origin, "show", f"{sha}:inbox/{PEER}.md")
+    assert f"?? inbox/{PEER}.md" not in git(main, "status", "--porcelain")
+    git(main, "pull", "-q", "--rebase", "origin", "main")
+    assert (main / "inbox" / f"{PEER}.md").read_text().endswith("2026-11-10: no action needed\n")
+
+
+def test_deferred_filing_of_uncommitted_brief_is_a_runtime_error(repos, monkeypatch):
+    _, main = repos
+    _file_uncommitted_peer_brief(main)
+    monkeypatch.setattr(append_log, "sync_commit", lambda *a, **k: False, raising=False)
+    with pytest.raises(RuntimeError, match="uncommitted"):
+        append_log.append_log(PEER, "x", root=main)
