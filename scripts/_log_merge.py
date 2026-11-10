@@ -5,6 +5,7 @@ The log is append-only and each entry is dated, so the merge is the base entries
 both sides' new entries in date order. A change anywhere else is a real conflict.
 """
 import re
+from collections import Counter
 
 LOG_HEADING = "## Execution log"
 _HEADING_LINE = re.compile(rf"^{re.escape(LOG_HEADING)}[ \t]*$", re.MULTILINE)
@@ -21,8 +22,9 @@ def _split(text: str) -> tuple[str, list[str]] | None:
     headings = list(_HEADING_LINE.finditer(text))
     if not headings:
         return None
-    heading = headings[-1]
-    lines = text[heading.end():].strip("\n").splitlines()
+    after = text[headings[-1].end():]
+    gap = after[: len(after) - len(after.lstrip("\n"))] or "\n\n"
+    lines = after.strip("\n").splitlines()
     if any(not line.strip() or line.startswith("## ") for line in lines):
         return None
     entries: list[str] = []
@@ -31,7 +33,7 @@ def _split(text: str) -> tuple[str, list[str]] | None:
             entries.append(line)
         else:
             entries[-1] += "\n" + line
-    return text[:heading.end()], entries
+    return text[: headings[-1].end()] + gap, entries
 
 
 def _merge_head(base: str, ours: str, theirs: str) -> str | None:
@@ -41,6 +43,14 @@ def _merge_head(base: str, ours: str, theirs: str) -> str | None:
     if ours == base:
         return theirs
     return None
+
+
+def _take(available: Counter[str], entry: str) -> bool:
+    """Consume one occurrence of `entry` from `available`; True if there was one."""
+    if available[entry] > 0:
+        available[entry] -= 1
+        return True
+    return False
 
 
 def _date_key(entry: str) -> str:
@@ -63,5 +73,8 @@ def merge_log_appends(base: str, ours: str, theirs: str) -> str | None:
     n = len(kept)
     if head is None or ours_all[:n] != kept or theirs_all[:n] != kept:
         return None
-    added = sorted(dict.fromkeys([*ours_all[n:], *theirs_all[n:]]), key=_date_key)
-    return head + "\n\n" + "\n".join([*kept, *added]) + "\n"
+    shared = Counter(ours_all[n:])
+    theirs_only = [entry for entry in theirs_all[n:] if not _take(shared, entry)]
+    added = sorted([*ours_all[n:], *theirs_only], key=_date_key)
+    entries = [*kept, *added]
+    return head + "".join(f"{entry}\n" for entry in entries)

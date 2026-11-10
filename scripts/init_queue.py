@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from _concurrency import atomic_write
+from _log_merge import LOG_HEADING
 from _paths import CONFIG_FILE, TASK_DIRS, binding_path, is_queue, require_queue
 
 QUEUE_TEMPLATE = """\
@@ -66,7 +67,7 @@ requires-local: # OPTIONAL true, when the brief needs files only on a local mach
 ## Notes / open questions
 <!-- Half-formed thoughts, investigations, deferred decisions. -->
 
-## Execution log
+""" + LOG_HEADING + """
 <!-- YYYY-MM-DD: what happened. Use `ESCALATED — <reason>` when human input was
      needed mid-execution on an autonomy:full brief. -->
 """

@@ -30,10 +30,15 @@ def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProc
     return subprocess.run(["git", "-C", str(root), *args], **kw)
 
 
+def _toplevel(root: pathlib.Path) -> pathlib.Path | None:
+    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
+    return pathlib.Path(top.stdout.strip()) if top.returncode == 0 else None
+
+
 def owns_repo(root: pathlib.Path) -> bool:
     """True when `root` is the top of its own git repo, so `add --all` stages only the queue."""
-    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
-    return top.returncode == 0 and pathlib.Path(top.stdout.strip()).resolve() == root.resolve()
+    top = _toplevel(root)
+    return top is not None and top.resolve() == root.resolve()
 
 
 def _brief_pathspec(brief_id: str) -> str:
@@ -86,7 +91,8 @@ def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequenc
 
 def _stage_text(root: pathlib.Path, stage: int, path: str) -> str | None:
     """A conflicted file's content at merge stage 1 (base), 2 (upstream) or 3 (replayed commit)."""
-    shown = _git(root, "show", f":{stage}:{path}", capture_output=True, text=True)
+    shown = _git(root, "show", f":{stage}:{path}", capture_output=True, text=True,
+                 encoding="utf-8")
     return shown.stdout if shown.returncode == 0 else None
 
 
@@ -99,23 +105,19 @@ def _resolve_log_conflict(root: pathlib.Path, path: str) -> bool:
     if base is None or ours is None or theirs is None:
         return False
     merged = merge_log_appends(base, ours, theirs)
-    if merged is None:
+    top = _toplevel(root)
+    if merged is None or top is None:
         return False
-    (_toplevel(root) / path).write_text(merged)
+    (top / path).write_text(merged, encoding="utf-8")
     return _git(root, "add", "--", f":(top){path}", capture_output=True,
                 text=True).returncode == 0
 
 
-def _toplevel(root: pathlib.Path) -> pathlib.Path:
-    return pathlib.Path(_git(root, "rev-parse", "--show-toplevel",
-                             capture_output=True, text=True).stdout.strip())
-
-
 def _conflicted(root: pathlib.Path) -> list[str]:
     """Unmerged paths relative to the repo top, including any outside the queue folder."""
-    out: str = _git(root, "diff", "--name-only", "--diff-filter=U",
+    out: str = _git(root, "diff", "-z", "--name-only", "--diff-filter=U",
                     capture_output=True, text=True).stdout
-    return out.splitlines()
+    return [path for path in out.split("\0") if path]
 
 
 def _rebase_in_progress(root: pathlib.Path) -> bool:

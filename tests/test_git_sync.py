@@ -498,3 +498,30 @@ def test_only_task_dir_briefs_are_auto_resolved(tmp_path, path):
 def test_unresolvable_when_a_merge_stage_is_missing(tmp_path):
     repo = make_repo(tmp_path)
     assert git_sync._resolve_log_conflict(repo, "inbox/never-conflicted.md") is False
+
+
+def test_a_failed_git_add_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    text = _brief()
+    (tmp_path / "done").mkdir()
+    monkeypatch.setattr(git_sync, "_stage_text", lambda _r, _s, _p: text)
+    monkeypatch.setattr(git_sync, "_toplevel", lambda _r: tmp_path)
+    monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: _FakeProc(1))
+
+    assert git_sync._resolve_log_conflict(tmp_path, "done/b.md") is False
+
+
+def test_a_missing_repo_top_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    text = _brief()
+    monkeypatch.setattr(git_sync, "_stage_text", lambda _r, _s, _p: text)
+    monkeypatch.setattr(git_sync, "_toplevel", lambda _r: None)
+
+    assert git_sync._resolve_log_conflict(tmp_path, "done/b.md") is False
+
+
+def test_conflicted_lists_unmerged_paths_split_on_nul(tmp_path, monkeypatch):
+    class _Out(_FakeProc):
+        stdout = "done/b.md\0inbox/café.md\0"
+
+    monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: _Out(0))
+
+    assert git_sync._conflicted(tmp_path) == ["done/b.md", "inbox/café.md"]
