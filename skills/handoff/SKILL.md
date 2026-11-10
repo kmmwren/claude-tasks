@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: \"handoff\", \"I'm done with this session\", \"stop and queue what's left\", \"offload this session\", \"park this and pick it up later\", \"hand off everything to parked\", or pastes a claude.ai artifact link and asks to hand it off, or pastes Slack message links (each optionally with her notes) and asks to hand them off, add them as tasks or park them. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends."
+description: "Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: \"handoff\", \"I'm done with this session\", \"stop and queue what's left\", \"offload this session\", \"park this and pick it up later\", \"hand off everything to parked\", or pastes a claude.ai artifact link and asks to hand it off, or pastes Slack message links (each optionally with her notes) and asks to hand them off, add them as tasks or park them (pass the pasted links verbatim in `args`, so the hooks treat it as a capture and the session carries on). Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends."
 ---
 
 # handoff
@@ -15,8 +15,8 @@ resume. Record its exact state and next step in the brief instead. The resume an
 open-ledger hooks detect a handoff in the transcript and say the same.
 
 **A Slack or artifact input is a capture, not an ending.** It files briefs for those links
-only; the session keeps its own open work and carries on. Invoke the skill with the links in
-`args`, which is how the hooks tell a capture from a session handoff.
+only; the session keeps its own open work and carries on. The hooks tell a capture from a
+session handoff by the links in the invocation's `args`.
 
 ## Long-running sessions: capture, keep the ledger, keep running
 
@@ -87,7 +87,9 @@ it is what she is thinking about it:
   rows); the brief carries conclusions, never those records.
 - **Report:** `Filed N Slack handoffs (<count> <state>/ for each state used; M unreadable).`
 
-A message that mixes inputs runs one handoff per input, artifacts and Slack links before the session.
+A message that mixes inputs runs one handoff per input, artifacts and Slack links before the
+session, each its own Skill call: the links alone in one call's `args`, then the session with
+no link in its `args`.
 
 When the prompt names a session id and a digest path (`Hand off session <sid> ("<name>") from
 its digest at <path>`), the digest is the input in place of the session:
