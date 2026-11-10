@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: \"handoff\", \"I'm done with this session\", \"stop and queue what's left\", \"offload this session\", \"park this and pick it up later\", \"hand off everything to parked\", or pastes a claude.ai artifact link and asks to hand it off, or pastes Slack message links (each optionally with her notes) and asks to hand them off. Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends."
+description: "Use when the user wants to STOP a Claude Code session and hand its still-open work to the task queue: \"handoff\", \"I'm done with this session\", \"stop and queue what's left\", \"offload this session\", \"park this and pick it up later\", \"hand off everything to parked\", or pastes a claude.ai artifact link and asks to hand it off, or pastes Slack message links (each optionally with her notes) and asks to hand them off, add them as tasks or park them (pass the pasted links verbatim in `args`, so the hooks treat it as a capture and the session carries on). Captures the session's open work items into the queue (inbox/ by default, or a directed target like parked/ or ready/) AND adds a judgement layer of things discussed-but-never-tracked, so nothing is stranded when the session ends."
 ---
 
 # handoff
@@ -13,6 +13,10 @@ stops. Over-capture into `inbox/`; the `enrich` skill filters and structures lat
 even when an item looks one step from done and even after a compaction tells you to
 resume. Record its exact state and next step in the brief instead. The resume and
 open-ledger hooks detect a handoff in the transcript and say the same.
+
+**A Slack or artifact input is a capture, not an ending.** It files briefs for those links
+only; the session keeps its own open work and carries on. The hooks tell a capture from a
+session handoff by the links in the invocation's `args`.
 
 ## Long-running sessions: capture, keep the ledger, keep running
 
@@ -27,7 +31,7 @@ Add a session to the shortlist with `long_running.py add <session-id> "<name>"`.
 
 ## Headroom check
 
-Unless the input is a session digest, run `python3 ~/.claude/scripts/handoff_external.py check`.
+When the input is this session, run `python3 ~/.claude/scripts/handoff_external.py check`.
 Exit 0: hand off in-session. Exit 3: run `python3 ~/.claude/scripts/handoff_external.py launch`
 (add `--direction "<target>"` when the user gave one, e.g. "to parked/"), report in one line that
 the handoff runs externally with the log path, and stop: no briefs, no ledger closes. If the
@@ -51,14 +55,19 @@ the session, and every step below runs the same way with these substitutions:
   `From artifact <url> (snapshot <page date>); re-check before acting.`
 
 When her message carries Slack permalinks (`https://<workspace>.slack.com/archives/...`) and
-asks to hand them off, each link is one task and the text she put beside it is what she is
-thinking about it:
+asks to hand them off or add them as tasks, each link is one task and the text she put beside
+it is what she is thinking about it:
 
 - **Split:** pipe her whole message to `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slack_links.py"`.
   It returns `direction` (her text before the first link, applied to every item through
   Directed handoff below) and one `links` entry per permalink with `channel`, `message_ts`,
-  `thread_ts` and `note` (her text after that link, up to the next one). Exit 2 means no
-  permalink was found: say so and stop.
+  `thread_ts`, `note` (her text after that link, up to the next one) and `parked`. Exit 2
+  means no permalink was found: say so and stop.
+- **Parked option:** `parked` is true when the direction or that link's own note mentions
+  parking, so "park these <links>" parks the batch and "<link> as a task, parked" parks only
+  that link; file it with `--status parked`. Ignore the flag when her words negate parking or
+  only mention it ("don't park this", "why was this parked?"). A note that is only the park
+  instruction counts as no note.
 - **Read:** `slack_read_thread` with `channel` and `thread_ts`, and anchor on the message at
   `message_ts`. Read that thread only; never browse the channel around it.
 - **Items:** one brief per link. Her note is the intent: it sets the title and goal and
@@ -76,9 +85,11 @@ thinking about it:
   with `--autonomy needs-input` and say the thread could not be read.
 - **Customer data:** a thread may carry pasted customer security data (log extracts, asset
   rows); the brief carries conclusions, never those records.
-- **Report:** `Filed N Slack handoffs to <state>/ (M unreadable).`
+- **Report:** `Filed N Slack handoffs (<count> <state>/ for each state used; M unreadable).`
 
-A message that mixes inputs runs one handoff per input, artifacts and Slack links before the session.
+A message that mixes inputs runs one handoff per input, artifacts and Slack links before the
+session, each its own Skill call: the links alone in one call's `args`, then the session with
+no link in its `args`.
 
 When the prompt names a session id and a digest path (`Hand off session <sid> ("<name>") from
 its digest at <path>`), the digest is the input in place of the session:
