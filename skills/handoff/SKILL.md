@@ -14,6 +14,10 @@ even when an item looks one step from done and even after a compaction tells you
 resume. Record its exact state and next step in the brief instead. The resume and
 open-ledger hooks detect a handoff in the transcript and say the same.
 
+**A Slack or artifact input is a capture, not an ending.** It files briefs for those links
+only; the session keeps its own open work and carries on. Invoke the skill with the links in
+`args`, which is how the hooks tell a capture from a session handoff.
+
 ## Long-running sessions: capture, keep the ledger, keep running
 
 First run `python3 ~/.claude/hooks/lib/long_running.py check`. Exit 0 means this session is on the
@@ -27,7 +31,7 @@ Add a session to the shortlist with `long_running.py add <session-id> "<name>"`.
 
 ## Headroom check
 
-Unless the input is a session digest, run `python3 ~/.claude/scripts/handoff_external.py check`.
+When the input is this session, run `python3 ~/.claude/scripts/handoff_external.py check`.
 Exit 0: hand off in-session. Exit 3: run `python3 ~/.claude/scripts/handoff_external.py launch`
 (add `--direction "<target>"` when the user gave one, e.g. "to parked/"), report in one line that
 the handoff runs externally with the log path, and stop: no briefs, no ledger closes. If the
@@ -57,11 +61,11 @@ it is what she is thinking about it:
 - **Split:** pipe her whole message to `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slack_links.py"`.
   It returns `direction` (her text before the first link, applied to every item through
   Directed handoff below) and one `links` entry per permalink with `channel`, `message_ts`,
-  `thread_ts`, `note` (her text after that link, up to the next one) and `target`. Exit 2
+  `thread_ts`, `note` (her text after that link, up to the next one) and `parked`. Exit 2
   means no permalink was found: say so and stop.
-- **Parked option:** `target` is `parked` when the direction or that link's own note says
-  park, so "park these <links>" parks the batch and "<link> as a task, parked" parks only
-  that link; file it with `--status parked`. Override it when her words negate parking or
+- **Parked option:** `parked` is true when the direction or that link's own note mentions
+  parking, so "park these <links>" parks the batch and "<link> as a task, parked" parks only
+  that link; file it with `--status parked`. Ignore the flag when her words negate parking or
   only mention it ("don't park this", "why was this parked?"). A note that is only the park
   instruction counts as no note.
 - **Read:** `slack_read_thread` with `channel` and `thread_ts`, and anchor on the message at
@@ -81,7 +85,7 @@ it is what she is thinking about it:
   with `--autonomy needs-input` and say the thread could not be read.
 - **Customer data:** a thread may carry pasted customer security data (log extracts, asset
   rows); the brief carries conclusions, never those records.
-- **Report:** `Filed N Slack handoffs (X inbox/, Y parked/; M unreadable).`
+- **Report:** `Filed N Slack handoffs (<count> <state>/ for each state used; M unreadable).`
 
 A message that mixes inputs runs one handoff per input, artifacts and Slack links before the session.
 

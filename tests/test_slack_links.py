@@ -45,28 +45,28 @@ def test_main_prints_json(capsys):
     assert json.loads(capsys.readouterr().out)["links"][0]["note"] == "note"
 
 
-def test_links_go_to_inbox_by_default():
-    assert slack_links.parse(f"{TOP} fix the flaky test").links[0].target == "inbox"
+def test_links_are_not_parked_by_default():
+    assert slack_links.parse(f"{TOP} fix the flaky test").links[0].parked is False
 
 
 def test_direction_parks_every_link():
     batch = slack_links.parse(f"park these\n{TOP} one\n{REPLY} two")
-    assert [x.target for x in batch.links] == ["parked", "parked"]
+    assert [x.parked for x in batch.links] == [True, True]
 
 
 def test_note_parks_only_its_own_link():
     batch = slack_links.parse(f"{TOP} as a task, parked\n{REPLY} look at this")
-    assert [x.target for x in batch.links] == ["parked", "inbox"]
+    assert [x.parked for x in batch.links] == [True, False]
 
 
 def test_park_matches_any_case_and_form():
-    assert slack_links.parse(f"Parking these\n{TOP}").links[0].target == "parked"
+    assert slack_links.parse(f"Parking these\n{TOP}").links[0].parked is True
 
 
 def test_park_must_be_a_whole_word():
-    assert slack_links.parse(f"{TOP} check the parkway office").links[0].target == "inbox"
+    assert slack_links.parse(f"{TOP} check the parkway office").links[0].parked is False
 
 
-def test_main_prints_target(capsys):
+def test_main_prints_parked(capsys):
     slack_links.main([f"parked {TOP}"])
-    assert json.loads(capsys.readouterr().out)["links"][0]["target"] == "parked"
+    assert json.loads(capsys.readouterr().out)["links"][0]["parked"] is True
