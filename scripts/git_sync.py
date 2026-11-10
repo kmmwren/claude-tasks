@@ -86,7 +86,7 @@ def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequenc
 
 def _stage_text(root: pathlib.Path, stage: int, path: str) -> str | None:
     """A conflicted file's content at merge stage 1 (base), 2 (upstream) or 3 (replayed commit)."""
-    shown = _git(root, "show", f":{stage}:./{path}", capture_output=True, text=True)
+    shown = _git(root, "show", f":{stage}:{path}", capture_output=True, text=True)
     return shown.stdout if shown.returncode == 0 else None
 
 
@@ -101,14 +101,30 @@ def _resolve_log_conflict(root: pathlib.Path, path: str) -> bool:
     merged = merge_log_appends(base, ours, theirs)
     if merged is None:
         return False
-    (root / path).write_text(merged)
-    return _git(root, "add", "--", path, capture_output=True, text=True).returncode == 0
+    (_toplevel(root) / path).write_text(merged)
+    return _git(root, "add", "--", f":(top){path}", capture_output=True,
+                text=True).returncode == 0
+
+
+def _toplevel(root: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(_git(root, "rev-parse", "--show-toplevel",
+                             capture_output=True, text=True).stdout.strip())
 
 
 def _conflicted(root: pathlib.Path) -> list[str]:
-    out: str = _git(root, "diff", "--name-only", "--relative", "--diff-filter=U",
+    """Unmerged paths relative to the repo top, including any outside the queue folder."""
+    out: str = _git(root, "diff", "--name-only", "--diff-filter=U",
                     capture_output=True, text=True).stdout
     return out.splitlines()
+
+
+def _rebase_in_progress(root: pathlib.Path) -> bool:
+    for name in ("rebase-merge", "rebase-apply"):
+        found: str = _git(root, "rev-parse", "--git-path", name,
+                          capture_output=True, text=True).stdout.strip()
+        if found and (root / found).exists():
+            return True
+    return False
 
 
 def _pull_rebase(root: pathlib.Path) -> bool:
@@ -119,7 +135,7 @@ def _pull_rebase(root: pathlib.Path) -> bool:
     """
     if _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main").returncode == 0:
         return True
-    while True:
+    while _rebase_in_progress(root):
         conflicted = _conflicted(root)
         unresolved = [p for p in conflicted if not _resolve_log_conflict(root, p)]
         if not conflicted or unresolved:
@@ -133,6 +149,7 @@ def _pull_rebase(root: pathlib.Path) -> bool:
                     capture_output=True, text=True)
         if cont.returncode == 0:
             return True
+    return False
 
 
 def sync_commit(message: str, root: pathlib.Path | None = None,

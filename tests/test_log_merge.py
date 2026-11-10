@@ -66,3 +66,37 @@ def test_an_undated_first_line_is_kept_as_its_own_entry():
     undated = HEAD.format(s="inbox", g="g") + "stray note\n"
     merged = merge_log_appends(undated, undated, undated)
     assert merged is not None and merged.endswith("\n\nstray note\n")
+
+
+def test_a_duplicate_base_line_is_preserved():
+    base = brief("2026-11-09: captured.", "2026-11-09: captured.")
+    ours = brief("2026-11-09: captured.", "2026-11-09: captured.", "2026-11-10: a.")
+    assert merge_log_appends(base, ours, base) == ours
+
+
+def test_base_entries_out_of_date_order_keep_their_order():
+    base = brief("2026-11-10: later.", "2026-11-09: earlier.")
+    ours = brief("2026-11-10: later.", "2026-11-09: earlier.", "2026-11-11: a.")
+    theirs = brief("2026-11-10: later.", "2026-11-09: earlier.", "2026-11-10: b.")
+    assert merge_log_appends(base, ours, theirs) == brief(
+        "2026-11-10: later.", "2026-11-09: earlier.", "2026-11-10: b.", "2026-11-11: a.")
+
+
+def test_the_heading_quoted_in_the_body_is_not_taken_for_the_log():
+    quoted = brief("2026-11-09: captured.", g="see ## Execution log below")
+    ours = brief("2026-11-09: captured.", "2026-11-10: a.", g="see ## Execution log below")
+    assert merge_log_appends(quoted, ours, quoted) == ours
+
+
+def test_a_section_after_the_log_is_not_mergeable():
+    trailing = BASE + "\n## Appendix\n\ntext\n"
+    assert merge_log_appends(trailing, trailing, trailing) is None
+
+
+def test_a_blank_line_inside_the_log_is_not_mergeable():
+    gapped = BASE + "\n2026-11-10: after a gap.\n"
+    assert merge_log_appends(gapped, gapped, gapped) is None
+
+
+def test_a_brief_without_the_heading_is_not_mergeable():
+    assert merge_log_appends("no log here\n", "no log here\n", "no log here\n") is None

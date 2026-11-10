@@ -22,6 +22,7 @@ import re
 import sys
 
 from _concurrency import atomic_write, reserve_name
+from _log_merge import LOG_HEADING
 from _paths import TASK_DIRS, require_queue, resolve_root
 from git_sync import sync_commit as _sync_commit
 
@@ -135,7 +136,7 @@ related: []
 
 _none_
 
-## Execution log
+{LOG_HEADING}
 
 {today}: captured by {a.source} via add_task.py.
 """

@@ -403,22 +403,31 @@ def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path
     assert capsys.readouterr().err == ""
 
 
-def test_sync_unions_across_several_replayed_commits(tmp_path):
+def test_sync_unions_across_several_replayed_commits(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
     _seed_pushed(repo, "inbox/b.md", _brief())
-    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-09: logged on origin.\n")
+    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-11: logged on origin.\n")
     _move_to_done_with_log(repo, "2026-11-09: closed locally.\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "move and log")
     with (repo / "done" / "b.md").open("a") as fh:
         fh.write("2026-11-10: later local line.\n")
+    resolved = []
+    real = git_sync._resolve_log_conflict
+
+    def spy(root, path):
+        resolved.append(path)
+        return real(root, path)
+
+    monkeypatch.setattr(git_sync, "_resolve_log_conflict", spy)
 
     assert git_sync.sync_commit("brief(b): log", root=repo) is True
 
     git(repo, "fetch", "-q", "origin")
     merged = git(repo, "show", "origin/main:done/b.md").stdout
-    assert merged.endswith("2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
-                           "2026-11-10: later local line.\n")
+    assert merged.endswith("2026-11-09: closed locally.\n2026-11-10: later local line.\n"
+                           "2026-11-11: logged on origin.\n")
+    assert resolved == ["done/b.md", "done/b.md"]
 
 
 def test_sync_defers_loudly_when_a_conflict_is_outside_the_log(tmp_path, capsys):
@@ -440,13 +449,45 @@ def test_sync_defers_loudly_when_a_conflict_is_outside_the_log(tmp_path, capsys)
     assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
 
 
-def test_sync_defers_when_git_reports_no_conflicting_file(tmp_path, monkeypatch, capsys):
+def _failing_pull(monkeypatch):
     monkeypatch.setattr(git_sync, "repo_lock", _lock_acquired)
     monkeypatch.setattr(git_sync, "_git",
                         lambda _r, *a, **_k: _FakeProc(1 if a[0] in ("push", "pull") else 0))
 
+
+def test_sync_defers_quietly_when_the_pull_fails_without_a_rebase(tmp_path, monkeypatch, capsys):
+    _failing_pull(monkeypatch)
+    monkeypatch.setattr(git_sync, "_rebase_in_progress", lambda _r: False)
+
+    assert git_sync.sync_commit("x", root=tmp_path) is False
+    captured = capsys.readouterr()
+    assert captured.err == "" and "push deferred" in captured.out
+
+
+def test_sync_warns_when_a_rebase_stops_without_a_conflicting_file(tmp_path, monkeypatch, capsys):
+    _failing_pull(monkeypatch)
+    monkeypatch.setattr(git_sync, "_rebase_in_progress", lambda _r: True)
+    monkeypatch.setattr(git_sync, "_conflicted", lambda _r: [])
+
     assert git_sync.sync_commit("x", root=tmp_path) is False
     assert "none reported by git" in capsys.readouterr().err
+
+
+def test_a_rebase_that_cannot_continue_is_retried_then_deferred(tmp_path, monkeypatch):
+    monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: _FakeProc(1))
+    monkeypatch.setattr(git_sync, "_conflicted", lambda _r: ["done/b.md"])
+    monkeypatch.setattr(git_sync, "_resolve_log_conflict", lambda _r, _p: True)
+    calls = iter([True, False])
+    monkeypatch.setattr(git_sync, "_rebase_in_progress", lambda _r: next(calls))
+
+    assert git_sync._pull_rebase(tmp_path) is False
+
+
+def test_rebase_in_progress_tracks_the_rebase_directory(tmp_path):
+    repo = make_repo(tmp_path)
+    assert git_sync._rebase_in_progress(repo) is False
+    (repo / ".git" / "rebase-merge").mkdir()
+    assert git_sync._rebase_in_progress(repo) is True
 
 
 @pytest.mark.parametrize("path", ["scripts/tool.py", "elsewhere/b.md"])

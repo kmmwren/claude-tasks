@@ -34,6 +34,7 @@ from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
+from _log_merge import LOG_HEADING
 from _paths import resolve_root
 from deps import (
     CONFIRMED_KEY,
@@ -235,9 +236,9 @@ def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
 def _append_log(text: str, today: str, message: str) -> str:
     """Append a dated line to the Execution log (creating the section if it is missing)."""
     line = f"{today}: {message}"
-    if "## Execution log" in text:
+    if LOG_HEADING in text:
         return text.rstrip("\n") + "\n" + line + "\n"
-    return text.rstrip("\n") + "\n\n## Execution log\n\n" + line + "\n"
+    return text.rstrip("\n") + f"\n\n{LOG_HEADING}\n\n" + line + "\n"
 
 
 def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
