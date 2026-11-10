@@ -15,6 +15,10 @@
   commit a new brief file whose id is already filed in another state dir (`done/` included), on
   disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
   moved brief cannot leave the id in two states.
+- **`append_log.py` finds a brief that is uncommitted in the main checkout.** A brief filed on disk
+  but never committed (a peer-message brief, say) was invisible to the temporary worktree and
+  failed with "no brief with id". It is now committed through `git_sync` first, staging only that
+  brief, so the log line lands and the checkout's next pull is not blocked by an untracked copy.
 
 ### Added
 - **`append_log.py`** appends a dated execution-log line to a brief from a temporary worktree
