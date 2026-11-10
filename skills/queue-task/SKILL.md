@@ -20,6 +20,9 @@ Add a brief whenever you would otherwise leave a loose end:
 Do NOT capture: things you're doing right now, pure conversation, or duplicates of briefs
 that already exist (check first — see Dedup).
 
+A pasted Slack permalink goes through the `handoff` skill's Slack input instead, which reads
+the thread, keeps her note as the intent and can file the link to `parked/`.
+
 ## How to add one
 
 Run the script. Fill out **as much as you meaningfully can** from context — don't leave

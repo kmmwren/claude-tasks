@@ -43,3 +43,26 @@ def test_main_exits_2_when_no_links(capsys):
 def test_main_prints_json(capsys):
     assert slack_links.main([f"{TOP} note"]) == 0
     assert json.loads(capsys.readouterr().out)["links"][0]["note"] == "note"
+
+
+def test_links_go_to_inbox_by_default():
+    assert slack_links.parse(f"{TOP} fix the flaky test").links[0].target == "inbox"
+
+
+def test_direction_parks_every_link():
+    batch = slack_links.parse(f"park these\n{TOP} one\n{REPLY} two")
+    assert [x.target for x in batch.links] == ["parked", "parked"]
+
+
+def test_note_parks_only_its_own_link():
+    batch = slack_links.parse(f"{TOP} as a task, parked\n{REPLY} look at this")
+    assert [x.target for x in batch.links] == ["parked", "inbox"]
+
+
+def test_park_must_be_a_whole_word():
+    assert slack_links.parse(f"{TOP} check the parkway office").links[0].target == "inbox"
+
+
+def test_main_prints_target(capsys):
+    slack_links.main([f"parked {TOP}"])
+    assert json.loads(capsys.readouterr().out)["links"][0]["target"] == "parked"
