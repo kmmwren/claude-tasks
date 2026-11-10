@@ -59,6 +59,10 @@ def test_note_parks_only_its_own_link():
     assert [x.target for x in batch.links] == ["parked", "inbox"]
 
 
+def test_park_matches_any_case_and_form():
+    assert slack_links.parse(f"Parking these\n{TOP}").links[0].target == "parked"
+
+
 def test_park_must_be_a_whole_word():
     assert slack_links.parse(f"{TOP} check the parkway office").links[0].target == "inbox"
 

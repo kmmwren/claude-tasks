@@ -55,13 +55,15 @@ asks to hand them off or add them as tasks, each link is one task and the text s
 it is what she is thinking about it:
 
 - **Split:** pipe her whole message to `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slack_links.py"`.
-  It returns `direction` (her text before the first link) and one `links` entry per permalink
-  with `channel`, `message_ts`, `thread_ts`, `note` (her text after that link, up to the next
-  one) and `target`. Exit 2 means no permalink was found: say so and stop.
-- **Target:** file each brief with `--status <target>`. It is `inbox` unless the direction or
-  that link's own note says park, so "park these <links>" parks the batch and
-  "<link> as a task, parked" parks only that link. A note that is only the park instruction
-  counts as no note.
+  It returns `direction` (her text before the first link, applied to every item through
+  Directed handoff below) and one `links` entry per permalink with `channel`, `message_ts`,
+  `thread_ts`, `note` (her text after that link, up to the next one) and `target`. Exit 2
+  means no permalink was found: say so and stop.
+- **Parked option:** `target` is `parked` when the direction or that link's own note says
+  park, so "park these <links>" parks the batch and "<link> as a task, parked" parks only
+  that link; file it with `--status parked`. Override it when her words negate parking or
+  only mention it ("don't park this", "why was this parked?"). A note that is only the park
+  instruction counts as no note.
 - **Read:** `slack_read_thread` with `channel` and `thread_ts`, and anchor on the message at
   `message_ts`. Read that thread only; never browse the channel around it.
 - **Items:** one brief per link. Her note is the intent: it sets the title and goal and
