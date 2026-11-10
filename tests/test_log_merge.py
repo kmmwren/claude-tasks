@@ -100,3 +100,32 @@ def test_a_blank_line_inside_the_log_is_not_mergeable():
 
 def test_a_brief_without_the_heading_is_not_mergeable():
     assert merge_log_appends("no log here\n", "no log here\n", "no log here\n") is None
+
+
+def test_an_entry_one_side_appended_twice_is_kept_twice():
+    ours = brief("2026-11-09: captured.", "2026-11-10: ping.", "2026-11-10: ping.")
+    assert merge_log_appends(BASE, ours, BASE) == ours
+
+
+def test_an_entry_both_sides_appended_twice_stays_twice():
+    both = brief("2026-11-09: captured.", "2026-11-10: ping.", "2026-11-10: ping.")
+    assert merge_log_appends(BASE, both, both) == both
+
+
+def test_the_layout_under_the_heading_is_preserved():
+    tight = "---\nstatus: inbox\n---\n\n## Execution log\n2026-11-09: captured.\n"
+    ours = tight + "2026-11-10: a.\n"
+    assert merge_log_appends(tight, ours, tight) == ours
+
+
+def test_an_empty_log_gains_entries_without_stray_blank_lines():
+    empty = HEAD.format(s="inbox", g="g")
+    ours = empty + "2026-11-10: a.\n"
+    assert merge_log_appends(empty, ours, empty) == ours
+    assert merge_log_appends(empty, empty, empty) == empty
+
+
+def test_a_heading_at_the_end_of_the_file_gets_a_blank_line_before_new_entries():
+    bare = "## Execution log"
+    ours = "## Execution log\n\n2026-11-10: a.\n"
+    assert merge_log_appends(bare, ours, bare) == ours
