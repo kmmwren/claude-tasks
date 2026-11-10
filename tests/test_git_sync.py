@@ -344,3 +344,116 @@ def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
 
     files = committed_files(repo)
     assert "done/moving.md" in files and "in-progress/moving.md" not in files
+
+
+# ── a rebase conflict confined to execution-log appends resolves as their union ──
+
+_BRIEF = "---\nid: b\nstatus: {status}\n---\n\n## Goal\n\n{goal}\n\n## Execution log\n\n{log}"
+
+
+def _brief(status="inbox", goal="g", log="2026-11-09: captured.\n"):
+    return _BRIEF.format(status=status, goal=goal, log=log)
+
+
+def _clone_of_origin(tmp_path):
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    for key, value in (("commit.gpgsign", "false"), ("user.email", "o@o.o"), ("user.name", "o")):
+        git(other, "config", key, value)
+    return other
+
+
+def _seed_pushed(repo, rel, text):
+    (repo / rel).write_text(text)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "push", "-q", "origin", "main")
+
+
+def _origin_appends(other, rel, line):
+    git(other, "pull", "-q", "origin", "main")
+    with (other / rel).open("a") as fh:
+        fh.write(line)
+    git(other, "commit", "-qam", "log line")
+    git(other, "push", "-q", "origin", "main")
+
+
+def _move_to_done_with_log(repo, line):
+    git(repo, "mv", "inbox/b.md", "done/b.md")
+    (repo / "done" / "b.md").write_text(
+        _brief(status="done", log="2026-11-09: captured.\n" + line))
+
+
+def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-09: logged on origin.\n")
+    _move_to_done_with_log(repo, "2026-11-09: closed locally.\n")
+
+    assert git_sync.sync_commit("brief(b): done", root=repo, ids=["b"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert "status: done" in merged
+    assert merged.endswith("2026-11-09: captured.\n2026-11-09: logged on origin.\n"
+                           "2026-11-09: closed locally.\n")
+    assert "inbox/b.md" not in committed_files(repo, "origin/main")
+    assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
+    assert capsys.readouterr().err == ""
+
+
+def test_sync_unions_across_several_replayed_commits(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-09: logged on origin.\n")
+    _move_to_done_with_log(repo, "2026-11-09: closed locally.\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "move and log")
+    with (repo / "done" / "b.md").open("a") as fh:
+        fh.write("2026-11-10: later local line.\n")
+
+    assert git_sync.sync_commit("brief(b): log", root=repo) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert merged.endswith("2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
+                           "2026-11-10: later local line.\n")
+
+
+def test_sync_defers_loudly_when_a_conflict_is_outside_the_log(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    other = _clone_of_origin(tmp_path)
+    git(other, "pull", "-q", "origin", "main")
+    (other / "inbox" / "b.md").write_text(_brief(goal="origin rewrote the goal"))
+    git(other, "commit", "-qam", "edit goal")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "b.md").write_text(_brief(goal="local rewrote the goal"))
+
+    assert git_sync.sync_commit("brief(b): edit", root=repo, ids=["b"]) is False
+
+    captured = capsys.readouterr()
+    assert "inbox/b.md" in captured.err and "WARNING" in captured.err
+    assert "push deferred" in captured.out
+    assert not (repo / ".git" / "rebase-merge").exists()
+    assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
+
+
+def test_sync_defers_when_git_reports_no_conflicting_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(git_sync, "repo_lock", _lock_acquired)
+    monkeypatch.setattr(git_sync, "_git",
+                        lambda _r, *a, **_k: _FakeProc(1 if a[0] in ("push", "pull") else 0))
+
+    assert git_sync.sync_commit("x", root=tmp_path) is False
+    assert "none reported by git" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path", ["scripts/tool.py", "elsewhere/b.md"])
+def test_only_task_dir_briefs_are_auto_resolved(tmp_path, path):
+    assert git_sync._resolve_log_conflict(tmp_path, path) is False
+
+
+def test_unresolvable_when_a_merge_stage_is_missing(tmp_path):
+    repo = make_repo(tmp_path)
+    assert git_sync._resolve_log_conflict(repo, "inbox/never-conflicted.md") is False

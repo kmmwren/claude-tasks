@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Fixed
+- **Execution-log appends no longer wedge the sync.** When `git_sync.py`'s rebase conflicts only
+  because two writers each appended to a brief's Execution log (typically `append_log.py` on
+  origin against a local move to `done/`), it resolves the file as the union of both sides'
+  entries in date order and continues. Any other conflict still aborts the rebase, now with a
+  stderr warning naming the files, instead of deferring silently.
 - **A closed brief is no longer re-created.** `git_sync.py` fetches `origin/main` and refuses to
   commit a new brief file whose id is already filed in another state dir (`done/` included), on
   disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
