@@ -41,10 +41,13 @@ def _run(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
     return _git(repo, *args, capture_output=True, text=True)
 
 
+def _repo_top(root: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(_run(root, "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+
+
 def _queue_prefix(root: pathlib.Path) -> pathlib.Path:
     """The queue's path inside its repo (empty when the queue is the repo top)."""
-    top = pathlib.Path(_run(root, "rev-parse", "--show-toplevel").stdout.strip())
-    return root.resolve().relative_to(top.resolve())
+    return root.resolve().relative_to(_repo_top(root))
 
 
 def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
@@ -55,13 +58,20 @@ def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
     return None
 
 
+def _committed(root: pathlib.Path, path: pathlib.Path) -> bool:
+    rel = path.resolve().relative_to(_repo_top(root)).as_posix()
+    return _run(root, "cat-file", "-e", f"HEAD:{rel}").returncode == 0
+
+
 def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
-    """Pushing a path the main checkout holds untracked would make its next pull refuse, so file it first."""
+    """Pushing a path the main checkout holds uncommitted would make its next pull refuse, so file it first."""
     local = _find(root, brief_id)
-    if local is None or _run(root, "ls-files", "--error-unmatch", "--", str(local)).returncode == 0:
+    if local is None or _committed(root, local):
         return
     if not sync_commit(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
         raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry")
+    if not _committed(root, local):
+        raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and git_sync could not commit it")
 
 
 def _try_push(wt: pathlib.Path, queue: pathlib.Path, brief_id: str, line: str, today: str) -> str | None:

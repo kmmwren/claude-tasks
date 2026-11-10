@@ -23,6 +23,8 @@ def repos(tmp_path):
     git(main, "add", "-A")
     git(main, "commit", "-qm", "base")
     git(main, "push", "-q", "origin", "HEAD:main")
+    git(main, "config", "user.name", "t")
+    git(main, "config", "user.email", "t@t")
     return origin, main
 
 
@@ -142,6 +144,52 @@ def test_deferred_filing_of_uncommitted_brief_is_a_runtime_error(repos, monkeypa
     monkeypatch.setattr(append_log, "sync_commit", lambda *a, **k: False)
     with pytest.raises(RuntimeError, match="uncommitted"):
         append_log.append_log(PEER, "x", root=main)
+
+
+def test_staged_but_uncommitted_brief_is_committed_then_logged(repos):
+    origin, main = repos
+    _file_uncommitted_peer_brief(main)
+    git(main, "add", f"inbox/{PEER}.md")
+    sha = append_log.append_log(PEER, "staged only", root=main, today="2026-11-10")
+    assert "2026-11-10: staged only" in git(origin, "show", f"{sha}:inbox/{PEER}.md")
+
+
+def test_relative_root_sees_a_committed_brief_as_committed(repos, monkeypatch, tmp_path):
+    _, main = repos
+    monkeypatch.chdir(tmp_path)
+
+    def refuse(*a, **k):
+        raise AssertionError("a committed brief must not be re-filed")
+
+    monkeypatch.setattr(append_log, "sync_commit", refuse)
+    assert append_log.main([ID, "relative root", "--root", main.name]) == 0
+
+
+def test_filing_that_commits_nothing_is_a_runtime_error(repos, monkeypatch):
+    _, main = repos
+    _file_uncommitted_peer_brief(main)
+    monkeypatch.setattr(append_log, "sync_commit", lambda *a, **k: True)
+    with pytest.raises(RuntimeError, match="could not commit"):
+        append_log.append_log(PEER, "x", root=main)
+
+
+def test_busy_queue_lock_still_pushes_and_says_so(repos, capsys, monkeypatch):
+    origin, main = repos
+    monkeypatch.setattr(append_log, "LOCK_WAIT", 0.2)
+    with append_log.repo_lock(main) as held:
+        assert held
+        sha = append_log.append_log(ID, "lock was busy", root=main, today="2026-11-10")
+    assert "queue lock busy" in capsys.readouterr().err
+    assert "2026-11-10: lock was busy" in git(origin, "show", f"{sha}:ready/{ID}.md")
+
+
+@pytest.mark.parametrize("attempt, cap", [(0, 0.25), (2, 1.0), (10, 4.0)])
+def test_backoff_sleeps_at_most_the_capped_doubling(monkeypatch, attempt, cap):
+    slept = []
+    monkeypatch.setattr(append_log.random, "uniform", lambda lo, hi: (lo, hi)[1])
+    monkeypatch.setattr(append_log.time, "sleep", slept.append)
+    append_log._backoff(attempt)
+    assert slept == [cap]
 
 
 def _push_from_peer(origin, tmp_path, n):
