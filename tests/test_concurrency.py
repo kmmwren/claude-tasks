@@ -94,13 +94,14 @@ def test_same_title_concurrent_adds_do_not_overwrite(queue):
     assert len(briefs_on(queue, "HEAD")) == n
 
 
-def test_sync_self_heals_orphan_left_by_a_prior_failed_commit(queue):
-    """A brief written but never committed (the old failure mode) gets swept in."""
+def test_sync_does_not_sweep_an_orphan_into_another_briefs_commit(queue):
+    """A brief written but never committed stays on disk; only the caller's brief is committed."""
     orphan = queue / "inbox" / "orphan-from-crash.md"
     orphan.write_text("---\nid: orphan-from-crash\n---\n")  # on disk, never committed
     assert run_add(queue, "fresh task").returncode == 0
     committed = briefs_on(queue, "HEAD")
-    assert "inbox/orphan-from-crash.md" in committed
+    assert "inbox/orphan-from-crash.md" not in committed
+    assert orphan.exists()
     assert any(f.startswith("inbox/fresh-task") for f in committed)
 
 
@@ -195,7 +196,7 @@ def test_reserve_name_concurrent_callers_never_collide(tmp_path):
 
 def run_git_sync(repo, msg):
     return subprocess.run(
-        [sys.executable, str(repo / "scripts" / "git_sync.py"), msg],
+        [sys.executable, str(repo / "scripts" / "git_sync.py"), msg, "test-transition"],
         capture_output=True, text=True, env=_env(repo),
     )
 

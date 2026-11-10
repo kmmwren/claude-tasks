@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Fixed
+- **`git_sync.py` commits only what the caller names.** It no longer runs `git add --ignore-removal .`,
+  which swept another writer's uncommitted edit into an unrelated brief's commit. `ids` stage that
+  brief's file at any depth (moves included); `paths` stage explicit pathspecs (`fold_session.py`
+  passes `.`). A lock-held deferral now says to re-run with the same ids.
+- **No autostash on a diverged push.** The local commits are rebased onto `origin/main` in a scratch
+  worktree and pushed; the checkout advances with `reset --keep`, so uncommitted edits are never
+  stashed or dropped. A rebase conflict leaves the local commits in place and prints the conflicting
+  paths plus the unpushed and unintegrated commits.
 - **A closed brief is no longer re-created.** `git_sync.py` fetches `origin/main` and refuses to
   commit a new brief file whose id is already filed in another state dir (`done/` included), on
   disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
