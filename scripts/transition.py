@@ -52,6 +52,8 @@ from git_sync import sync_commit
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # Folders that actually hold briefs (inbox = raw pre-briefs, never resolvable as briefs).
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
+# Moves that may reach a folded inbox brief by id; anything else needs it enriched into ready/ first.
+CLOSING_STATUSES = ("done", "parked")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
 # Default execution-log line per target state when the caller gives none.
@@ -72,6 +74,21 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
         if p.exists():
             return p
     return None
+
+
+def _is_folded_brief(path: pathlib.Path) -> bool:
+    """A brief folded into inbox/ keeps its `id:`; a raw capture has none, or is marked `raw: true`."""
+    meta = fm(path.read_text())
+    return bool(meta.get("id")) and meta.get("raw") != "true"
+
+
+def find_movable_brief(brief_id: str, new_status: str, root: pathlib.Path) -> pathlib.Path | None:
+    """find_brief, plus a folded inbox brief when the move closes it: closing needs no enrichment."""
+    found = find_brief(brief_id, root)
+    inbox = root / "inbox" / f"{brief_id}.md"
+    if found is None and new_status in CLOSING_STATUSES and inbox.exists() and _is_folded_brief(inbox):
+        return inbox
+    return found
 
 
 def _tokens(query: str) -> list[str]:
@@ -281,7 +298,7 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
         raise ValueError("moving to blocked needs --blocked-by (brief ids or external:<reason>)")
     blocked_by = (blocked_by or []) if new_status == "blocked" else []
     _check_blockers(brief_id, blocked_by, root)
-    path = find_brief(brief_id, root)
+    path = find_movable_brief(brief_id, new_status, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
     today = today or datetime.date.today().isoformat()
