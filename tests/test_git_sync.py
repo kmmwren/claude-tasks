@@ -377,3 +377,64 @@ def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
 
     files = committed_files(repo)
     assert "done/moving.md" in files and "in-progress/moving.md" not in files
+
+
+LOG_BRIEF = "---\nid: logged\nstatus: ready\n---\n\n## Goal\n\nx\n\n## Execution log\n\n2026-11-10: captured.\n"
+
+
+def _seed_logged_brief(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "ready" / "logged.md").write_text(LOG_BRIEF)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed logged")
+    git(repo, "push", "-q", "origin", "main")
+    return repo, _clone_other(tmp_path)
+
+
+def _edit_brief(root, rel, old, new):
+    path = root / rel
+    path.write_text(path.read_text().replace(old, new))
+
+
+def test_concurrent_appends_to_one_briefs_execution_log_both_survive(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path)
+    _edit_brief(other, "ready/logged.md", "captured.\n", "captured.\n2026-11-10 (remote): pushed line.\n")
+    git(other, "commit", "-qam", "remote append")
+    git(other, "push", "-q", "origin", "main")
+    _edit_brief(repo, "ready/logged.md", "captured.\n", "captured.\n2026-11-10 (local): local line.\n")
+
+    assert git_sync.sync_commit("brief(logged): log", root=repo, ids=["logged"]) is True
+
+    text = git(repo, "show", "origin/main:ready/logged.md").stdout
+    assert "(remote): pushed line." in text and "(local): local line." in text
+    assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
+    assert git(repo, "status", "--porcelain").stdout == ""
+
+
+def test_log_append_racing_a_local_move_keeps_both_lines(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path)
+    _edit_brief(other, "ready/logged.md", "captured.\n", "captured.\n2026-11-10 (remote): pushed line.\n")
+    git(other, "commit", "-qam", "remote append")
+    git(other, "push", "-q", "origin", "main")
+    git(repo, "mv", "ready/logged.md", "parked/logged.md")
+    _edit_brief(repo, "parked/logged.md", "status: ready", "status: parked")
+    (repo / "parked" / "logged.md").write_text((repo / "parked" / "logged.md").read_text()
+                                               + "2026-11-10 (local): local line.\n")
+
+    assert git_sync.sync_commit("brief(logged): parked", root=repo, ids=["logged"]) is True
+
+    text = git(repo, "show", "origin/main:parked/logged.md").stdout
+    assert "(remote): pushed line." in text and "(local): local line." in text
+    assert "status: parked" in text
+
+
+def test_frontmatter_conflict_still_defers(tmp_path, capsys):
+    repo, other = _seed_logged_brief(tmp_path)
+    _edit_brief(other, "ready/logged.md", "status: ready", "status: blocked")
+    git(other, "commit", "-qam", "remote status")
+    git(other, "push", "-q", "origin", "main")
+    _edit_brief(repo, "ready/logged.md", "status: ready", "status: parked")
+
+    assert git_sync.sync_commit("brief(logged): status", root=repo, ids=["logged"]) is False
+    assert "push deferred" in capsys.readouterr().out
+    assert git(repo, "rev-parse", "HEAD").stdout != git(repo, "rev-parse", "origin/main").stdout

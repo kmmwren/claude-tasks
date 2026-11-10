@@ -12,6 +12,7 @@ Usage (run from anywhere):
 
 Exit codes: 0 — committed+pushed or safely deferred; 1 — bad usage.
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -88,6 +89,91 @@ def _report_divergence(root: pathlib.Path, why: str) -> None:
           "Resolve in a worktree, rebase onto origin/main and push.)")
 
 
+LOG_HEADING = "## Execution log"
+
+
+def _merge_log_conflicts(text: str) -> str | None:
+    """Keep both sides of every conflict hunk, but only when each hunk sits inside the
+    `## Execution log` section (append-only dated lines, so the union loses nothing).
+
+    Returns None when a hunk is outside that section, contains a heading or the markers are
+    malformed, so the caller aborts and defers as before.
+    """
+    out: list[str] = []
+    lines = text.splitlines(keepends=True)
+    in_log = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("<<<<<<< "):
+            if not in_log:
+                return None
+            ours: list[str] = []
+            theirs: list[str] = []
+            side = ours
+            i += 1
+            while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+                if lines[i].startswith("||||||| "):
+                    return None
+                if lines[i].startswith("======="):
+                    side = theirs
+                else:
+                    side.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                return None
+            i += 1
+            if any(ln.startswith("#") for ln in ours + theirs):
+                return None
+            out.extend(ours)
+            out.extend(ln for ln in theirs if ln not in ours)
+            continue
+        if line.startswith("## "):
+            in_log = line.rstrip("\n") == LOG_HEADING
+        out.append(line)
+        i += 1
+    return "".join(out)
+
+
+def _resolve_log_conflicts(wt: pathlib.Path) -> bool:
+    """Resolve every unmerged path by keeping both Execution-log sides; all-or-nothing."""
+    unmerged = _git(wt, "diff", "--name-only", "--diff-filter=U", capture_output=True, text=True).stdout.split()
+    if not unmerged:
+        return False
+    merged: dict[str, str] = {}
+    for rel in unmerged:
+        stages = _git(wt, "ls-files", "-u", "--", rel, capture_output=True, text=True).stdout
+        if len({ln.split()[2] for ln in stages.splitlines()}) != 3:
+            return False  # delete/add conflicts are not append races
+        try:
+            result = _merge_log_conflicts((wt / rel).read_text())
+        except (OSError, UnicodeDecodeError):
+            return False
+        if result is None:
+            return False
+        merged[rel] = result
+    for rel, text in merged.items():
+        (wt / rel).write_text(text)
+        _git(wt, "add", "--", rel, capture_output=True, text=True)
+    return True
+
+
+def _rebase_resolving_logs(wt: pathlib.Path, max_steps: int = 50) -> bool:
+    """Rebase onto origin/main, resolving Execution-log-only conflicts at each replayed commit.
+
+    False when a conflict outside the log stopped it; the caller aborts the rebase.
+    """
+    env = {**os.environ, "GIT_EDITOR": "true"}
+    if _git(wt, "rebase", "origin/main", capture_output=True, text=True, env=env).returncode == 0:
+        return True
+    for _ in range(max_steps):
+        if not _resolve_log_conflicts(wt):
+            return False
+        if _git(wt, "rebase", "--continue", capture_output=True, text=True, env=env).returncode == 0:
+            return True
+    return False
+
+
 def _integrate_remote(root: pathlib.Path) -> bool:
     """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
 
@@ -99,7 +185,7 @@ def _integrate_remote(root: pathlib.Path) -> bool:
         wt = pathlib.Path(tmp) / "wt"
         _git(root, "worktree", "add", "-q", "--detach", str(wt), "HEAD", capture_output=True, text=True)
         try:
-            if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
+            if not _rebase_resolving_logs(wt):
                 conflicts = _git(wt, "diff", "--name-only", "--diff-filter=U",
                                  capture_output=True, text=True).stdout.split()
                 _git(wt, "rebase", "--abort", capture_output=True, text=True)
