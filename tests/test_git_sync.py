@@ -320,7 +320,8 @@ def test_sync_refuses_to_recreate_a_done_brief_in_inbox(tmp_path, capsys):
     (repo / "inbox" / "merge-queue.md").write_text("\nnote appended to a moved brief\n")
     (repo / "inbox" / "fresh.md").write_text("unrelated\n")
 
-    git_sync.sync_commit("test: capture", root=repo, ids=["merge-queue", "fresh"])
+    with pytest.raises(git_sync.ShadowRefused):
+        git_sync.sync_commit("test: capture", root=repo, ids=["merge-queue", "fresh"])
 
     files = committed_files(repo)
     assert "inbox/merge-queue.md" not in files
@@ -344,7 +345,8 @@ def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
     git(other, "push", "-q", "origin", "main")
     (repo / "inbox" / "moved.md").write_text("\nlate note\n")
 
-    git_sync.sync_commit("test: stale capture", root=repo)
+    with pytest.raises(git_sync.ShadowRefused):
+        git_sync.sync_commit("test: stale capture", root=repo)
 
     assert "inbox/moved.md" not in committed_files(repo)
     assert "inbox/moved.md" not in committed_files(repo, "origin/main")
@@ -357,7 +359,8 @@ def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
     git_sync.sync_commit("test: close", root=repo, ids=["closed"])
     (repo / "inbox" / "closed.md").write_text("\nlate note\n")
 
-    git_sync.sync_commit("test: named capture", root=repo, ids=["closed"])
+    with pytest.raises(git_sync.ShadowRefused):
+        git_sync.sync_commit("test: named capture", root=repo, ids=["closed"])
 
     assert "inbox/closed.md" not in committed_files(repo)
     assert "inbox/closed.md" not in committed_files(repo, "origin/main")
@@ -377,3 +380,84 @@ def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
 
     files = committed_files(repo)
     assert "done/moving.md" in files and "in-progress/moving.md" not in files
+
+
+# ── transition.py move: its own source file is never the "existing" brief ─────
+
+def _stale_checkout_with_origin_ready_copy(tmp_path):
+    """The queue copy of ready/moving.md is untracked here but already on origin/main."""
+    repo = make_repo(tmp_path)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    git(other, "config", "user.email", "t@t.t")
+    git(other, "config", "user.name", "t")
+    (other / "ready").mkdir(exist_ok=True)
+    (other / "ready" / "moving.md").write_text(_BRIEF.format(status="ready"))
+    git(other, "add", "-A")
+    git(other, "commit", "-qm", "file moving")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "ready" / "moving.md").write_text(_BRIEF.format(status="ready"))
+    return repo
+
+
+_BRIEF = """---
+id: moving
+title: Moving
+status: {status}
+updated: 2026-06-01
+---
+
+## Execution log
+
+2026-06-01: captured.
+"""
+
+
+def _brief_files(repo, brief_id):
+    return sorted(str(p.relative_to(repo)) for p in repo.glob(f"*/{brief_id}.md"))
+
+
+def test_move_ready_to_done_leaves_one_tracked_committed_copy(tmp_path, capsys):
+    import transition
+    repo = _stale_checkout_with_origin_ready_copy(tmp_path)
+
+    transition.main(["move", "moving", "done", "--root", str(repo)])
+
+    assert _brief_files(repo, "moving") == ["done/moving.md"]
+    assert "done/moving.md" in committed_files(repo)
+    assert "ready/moving.md" not in committed_files(repo)
+    assert "ready/moving.md" not in committed_files(repo, "origin/main")
+    assert git(repo, "ls-files", "--others", "--exclude-standard").stdout.strip() == ""
+    assert "refused" not in capsys.readouterr().out
+
+
+def test_move_refuses_a_genuine_duplicate_and_exits_non_zero(tmp_path, capsys):
+    import transition
+    repo = make_repo(tmp_path)
+    (repo / "done" / "moving.md").write_text(_BRIEF.format(status="done"))
+    (repo / "ready" / "moving.md").write_text(_BRIEF.format(status="ready"))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "id filed twice already")
+
+    with pytest.raises(SystemExit) as exc:
+        transition.main(["move", "moving", "in-progress", "--root", str(repo)])
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "refused" in out and "→ in-progress" not in out
+    assert "in-progress/moving.md" not in committed_files(repo)
+
+
+def test_add_task_exits_non_zero_when_its_brief_would_duplicate_an_id(tmp_path, monkeypatch):
+    import add_task
+    import init_queue
+    repo = init_queue.init_queue(tmp_path / "q", name="demo")
+
+    def refuse(*_a, **_k):
+        raise git_sync.ShadowRefused("inbox/x.md")
+
+    monkeypatch.setattr(add_task, "_sync_commit", refuse)
+    with pytest.raises(SystemExit) as exc:
+        add_task.main(["--root", str(repo), "--commit", "--title", "x"])
+    assert exc.value.code == 1

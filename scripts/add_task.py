@@ -23,6 +23,7 @@ import sys
 
 from _concurrency import atomic_write, reserve_name
 from _paths import TASK_DIRS, require_queue, resolve_root
+from git_sync import ShadowRefused
 from git_sync import sync_commit as _sync_commit
 
 
@@ -146,7 +147,10 @@ _none_
     print(f"{status}/{nid}.md")
 
     if a.commit:
-        _sync_commit(f"brief({nid}): captured ({a.source})", root, ids=[nid])
+        try:
+            _sync_commit(f"brief({nid}): captured ({a.source})", root, ids=[nid])
+        except ShadowRefused:
+            sys.exit(1)
 
 
 if __name__ == "__main__":

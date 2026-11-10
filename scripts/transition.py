@@ -46,7 +46,7 @@ from deps import (
     parse_list,
     probe_gaps,
 )
-from git_sync import sync_commit
+from git_sync import ShadowRefused, sync_commit
 
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
@@ -377,6 +377,7 @@ def main(argv: list[str] | None = None) -> None:
         print("error: --assignee must be a single line (no newlines)", file=sys.stderr)
         sys.exit(1)
 
+    source = find_brief(a.brief_id, root)
     try:
         new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
                               assignee=a.assignee, blocked_by=parse_list(a.blocked_by or ""), probes=a.probe,
@@ -393,7 +394,12 @@ def main(argv: list[str] | None = None) -> None:
         for released_id in released:
             print(f"unblocked {released_id} → ready")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
+        assert source is not None  # move_brief found it, or raised above
+        try:
+            sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released],
+                        vacated=[source.relative_to(root).as_posix()])
+        except ShadowRefused:
+            sys.exit(1)
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 

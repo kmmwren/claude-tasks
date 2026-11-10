@@ -45,11 +45,16 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
     return [path for path in out.split("\0") if path]
 
 
-def _shadowing_briefs(root: pathlib.Path) -> list[str]:
+class ShadowRefused(RuntimeError):
+    """A new brief file would have re-created an id already filed in another state."""
+
+
+def _shadowing_briefs(root: pathlib.Path, vacated: Sequence[str] = ()) -> list[str]:
     """New brief files whose id is already filed in another state dir, here or on origin/main.
 
     A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
-    re-create the id in its old folder, leaving it in two states at once.
+    re-create the id in its old folder, leaving it in two states at once. `vacated` are the
+    paths a move is leaving, which are not rivals of the file it wrote in their place.
     """
     _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
     # Only briefs origin gained since our history diverged are rivals; an older origin path
@@ -58,7 +63,7 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
                   capture_output=True, text=True)
     moved_away = set(_tracked(root, "--deleted"))  # the old half of an in-flight move is not a rival
     filed = [pathlib.PurePath(p) for p in (*_tracked(root), *remote.stdout.splitlines())
-             if p not in moved_away]
+             if p not in moved_away and p not in vacated]
     shadows = []
     for new in _tracked(root, "--others", "--exclude-standard"):
         path = pathlib.PurePath(new)
@@ -88,7 +93,7 @@ def _report_divergence(root: pathlib.Path, why: str) -> None:
           "Resolve in a worktree, rebase onto origin/main and push.)")
 
 
-def _integrate_remote(root: pathlib.Path) -> bool:
+def _integrate_remote(root: pathlib.Path, vacated: Sequence[str] = ()) -> bool:
     """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
 
     Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
@@ -105,6 +110,12 @@ def _integrate_remote(root: pathlib.Path) -> bool:
                 _git(wt, "rebase", "--abort", capture_output=True, text=True)
                 _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
                 return False
+            # A path the move left behind that origin gained (we never tracked it) would come back.
+            stale = [v for v in vacated if (wt / v).exists()]
+            if stale:
+                _git(wt, "rm", "-q", "--", *stale, capture_output=True, text=True)
+                _git(wt, "commit", "-q", "-m", "drop the source of the move: " + ", ".join(stale),
+                     capture_output=True, text=True)
             if _git(wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True).returncode != 0:
                 _report_divergence(root, "origin moved again while rebasing")
                 return False
@@ -118,12 +129,15 @@ def _integrate_remote(root: pathlib.Path) -> bool:
 
 
 def sync_commit(message: str, root: pathlib.Path | None = None,
-                ids: Sequence[str] = (), paths: Sequence[str] = ()) -> bool:
+                ids: Sequence[str] = (), paths: Sequence[str] = (),
+                vacated: Sequence[str] = ()) -> bool:
     """Commit and push only what the caller names, under the cross-process lock.
 
     `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
     explicit pathspecs (`.` when the caller owns the whole tree). Anything else dirty in the
-    checkout stays unstaged. Returns False if deferred; a deferred caller re-runs with the same args.
+    checkout stays unstaged. `vacated` are root-relative paths a move leaves behind. Returns False if
+    deferred (a deferred caller re-runs with the same args); raises ShadowRefused, after committing
+    everything else, when a file was held back as a duplicate id.
     """
     root = resolve_root() if root is None else root
     with repo_lock(root) as acquired:
@@ -131,7 +145,7 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
             print("  (sync deferred: lock held; your files are safe on disk. "
                   "Re-run git_sync.py with the same message and ids to commit them.)")
             return False
-        shadows = _shadowing_briefs(root)
+        shadows = _shadowing_briefs(root, vacated)
         for path in shadows:
             print(f"  (refused: {path} would re-create an id already filed in another state; "
                   "sharpen the existing brief instead. Left untracked.)")
@@ -142,8 +156,12 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
         if _git(root, "push", "-q", "origin", "main").returncode != 0:
-            return _integrate_remote(root)
-    return True
+            synced = _integrate_remote(root, vacated)
+        else:
+            synced = True
+    if shadows:
+        raise ShadowRefused(", ".join(shadows))
+    return synced
 
 
 def main(argv: list[str] | None = None) -> None:
