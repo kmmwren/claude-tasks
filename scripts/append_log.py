@@ -30,7 +30,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import repo_lock  # noqa: E402
 from _paths import resolve_root  # noqa: E402
-from git_sync import _git, sync_commit  # noqa: E402
+from git_sync import _git, sync_commit_and_push  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
 PUSH_ATTEMPTS = 8
@@ -69,9 +69,7 @@ def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
     local = _find(root, brief_id)
     if local is None or _committed(root, local):
         return
-    if not sync_commit(
-        f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id], wait=True
-    ):
+    if not sync_commit_and_push(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
         raise RuntimeError(
             f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry"
         )

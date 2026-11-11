@@ -35,8 +35,8 @@
   `.git/.tasks-push.lock`) waits for in-flight writers, pushes once, and pushes again only if a write
   landed meanwhile. Twenty concurrent writes cost at most two pushes. Its output, including any
   divergence report, goes to `.git/.tasks-push.log`, which the next write prints and clears.
-  `sync_commit(..., wait=True)` pushes before returning, which `append_log.py` uses because it reads
-  the brief back from `origin/main`. The shadow check reuses `origin/main` while `FETCH_HEAD` is under
+  `sync_commit_and_push` pushes before returning, which `append_log.py` uses because it reads the
+  brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. The shadow check reuses `origin/main` while `FETCH_HEAD` is under
   60 s old, so a burst of writes runs one `git fetch`, not one per write; a rejected push still fetches
   and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder

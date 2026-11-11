@@ -39,14 +39,19 @@ from collections.abc import Iterable, Iterator
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
-def lock_path(root: pathlib.Path, name: str = ".tasks-sync.lock") -> pathlib.Path:
-    """Where the sync lock (or another per-clone state file `name`) lives.
+def clone_state_path(root: pathlib.Path, name: str) -> pathlib.Path:
+    """Where per-clone state file `name` (a lock, a mark, a log) lives.
 
     Inside .git so it is per-clone and never committed. Falls back to the repo root for
     worktrees (where .git is a file, not a dir) and for non-git callers (tests).
     """
     git = root / ".git"
     return (git if git.is_dir() else root) / name
+
+
+def lock_path(root: pathlib.Path) -> pathlib.Path:
+    """Where the queue's sync lock lives."""
+    return clone_state_path(root, ".tasks-sync.lock")
 
 
 def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:

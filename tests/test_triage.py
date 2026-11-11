@@ -51,7 +51,7 @@ def test_dry_run_counts_without_writing(tmp_path, synced):
     report = triage.run(_opts(root, apply=False))
     assert (report.inbox_before, report.collapsed_children, report.promoted_as_filed) == (6, 2, 1)
     assert (report.enrich_candidates, report.promoted_enriched) == (1, 1)
-    assert report.inbox_after == 6 and not report.synced and synced == []
+    assert report.inbox_after == 6 and not report.committed and synced == []
 
 
 def test_apply_collapses_promotes_and_commits_once(tmp_path, synced):
@@ -68,7 +68,7 @@ def test_a_promotion_refused_by_the_move_counts_as_changed_underfoot(tmp_path, s
 
     monkeypatch.setattr(triage, "promote", refuse)
     report = triage.run(_opts(make_inbox(tmp_path, {"filed": QUEUE["filed"]}), apply=True))
-    assert report.changed_underfoot == 1 and not report.synced
+    assert report.changed_underfoot == 1 and not report.committed
 
 
 def test_progress_logs_each_batch(tmp_path, capsys):
@@ -99,7 +99,9 @@ def _log(root):
     return triage.ClassLog(root)
 
 
-def test_apply_logs_a_verdict_for_every_inbox_brief_and_ready_only_for_those_moved(tmp_path, synced):
+def test_apply_logs_a_verdict_for_every_inbox_brief_and_ready_only_for_those_moved(
+    tmp_path, synced
+):
     root = make_inbox(tmp_path, QUEUE)
     report = triage.run(_opts(root, apply=True))
     classes = {v.brief_id: v.cls for v in _log(root).verdicts()}

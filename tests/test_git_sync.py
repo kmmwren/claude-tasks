@@ -155,7 +155,7 @@ def test_sync_conflict_is_reported_and_local_commits_are_kept(tmp_path, capsys):
     (repo / "inbox" / "unrelated.md").write_text("dirty")
 
     assert (
-        git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"], wait=True) is False
+        git_sync.sync_commit_and_push("brief(shared): edited", root=repo, ids=["shared"]) is False
     )
 
     out = capsys.readouterr().out
@@ -176,7 +176,7 @@ def test_sync_recovers_after_remote_moved_keeping_unrelated_edits(tmp_path):
     (repo / "ready" / "theirs.md").write_text("an uncommitted note")
     (repo / "inbox" / "mine.md").write_text("y")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
+    assert git_sync.sync_commit_and_push("brief(mine): captured", root=repo, ids=["mine"]) is True
 
     assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
@@ -194,7 +194,7 @@ def test_sync_pushed_but_checkout_not_advanced_when_an_edit_overlaps(tmp_path, c
     (repo / "ready" / "theirs.md").write_text("an uncommitted note")
     (repo / "inbox" / "mine.md").write_text("y")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
+    assert git_sync.sync_commit_and_push("brief(mine): captured", root=repo, ids=["mine"]) is True
 
     assert "checkout was not advanced" in capsys.readouterr().out
     assert (repo / "ready" / "theirs.md").read_text() == "an uncommitted note"
@@ -217,9 +217,7 @@ def test_sync_reports_when_origin_moves_again_during_the_rebase(tmp_path, monkey
 
     monkeypatch.setattr(git_sync, "_git", losing_push)
 
-    assert (
-        git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is False
-    )
+    assert git_sync.sync_commit_and_push("brief(mine): captured", root=repo, ids=["mine"]) is False
     assert "origin moved again while rebasing" in capsys.readouterr().out
 
 
@@ -584,7 +582,7 @@ def test_a_write_during_an_in_flight_push_is_still_pushed(tmp_path, monkeypatch)
 
 def test_a_running_pusher_means_a_write_spawns_no_process(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
-    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
     monkeypatch.setattr(
         git_sync, "_spawn_pusher", lambda *a: pytest.fail("spawned a second pusher")
     )
@@ -615,7 +613,7 @@ def test_pusher_retakes_the_lock_for_a_write_that_landed_as_it_released(tmp_path
             "--push-pending",
             str(repo),
             "--lock-fd",
-            str(C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))),
+            str(C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))),
         ]
     )
 
@@ -633,11 +631,11 @@ def test_pusher_leaves_a_late_write_to_the_pusher_that_took_the_lock(tmp_path, m
 
     def release(fd):
         os.close(fd)
-        rival.append(C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK)))
+        rival.append(C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK)))
 
     monkeypatch.setattr(git_sync, "_drain", drain)
     monkeypatch.setattr(git_sync, "_release", release)
-    git_sync._run_pusher(repo, C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK)))
+    git_sync._run_pusher(repo, C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK)))
 
     assert rival[0] is not None and git_sync._is_dirty(repo)
     os.close(rival[0])
@@ -655,7 +653,7 @@ def test_push_now_hands_a_write_that_raced_its_release_to_a_new_pusher(tmp_path,
 
 def test_push_now_defers_when_a_pusher_never_finishes(tmp_path, monkeypatch, capsys):
     repo = make_repo(tmp_path)
-    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
     monkeypatch.setattr(git_sync, "PUSH_WAIT", 0.1)
 
     assert git_sync.push_now(repo) is False
@@ -685,20 +683,23 @@ def test_detached_pusher_output_goes_to_the_push_log(tmp_path):
     assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is True
     assert git_sync.wait_for_push(repo)
 
-    assert "rebase conflict in ready/shared.md" in C.lock_path(repo, git_sync.PUSH_LOG).read_text()
+    assert (
+        "rebase conflict in ready/shared.md"
+        in C.clone_state_path(repo, git_sync.PUSH_LOG).read_text()
+    )
 
 
 def test_the_next_write_shows_what_the_last_background_push_reported(tmp_path, capsys):
     repo = make_repo(tmp_path)
-    C.lock_path(repo, git_sync.PUSH_LOG).write_text(
+    C.clone_state_path(repo, git_sync.PUSH_LOG).write_text(
         "  (push deferred: rebase conflict in ready/x.md)"
     )
     (repo / "inbox" / "mine.md").write_text("y")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
+    assert git_sync.sync_commit_and_push("brief(mine): captured", root=repo, ids=["mine"]) is True
 
     assert "previous background push reported:" in capsys.readouterr().out
-    assert C.lock_path(repo, git_sync.PUSH_LOG).read_text() == ""
+    assert C.clone_state_path(repo, git_sync.PUSH_LOG).read_text() == ""
 
 
 def test_a_pusher_that_fails_to_start_releases_the_push_lock(tmp_path, monkeypatch):
@@ -711,7 +712,7 @@ def test_a_pusher_that_fails_to_start_releases_the_push_lock(tmp_path, monkeypat
     with pytest.raises(OSError):
         git_sync.request_push(repo)
 
-    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
     assert held is not None
     os.close(held)
 
