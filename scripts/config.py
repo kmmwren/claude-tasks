@@ -16,6 +16,7 @@ DEFAULTS: dict[str, Any] = {
     "name": "tasks",
     "domains": [],
     "timezone": "UTC",
+    "fleet_blockers_dir": "",  # unset = fleet-blocker lane off
 }
 
 

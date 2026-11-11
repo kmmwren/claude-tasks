@@ -69,7 +69,7 @@ personal queue, and project-scoped queues checked into a repo.
 YAML frontmatter (the queryable surface) + markdown body (the context). Required fields:
 `id`, `title`, `created`, `updated`, `status`, `type`, `importance`, `autonomy`. Optional:
 `estimated-effort`, `due`, `domain`, `tags`, `parent`, `assignee`, `source`, `blockers`,
-`related`, `requires-repo`, `requires-local`. `assignee` is who has claimed the brief
+`clears`, `related`, `requires-repo`, `requires-local`. `assignee` is who has claimed the brief
 (empty = unclaimed): advisory coordination for a shared queue, not a lock across clones.
 Body sections: Goal, Context, Success criteria,
 Constraints, Notes / open questions, Execution log. Full reference in `_template.md`.
