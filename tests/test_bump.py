@@ -59,3 +59,11 @@ def test_main_bumps_via_root(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(bump, "require_queue", lambda root: root)
     bump.main(["repo#1", "--importance", "2", "--reason", "r", "--root", str(tmp_path)])
     assert "importance 3 -> 2" in capsys.readouterr().out
+
+
+def test_a_bump_is_committed_through_the_shared_helper(tmp_path, monkeypatch):
+    brief(tmp_path)
+    calls = []
+    monkeypatch.setattr(bump, "sync_commit", lambda msg, root, ids: calls.append((root, ids)))
+    bump.bump(tmp_path, "pr:repo#1", 1, "urgent", NOW)
+    assert calls == [(tmp_path, ["b1"])]

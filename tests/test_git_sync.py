@@ -102,6 +102,7 @@ def test_sync_commit_paths_respect_gitignore(tmp_path):
 
 def test_sync_deferred_when_lock_held(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
+    git(tmp_path, "init", "-q")
     assert git_sync.sync_commit("x", root=tmp_path) is False
     assert "Re-run git_sync.py" in capsys.readouterr().out
 
@@ -111,6 +112,7 @@ def test_sync_resolves_root_when_none(tmp_path, monkeypatch):
     called = {}
     monkeypatch.setattr(git_sync, "resolve_root", lambda: called.setdefault("r", tmp_path))
     monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
+    git(tmp_path, "init", "-q")
     assert git_sync.sync_commit("x") is False
     assert called["r"] == tmp_path
 
@@ -377,3 +379,92 @@ def test_deferred_second_move_still_completes_after_an_unpushed_first(tmp_path):
 
     files = committed_files(repo)
     assert "done/moving.md" in files and "in-progress/moving.md" not in files
+
+
+# ── sweep: the same helper over the whole tree ────────────────────────────────
+
+def test_sweep_commits_and_pushes_every_uncommitted_change(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "edited")
+    (repo / "ready" / "edited.md").write_text("hand edit")
+    (repo / "inbox" / "new.md").write_text("new")
+
+    assert git_sync.sweep(repo) is True
+
+    assert git(repo, "status", "--porcelain").stdout == ""
+    git(repo, "fetch", "-q", "origin")
+    assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
+    assert "inbox/new.md" in committed_files(repo, "origin/main")
+
+
+def test_sweep_keeps_a_credential_bearing_file_local(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "leaky.md").write_text("token ghp_" + "a" * 30)
+    (repo / "inbox" / "fine.md").write_text("ok")
+
+    git_sync.sweep(repo)
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/fine.md" in committed_files(repo, "origin/main")
+    assert "inbox/leaky.md" not in committed_files(repo, "origin/main")
+    out = capsys.readouterr().out
+    assert "1 held back" in out
+    assert "leaky" not in out
+
+
+def test_sweep_unstages_a_credential_bearing_file_someone_already_staged(tmp_path):
+    repo = make_repo(tmp_path)
+    leaky = repo / "inbox" / "staged-leaky.md"
+    leaky.write_text("token ghp_" + "b" * 30)
+    git(repo, "add", "inbox/staged-leaky.md")
+    (repo / "inbox" / "fine.md").write_text("ok")
+
+    git_sync.sweep(repo)
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/fine.md" in committed_files(repo, "origin/main")
+    assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
+    assert leaky.is_file()
+
+
+def test_a_named_sync_never_commits_a_staged_credential(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "named")
+    (repo / "inbox" / "staged-leaky.md").write_text("AKIA" + "A" * 16)
+    git(repo, "add", "inbox/staged-leaky.md")
+
+    git_sync.sync_commit("brief(named): x", repo, ids=["named"])
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
+
+
+def test_sweep_commits_a_deleted_brief_without_scanning_it(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "gone")
+    (repo / "ready" / "gone.md").unlink()
+
+    assert git_sync.sweep(repo) is True
+
+    git(repo, "fetch", "-q", "origin")
+    assert "ready/gone.md" not in committed_files(repo, "origin/main")
+
+
+def test_a_queue_inside_another_repo_is_never_synced(tmp_path):
+    repo = make_repo(tmp_path)
+    project_queue = repo / "project" / ".tasks"
+    project_queue.mkdir(parents=True)
+    (project_queue / "x.md").write_text("x")
+
+    assert git_sync.sync_commit("x", root=project_queue, paths=["."]) is False
+    assert "project/.tasks/x.md" not in committed_files(repo)
+
+
+def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "cli.md").write_text("cli")
+
+    git_sync.main(["--sweep", str(repo)])
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/cli.md" in committed_files(repo, "origin/main")

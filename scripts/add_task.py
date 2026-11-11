@@ -71,7 +71,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--ready", action="store_true", help="alias for --status ready")
     ap.add_argument("--stdin", action="store_true", help="append stdin to Context")
-    ap.add_argument("--commit", action="store_true", help="git add+commit+push the new brief")
+    ap.add_argument("--commit", action="store_true", help="accepted for old callers: committing is the default")
+    ap.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
     a = ap.parse_args(argv)
 
@@ -146,7 +147,7 @@ _none_
     atomic_write(path, fm)
     print(f"{status}/{nid}.md")
 
-    if a.commit:
+    if not a.no_sync:
         _sync_commit(f"brief({nid}): captured ({a.source})", root, ids=[nid])
 
 

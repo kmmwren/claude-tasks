@@ -126,6 +126,21 @@ def test_add_task_commit_invokes_sync(queue, monkeypatch):
     assert calls["ids"] == ["ship-it"]
 
 
+def test_add_task_syncs_by_default_and_no_sync_opts_out(queue, monkeypatch):
+    calls = []
+    monkeypatch.setattr(add_task, "_sync_commit", lambda msg, root, ids: calls.append(ids))
+    add_task.main(["--title", "Default sync", "--root", str(queue)])
+    add_task.main(["--title", "Quiet one", "--root", str(queue), "--no-sync"])
+    assert calls == [["default-sync"]]
+
+
+def test_raw_capture_syncs_the_new_brief(queue, monkeypatch):
+    calls = []
+    monkeypatch.setattr(raw_capture, "sync_commit", lambda msg, root, ids: calls.append(ids))
+    raw_capture.main(["Quick thought", "--root", str(queue)])
+    assert len(calls) == 1 and calls[0][0].endswith("quick-thought")
+
+
 def test_add_task_refuses_uninitialised_dir(tmp_path):
     with pytest.raises(SystemExit, match="tasks-init"):
         add_task.main(["--title", "x", "--root", str(tmp_path / "not-a-queue")])

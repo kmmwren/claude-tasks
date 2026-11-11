@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _paths import require_queue, resolve_root  # noqa: E402
 from deps import fm  # noqa: E402
+from git_sync import sync_commit  # noqa: E402
 
 FOLDERS = ("ready", "in-progress", "blocked", "parked", "inbox")
 REF = re.compile(r"^[\w.-]+#\d+$")
@@ -53,6 +54,7 @@ def bump(root: pathlib.Path, ref: str, importance: int, reason: str, now: dateti
     path.write_text(text.rstrip("\n") + f"\n\n## Bump\n- {stamp}: importance {current} -> {importance}. {reason}\n"
                     if "\n## Bump\n" not in text else
                     text.rstrip("\n") + f"\n- {stamp}: importance {current} -> {importance}. {reason}\n")
+    sync_commit(f"brief({path.stem}): importance {current} -> {importance}", root, ids=[path.stem])
     return f"bumped {path.stem}: importance {current} -> {importance}"
 
 
