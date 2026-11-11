@@ -45,6 +45,7 @@ assignee: # OPTIONAL who (person or agent) has claimed this. Empty = unclaimed. 
 source: # who created it: user | claude.
 blockers: [] # list of brief ids or external blockers (original form; blocked_by is preferred)
 blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.
+clears: # OPTIONAL fleet-blocker id (or [ids]) this brief clears; while its record is active or unverified, prioritise.py ranks the brief first. Needs tasks.toml `fleet_blockers_dir`.
 milestone: # OPTIONAL id from the project's milestones file; only checked if tasks.toml sets `milestones`.
 related: [] # list of brief ids
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
@@ -84,6 +85,11 @@ timezone = "UTC"
 # OPTIONAL. Path (relative to the directory holding this queue) of a milestones file the
 # project owns. Unset, the queue has no milestones and `milestone:` is ignored.
 # milestones = "docs/milestones.toml"
+
+# OPTIONAL. Directory of fleet-blocker records, one <id>.json each (id, summary, status
+# active|cleared|unverified, ...). A brief whose `clears:` names an active or unverified
+# blocker ranks first. Unset, the feature is off. Relative paths resolve beside the queue.
+# fleet_blockers_dir = "fleet-blockers"
 """
 
 GITIGNORE = """\

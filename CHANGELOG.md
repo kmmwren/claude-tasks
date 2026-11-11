@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- **A brief can declare the fleet blocker it clears, and `prioritise.py` ranks it first.** A new optional
+  `clears: <blocker-id>` (or `[ids]`) names a blocker whose record sits in `fleet_blockers_dir` (a new
+  `tasks.toml` key, unset by default so the feature is off). While the record's `status` is `active` or
+  `unverified`, the brief takes a new `fleet-blocker` lane that sorts ahead of every other lane under both
+  scorers and is outside `expedite_cap`; `--json` gives `lane: fleet-blocker` and `why.fleet_blocker`
+  (the blocker id and summary). A cleared or missing record, or an unset directory, leaves the brief in its
+  normal lane. An unreadable directory or record warns once on stderr and is skipped. A blocked brief does
+  not take the lane. `rank.py` pins these briefs above the judged list and never sends them to the judge.
 - **`rank.py`: rank a scope's candidates against a taste profile, with a reason each.** It filters
   through `prioritise.py`, then makes two setwise `claude -p` passes (forward and reversed, tools off,
   schema-validated). Bradley-Terry merges the passes, and their agreement sets each item's confidence.

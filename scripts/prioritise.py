@@ -13,6 +13,9 @@ Two scorers, chosen by `[priority] scorer` in tasks.toml (default "additive") or
             service (`cos:` field or `cos:<lane>` tag) picks the lane: expedite (capped),
             fixed-date (once its due date is near), standard, or chore (a reserved share).
 
+Under either scorer a brief whose `clears: <id>` names an active or unverified fleet blocker
+(record in tasks.toml `fleet_blockers_dir`) sorts first, in the uncapped `fleet-blocker` lane.
+
 Both scores and both ranks are always computed and emitted in --json, so a replay can
 compare them before the default moves. Every wsjf weight lives in `[priority]`.
 
@@ -41,6 +44,7 @@ from typing import Any
 from _paths import require_queue, resolve_root
 from config import load_config
 from deps import Brief, dependency_edges, fm, load_queue, unmet
+from fleet_blockers import FleetBlockers
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
 EFFORT_DAYS = {"xs": 0.125, "s": 0.5, "m": 2, "l": 7, "xl": 14}
@@ -79,10 +83,14 @@ class Scorer(enum.Enum):
 
 
 class Lane(enum.Enum):
+    FLEET_BLOCKER = "fleet-blocker"  # derived from `clears:`, never declared with `cos:`
     EXPEDITE = "expedite"
     FIXED_DATE = "fixed-date"
     STANDARD = "standard"
     CHORE = "chore"
+
+
+DECLARABLE_LANES = tuple(lane for lane in Lane if lane is not Lane.FLEET_BLOCKER)
 
 
 class Move(enum.Enum):
@@ -334,7 +342,7 @@ def is_blocked(brief: dict[str, Any], done_ids: set[str]) -> tuple[bool, list[st
 def declared_lane(brief: dict[str, Any]) -> Lane:
     raw = (brief.get("cos", "") or "").strip() or next(
         (t[4:] for t in sorted(_parse_tags(brief)) if t.startswith("cos:")), "")
-    return next((lane for lane in Lane if lane.value == raw), Lane.STANDARD)
+    return next((lane for lane in DECLARABLE_LANES if lane.value == raw), Lane.STANDARD)
 
 
 def lane_of(brief: dict[str, Any], today: datetime.date, weights: Weights) -> Lane:
@@ -368,6 +376,7 @@ class _RankContext:
     scored: dict[str, Factors]
     done_ids: set[str]
     inherited: Callable[[str], float]
+    fleet: FleetBlockers
 
     @classmethod
     def load(cls, root: pathlib.Path, today: datetime.date, context: str, weights: Weights,
@@ -379,7 +388,8 @@ class _RankContext:
                   for b in queue if b.status in LIVE_DIRS}
         return cls(today, context, weights, tag_weights, index_queue(root)[1], depth, scored,
                    {b.id for b in queue if b.status == "done"},
-                   graph.inherited({bid: f.total for bid, f in scored.items()}))
+                   graph.inherited({bid: f.total for bid, f in scored.items()}),
+                   FleetBlockers.for_queue(root))
 
     def wsjf(self, bid: str) -> tuple[Factors, float]:
         """The brief's own factors and its score after inheriting from its waiters."""
@@ -391,13 +401,17 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
     bid = b.get("id", f.stem)
     blocked, pending = is_blocked(b, ctx.done_ids)
     own, wsjf = ctx.wsjf(bid)
+    blocker = None if blocked else ctx.fleet.clearing(b)
+    why: dict[str, Any] = {**own.why(), "inherited": round(wsjf - own.total, 1)}
+    if blocker:
+        why["fleet_blocker"] = blocker.label()
     b.update({
         "_score_additive": score(b, ctx.today, unlocks=ctx.unlocks.get(bid, 0),
                                  tag_weights=ctx.tag_weights),
-        "_score_wsjf": wsjf, "_why": {**own.why(), "inherited": round(wsjf - own.total, 1)},
+        "_score_wsjf": wsjf, "_why": why,
         "_unlocks": ctx.unlocks.get(bid, 0), "_leverage": int(ctx.depth(bid)),
         "_lead_urgent": lead_time_urgent(b, ctx.today), "_blocked": blocked, "_unmet": pending,
-        "_file": f.name, "_lane": lane_of(b, ctx.today, ctx.weights),
+        "_file": f.name, "_lane": Lane.FLEET_BLOCKER if blocker else lane_of(b, ctx.today, ctx.weights),
         "_move": move_of(b, blocked, ctx.weights),
         "_actionable": b.get("autonomy") == "full" and not blocked
         and is_runnable_in_context(b, ctx.context),
@@ -422,8 +436,13 @@ def _interleave(main: list[dict[str, Any]], chores: list[dict[str, Any]],
     return out + pending
 
 
+def _fleet_first(ordered: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Briefs clearing an open fleet blocker ahead of the rest, each group's order kept."""
+    return sorted(ordered, key=lambda b: b["_lane"] is not Lane.FLEET_BLOCKER)
+
+
 def order_lanes(items: list[dict[str, Any]], weights: Weights) -> list[dict[str, Any]]:
-    """Expedite (actionable, up to the cap), then fixed-date, then standard with chores."""
+    """Fleet blockers (uncapped), then expedite (actionable, up to the cap), fixed-date, standard with chores."""
     ranked = _by("_score_wsjf", items)
     expedite = [b for b in ranked if b["_lane"] is Lane.EXPEDITE]
     held = {id(b) for b in [b for b in expedite if b["_actionable"]][:weights.expedite_cap]}
@@ -431,13 +450,13 @@ def order_lanes(items: list[dict[str, Any]], weights: Weights) -> list[dict[str,
         if id(b) not in held:
             b["_lane"] = Lane.STANDARD
     lane = {ln: [b for b in ranked if b["_lane"] is ln] for ln in Lane}
-    return (lane[Lane.EXPEDITE] + lane[Lane.FIXED_DATE]
+    return (lane[Lane.FLEET_BLOCKER] + lane[Lane.EXPEDITE] + lane[Lane.FIXED_DATE]
             + _interleave(lane[Lane.STANDARD], lane[Lane.CHORE], weights.chore_share))
 
 
 def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[dict[str, Any]]]:
     """Both orderings, each brief stamped with its rank under each."""
-    orders = {Scorer.ADDITIVE: _by("_score_additive", items),
+    orders = {Scorer.ADDITIVE: _fleet_first(_by("_score_additive", items)),
               Scorer.WSJF: order_lanes(items, weights)}
     for scorer, ordered in orders.items():
         for i, b in enumerate(ordered, 1):
@@ -474,17 +493,19 @@ def _flags(b: dict[str, Any]) -> str:
     return flags
 
 
-def _why_text(why: dict[str, float]) -> str:
+def _why_text(why: dict[str, Any]) -> str:
     text = f"{why['cost_of_delay']:g}/{why['size']:g}"
     if why["age"]:
         text += f" +age {why['age']:g}"
     if why["inherited"]:
         text += f" +inh {why['inherited']:g}"
+    if why.get("fleet_blocker"):
+        text += f" clears {why['fleet_blocker']}"
     return text
 
 
 def _row(b: dict[str, Any]) -> str:
-    return (f"{b['_score']:>7g}  {b['_lane'].value:<10} {b['_move'].value:<8} "
+    return (f"{b['_score']:>7g}  {b['_lane'].value:<13} {b['_move'].value:<8} "
             f"{b.get('importance', '?'):<2} {b.get('due', '') or '-':<10} "
             f"{b.get('estimated-effort', '') or '-':<3} {b.get('id', '?')}{_flags(b)}"
             f"  [wsjf {_why_text(b['_why'])}]")
@@ -531,7 +552,7 @@ def main(argv: list[str] | None = None) -> None:
     if not items:
         print("No briefs to show (try without --actionable, or add some to ready/).")
         return
-    print(f"{'score':>7}  {'lane':<10} {'move':<8} {'P':<2} {'due':<10} {'eff':<3} id")
+    print(f"{'score':>7}  {'lane':<13} {'move':<8} {'P':<2} {'due':<10} {'eff':<3} id")
     for b in items:
         print(_row(b))
 

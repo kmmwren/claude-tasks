@@ -7,7 +7,8 @@
     rank.py --scope session:<id>          # the queue bound to that session
 
 prioritise.py is the filter: blocked briefs drop out and its order picks the top N candidates, whose
-due and unlock facts go to the judge as features. The judge ranks them against
+due and unlock facts go to the judge as features. Briefs clearing an open fleet blocker (lane
+`fleet-blocker`) are pinned above the list and never reach the judge. The judge ranks the rest against
 profile/priorities.md; any failure (no profile, CLI error, invalid output) falls back to filter
 order and says why. This is for lists a person reads; automations keep using prioritise.py.
 """
@@ -51,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
     "excerpt_chars": 600, "low_confidence": 0.75,
 }
 SCRIPTS = pathlib.Path(__file__).parent
+FLEET_BLOCKER_LANE = "fleet-blocker"
 
 
 def settings(root: pathlib.Path) -> dict[str, Any]:
@@ -66,6 +68,7 @@ class QueueBrief:
     tags: frozenset[str]
     project: str
     text: str
+    fleet_blocker: str = ""
 
     def candidate(self, excerpt_chars: int) -> Candidate:
         body = self.text.split("\n---", 1)[-1].strip()
@@ -155,6 +158,13 @@ def facts(row: Mapping[str, Any]) -> str:
             f"effort {row.get('effort') or '?'}; unlocks {len(row.get('unlocks') or [])} briefs")
 
 
+def pinned_blocker(row: Mapping[str, Any]) -> str:
+    """The fleet blocker a filter row clears ("" when its lane is not fleet-blocker)."""
+    if row.get("lane") != FLEET_BLOCKER_LANE:
+        return ""
+    return str((row.get("why") or {}).get("fleet_blocker") or "an open fleet blocker")
+
+
 def load_brief(root: pathlib.Path, row: Mapping[str, Any]) -> QueueBrief | None:
     """None when another session moved the brief out of ready/ after the filter listed it."""
     try:
@@ -163,7 +173,8 @@ def load_brief(root: pathlib.Path, row: Mapping[str, Any]) -> QueueBrief | None:
         return None
     meta = fm(text)
     return QueueBrief(str(row["id"]), str(row.get("title") or ""), facts(row),
-                      frozenset(parse_list(meta.get("tags", ""))), meta.get("project", ""), text)
+                      frozenset(parse_list(meta.get("tags", ""))), meta.get("project", ""), text,
+                      pinned_blocker(row))
 
 
 def candidates(root: pathlib.Path, scope: Scope, limit: int, filter_fn: FilterFn) -> list[QueueBrief]:
@@ -244,6 +255,11 @@ def filtered(briefs: Sequence[QueueBrief], top: int) -> tuple[RankedItem, ...]:
     return tuple(RankedItem(b.id, b.title, b.facts, None, n + 1) for n, b in enumerate(briefs[:top]))
 
 
+def pinned(briefs: Sequence[QueueBrief]) -> tuple[RankedItem, ...]:
+    return tuple(RankedItem(b.id, b.title, f"clears fleet blocker {b.fleet_blocker}; {b.facts}", None, n)
+                 for n, b in enumerate(briefs, 1) if b.fleet_blocker)
+
+
 @dataclasses.dataclass
 class Ranker:
     root: pathlib.Path
@@ -251,6 +267,17 @@ class Ranker:
     config: dict[str, Any] = dataclasses.field(default_factory=lambda: dict(DEFAULTS))
 
     def rank(self, scope: Scope, briefs: Sequence[QueueBrief], top: int) -> Ranking:
+        """Fleet-blocker briefs lead; the judge orders the rest into whatever room `top` leaves."""
+        lead = pinned(briefs)
+        rest = [b for b in briefs if not b.fleet_blocker]
+        ranking = self._judge(scope, rest, max(0, top - len(lead)))
+        position = {b.id: n for n, b in enumerate(briefs, 1)}
+        items = tuple(dataclasses.replace(i, filter_position=position[i.id]) for i in ranking.items)
+        return dataclasses.replace(ranking, items=lead + items, total=len(briefs))
+
+    def _judge(self, scope: Scope, briefs: Sequence[QueueBrief], top: int) -> Ranking:
+        if top == 0 and briefs:
+            return self._fallback(scope, briefs, 0, readable_profile(self.root), "fleet blockers fill the list")
         try:
             profile = load_profile(self.root)
         except ProfileError as exc:

@@ -63,6 +63,28 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/learn.py"                            # pr
 - `→N` — this brief unblocks N others (clearing it has leverage).
 - `⏱lead` — the effort lead time means it must start now to hit its due date.
 
+## Fleet blockers (work that clears a blocker affecting every session)
+
+A brief declares the blocker it clears with `clears: <blocker-id>` (or `[id, id]`), the reverse of
+`blockers:`. A blocker is a JSON record, one `<id>.json` per blocker, in the directory `tasks.toml` names:
+
+```toml
+fleet_blockers_dir = "fleet-blockers"   # relative to the directory holding the queue, or absolute / ~
+```
+
+```json
+{"id": "hooks-down", "summary": "Hooks block every session", "raised_at": "...", "raised_by": "...",
+ "owner": "...", "probe": "...", "evidence": "...", "status": "active", "checked_at": "..."}
+```
+
+While `status` is `active` or `unverified`, a brief that clears it goes in the `fleet-blocker` lane, ahead of
+every other lane under either scorer, and is not held to `expedite_cap`. `--json` shows `lane:
+fleet-blocker` and `why.fleet_blocker` (`<id>: <summary>`); text output ends the row with `clears <id>: ...`.
+A `cleared` or missing record, a blocked brief, or an unset `fleet_blockers_dir` leaves the brief in its normal
+lane with no error; an unreadable directory or record warns once on stderr and is skipped. `rank.py` pins these
+briefs above the judged list, which fills whatever room `--top` leaves. When asked what is next, name the blocker
+first. `cos: fleet-blocker` is not a valid declaration; the lane comes only from an open record.
+
 ## Defining your own priority tags
 
 To weight specific tags (e.g. a "frog"/"urgent" convention), add to `tasks.toml`:
@@ -85,7 +107,7 @@ ranks by cost of delay divided by job size, plus an aging term:
 - **job size** = `estimated-effort` points (xs 1, s 2, m 3, l 5, xl 8, blank 3).
 - **inheritance**: a blocker scores at least as high as the highest brief waiting on it.
 - **lanes** from a `cos:` field or tag: `expedite` (capped), `fixed-date` (joins near its
-  due date), `standard` (default), `chore` (a reserved share of slots).
+  due date), `standard` (default), `chore` (a reserved share of slots). The `fleet-blocker` lane sits above all of them (see below).
 - **move**: `execute`, `de-fang` (make it safe to run), `ask`, or `blocked`.
 
 Pick it per call with `--scorer wsjf`, or per queue in `tasks.toml`:
