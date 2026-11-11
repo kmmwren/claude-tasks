@@ -540,3 +540,12 @@ def test_main_text_shows_age_and_inheritance(tmp_path, monkeypatch, capsys):
     prioritise.main(["--scorer", "wsjf"])
     out = capsys.readouterr().out
     assert "+age" in out and "+inh" in out
+
+
+def test_a_bad_priority_setting_warns_and_keeps_tag_weights(tmp_path, capsys):
+    root = _queue(tmp_path, [("ready", "a.md", _brief("a"))])
+    (root / "tasks.toml").write_text(
+        'name = "demo"\n[priority]\nscorer = "wsfj"\ntag_weights = { urgent = 7 }\n')
+    w = prioritise.Weights.for_queue(root)
+    assert w.scorer is prioritise.Scorer.ADDITIVE and w.tags == {"urgent": 7}
+    assert "ignoring [priority] settings" in capsys.readouterr().err
