@@ -101,13 +101,36 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
     return [path for path in out.split("\0") if path]
 
 
+FETCH_MAX_AGE = 60.0  # seconds a fetched origin/main stays fresh enough for the shadow check
+
+
+def _fetch_head(root: pathlib.Path) -> pathlib.Path:
+    git = root / ".git"
+    if git.is_dir():
+        return git / "FETCH_HEAD"
+    out = _git(root, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD",
+               capture_output=True, text=True).stdout.strip()
+    return pathlib.Path(out)
+
+
+def _fetch_if_stale(root: pathlib.Path) -> None:
+    """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old, so a burst fetches once."""
+    try:
+        if time.time() - _fetch_head(root).stat().st_mtime < FETCH_MAX_AGE:
+            return
+    except OSError:
+        pass  # never fetched
+    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+
+
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     """New brief files whose id is already filed in another state dir, here or on origin/main.
 
     A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
-    re-create the id in its old folder, leaving it in two states at once.
+    re-create the id in its old folder, leaving it in two states at once. The origin/main view
+    may be up to FETCH_MAX_AGE old: a rival pushed inside that window is not seen.
     """
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    _fetch_if_stale(root)
     # Only briefs origin gained since our history diverged are rivals; an older origin path
     # we already moved away locally (committed but unpushed) is not.
     remote = _git(root, "diff", "--relative", "--name-only", "--diff-filter=A", "HEAD...origin/main",

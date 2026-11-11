@@ -497,6 +497,7 @@ def _fake_git_on_path(tmp_path, monkeypatch):
     shim.write_text(
         "#!/bin/sh\n"
         'sub="$1"; [ "$1" = "-C" ] && sub="$3"\n'
+        f'if [ "$sub" = fetch ]; then echo fetch >> "{log}.fetch"; fi\n'
         f'if [ "$sub" = push ]; then echo push >> "{log}"; '
         f'if [ -f "{slow}" ]; then touch "{started}"; sleep 1; fi; fi\n'
         f'exec "{shutil.which("git")}" "$@"\n'
@@ -537,6 +538,7 @@ def test_twenty_concurrent_writes_commit_twenty_times_and_push_at_most_twice(tmp
 
     assert int(git(repo, "rev-list", "--count", "HEAD").stdout) == base + 20
     assert _push_count(log) <= 2
+    assert _push_count(log.with_name("pushes.log.fetch")) <= 1
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
 
 
@@ -683,3 +685,29 @@ def test_a_pusher_that_fails_to_start_releases_the_push_lock(tmp_path, monkeypat
     held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
     assert held is not None
     os.close(held)
+
+
+def test_a_stale_fetch_is_refreshed_and_a_fresh_one_reused(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+    fetches = log.with_name("pushes.log.fetch")
+
+    git_sync._fetch_if_stale(repo)
+    git_sync._fetch_if_stale(repo)
+    assert _push_count(fetches) == 1
+
+    stale = time.time() - git_sync.FETCH_MAX_AGE - 1
+    os.utime(repo / ".git" / "FETCH_HEAD", (stale, stale))
+    git_sync._fetch_if_stale(repo)
+    assert _push_count(fetches) == 2
+
+
+def test_fetch_freshness_reads_a_worktree_fetch_head(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = tmp_path / "wt"
+    git(repo, "worktree", "add", "-q", "--detach", str(wt))
+    git(wt, "fetch", "-q", "origin", "main")
+
+    assert git_sync._fetch_head(wt) == pathlib.Path(
+        git(wt, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD").stdout.strip())
+    assert git_sync._fetch_head(wt).exists()
