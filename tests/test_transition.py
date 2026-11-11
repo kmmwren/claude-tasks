@@ -189,6 +189,52 @@ def test_move_blocks_an_enriched_inbox_brief(root):
     assert newp == root / "blocked" / "enriched-staging-thought.md"
 
 
+@pytest.fixture
+def parked(root):
+    """An un-enriched and an enriched brief, both already sitting in parked/."""
+    for bid, extra in (("parked-raw", ""), ("parked-enriched", ENRICHMENT)):
+        (root / "parked" / f"{bid}.md").write_text(_brief("parked", bid, bid, enrichment=extra))
+    return root
+
+
+@pytest.mark.parametrize("target", ["ready", "in-progress"])
+def test_move_refuses_to_promote_unenriched_parked_brief_naming_missing_fields(parked, target):
+    with pytest.raises(ValueError, match="still in parked/ and cannot move to .* without criteria, context"):
+        transition.move_brief("parked-raw", target, parked)
+    assert (parked / "parked" / "parked-raw.md").exists()
+    assert not (parked / target / "parked-raw.md").exists()
+
+
+def test_move_refuses_to_block_an_unenriched_parked_brief(parked):
+    with pytest.raises(ValueError, match="cannot move to blocked without criteria, context"):
+        transition.move_brief("parked-raw", "blocked", parked, **BLOCK_ARGS)
+
+
+def test_move_refuses_the_inbox_to_parked_to_ready_detour(parked):
+    transition.move_brief("raw-staging-thought", "parked", parked)
+    with pytest.raises(ValueError, match="without criteria, context"):
+        transition.move_brief("raw-staging-thought", "ready", parked)
+
+
+@pytest.mark.parametrize("target", ["ready", "in-progress"])
+def test_move_promotes_enriched_parked_brief(parked, target):
+    newp = transition.move_brief("parked-enriched", target, parked, today="2026-06-02")
+    assert newp == parked / target / "parked-enriched.md"
+    assert not (parked / "parked" / "parked-enriched.md").exists()
+
+
+@pytest.mark.parametrize("source", ["inbox", "ready", "in-progress"])
+def test_move_keeps_parked_open_to_an_unenriched_brief(parked, source):
+    (parked / source / "landing.md").write_text(_brief(source, "landing", "Landing"))
+    newp = transition.move_brief("landing", "parked", parked, today="2026-06-02")
+    assert newp == parked / "parked" / "landing.md"
+
+
+def test_move_closes_an_unenriched_parked_brief(parked):
+    newp = transition.move_brief("parked-raw", "done", parked, today="2026-06-02")
+    assert newp == parked / "done" / "parked-raw.md"
+
+
 def test_move_prefers_brief_folder_over_inbox_duplicate(root):
     (root / "inbox" / "rotate-the-api-key.md").write_text(_brief("inbox", "rotate-the-api-key", "dup"))
     newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
