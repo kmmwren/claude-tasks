@@ -13,6 +13,9 @@ Two scorers, chosen by `[priority] scorer` in tasks.toml (default "additive") or
             service (`cos:` field or `cos:<lane>` tag) picks the lane: expedite (capped),
             fixed-date (once its due date is near), standard, or chore (a reserved share).
 
+A brief whose cited PRs are all merged or closed is dropped (liveness.py; `gh`, cached for ten
+minutes; no `gh` or an unreadable PR keeps the brief with one warning).
+
 Under either scorer a brief whose `clears: <id>` names an active or unverified fleet blocker
 (record in tasks.toml `fleet_blockers_dir`) sorts first, in the uncapped `fleet-blocker` lane.
 
@@ -30,6 +33,7 @@ Usage:
   python scripts/prioritise.py --top 5 --json  # machine-readable, top 5, with the "why"
   python scripts/prioritise.py --scorer wsjf   # rank by WSJF for this call
   python scripts/prioritise.py --context cloud # exclude briefs needing local/other-repo access
+  python scripts/prioritise.py --no-liveness   # keep briefs whose cited PRs are all merged/closed
 """
 
 import argparse
@@ -46,6 +50,7 @@ from _paths import require_queue, resolve_root
 from config import load_config
 from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
+from liveness import Liveness
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
 SIZE_ORDER = ("xs", "s", "m", "l", "xl")
@@ -544,9 +549,23 @@ def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[
 
 def _load_fields(path: pathlib.Path) -> dict[str, Any]:
     """The brief's frontmatter with `id` always set, so no row ever carries a null id."""
-    fields: dict[str, Any] = dict(fm(path.read_text()))
+    text = path.read_text()
+    fields: dict[str, Any] = dict(fm(text))
     fields["id"] = brief_id(fields, path.stem)
+    fields["_text"] = text
     return fields
+
+
+def _without_dead(items: list[dict[str, Any]], liveness: Liveness) -> list[dict[str, Any]]:
+    dead = liveness.dead({b["id"]: b["_text"] for b in items})
+    if dead:
+        noun = "brief" if len(dead) == 1 else "briefs"
+        print(
+            f"prioritise: dropped {len(dead)} {noun} whose cited PRs are all merged or closed: "
+            + ", ".join(sorted(dead)),
+            file=sys.stderr,
+        )
+    return [b for b in items if b["id"] not in dead]
 
 
 def rank(
@@ -556,12 +575,18 @@ def rank(
     tag_weights: dict[str, int] | None = None,
     weights: Weights | None = None,
     scorer: Scorer | None = None,
+    liveness: Liveness | None = None,
 ) -> list[dict[str, Any]]:
-    """Every ready/ brief, scored both ways and annotated, in the chosen scorer's order."""
+    """Every live ready/ brief, scored both ways and annotated, in the chosen scorer's order.
+
+    With a `liveness` check, a brief whose cited PRs are all merged or closed is dropped.
+    """
     weights = weights or Weights.for_queue(root)
     tags = weights.tags if tag_weights is None else tag_weights
     ctx = _RankContext.load(root, today or datetime.date.today(), context, weights, tags)
     items = [_annotate(f, _load_fields(f), ctx) for f in sorted((root / "ready").glob("*.md"))]
+    if liveness is not None:
+        items = _without_dead(items, liveness)
     chosen = scorer or weights.scorer
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]
@@ -643,10 +668,20 @@ def main(argv: list[str] | None = None) -> None:
         choices=[s.value for s in Scorer],
         help="override tasks.toml [priority] scorer for this call",
     )
+    ap.add_argument(
+        "--no-liveness",
+        action="store_true",
+        help="keep briefs whose cited PRs are all merged or closed (skips the gh lookups)",
+    )
     a = ap.parse_args(argv)
 
     root = require_queue(resolve_root())
-    items = rank(root, context=a.context, scorer=Scorer(a.scorer) if a.scorer else None)
+    items = rank(
+        root,
+        context=a.context,
+        scorer=Scorer(a.scorer) if a.scorer else None,
+        liveness=None if a.no_liveness else Liveness.for_queue(root),
+    )
     if a.actionable:
         items = [b for b in items if b["_actionable"]]
     if a.top:

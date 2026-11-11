@@ -320,3 +320,102 @@ def test_main_json_lists_every_candidate_for_a_session_scope(tmp_path, monkeypat
     rank.main(["--scope", "session:s1", "--json"])
     out = json.loads(capsys.readouterr().out)
     assert (out["scope"], [i["id"] for i in out["items"]]) == ("session:s1", ["b", "c", "a"])
+
+
+def goal_profile(root):
+    return taste.load_profile(root)
+
+
+def many(tmp_path, n=6, fdo=()):
+    """A queue of briefs b1..bn in filter order, those named in `fdo` tagged to the FDO goal."""
+    ids = [f"b{i}" for i in range(1, n + 1)]
+    root = make_queue(tmp_path, {i: {"tags": "[fdo]" if i in fdo else "[]"} for i in ids})
+    taste.profile_path(root).parent.mkdir()
+    taste.profile_path(root).write_text(PROFILE)
+    return root, ids
+
+
+def test_goal_briefs_below_the_window_join_it_after_the_top_n_in_filter_order(tmp_path):
+    root, ids = many(tmp_path, fdo=("b4", "b6"))
+    found = rank.candidates(root, AllScope(""), 2, rows(*ids), goal_profile(root), 5)
+    assert [b.id for b in found] == ["b1", "b2", "b4", "b6"]
+
+
+def test_goal_briefs_already_in_the_window_are_not_listed_twice(tmp_path):
+    root, ids = many(tmp_path, fdo=("b1", "b5"))
+    found = rank.candidates(root, AllScope(""), 2, rows(*ids), goal_profile(root), 5)
+    assert [b.id for b in found] == ["b1", "b2", "b5"]
+
+
+def test_goal_briefs_beyond_the_window_are_capped(tmp_path):
+    root, ids = many(tmp_path, n=8, fdo=("b3", "b4", "b5", "b6"))
+    found = rank.candidates(root, AllScope(""), 2, rows(*ids), goal_profile(root), 2)
+    assert [b.id for b in found] == ["b1", "b2", "b3", "b4"]
+
+
+def test_a_goal_brief_matched_by_its_text_joins_the_window(tmp_path):
+    root, ids = many(tmp_path)
+    path = root / "ready" / "b5.md"
+    path.write_text(path.read_text() + "\nAdvances the fdo milestone.\n")
+    found = rank.candidates(root, AllScope(""), 2, rows(*ids), goal_profile(root), 5)
+    assert [b.id for b in found] == ["b1", "b2", "b5"]
+
+
+def test_without_a_profile_or_a_goal_allowance_the_window_is_the_top_n_only(tmp_path):
+    root, ids = many(tmp_path, fdo=("b4",))
+    window = rank.candidates(root, AllScope(""), 2, rows(*ids))
+    unfunded = rank.candidates(root, AllScope(""), 2, rows(*ids), goal_profile(root), 0)
+    assert [b.id for b in window] == [b.id for b in unfunded] == ["b1", "b2"]
+
+
+def test_goal_briefs_respect_blocking_and_scope(tmp_path):
+    root, ids = many(tmp_path, fdo=("b3", "b4", "b5"))
+    untagged = root / "ready" / "b2.md"
+    untagged.write_text(untagged.read_text() + "\nMentions fdo but is not tagged.\n")
+    found = rank.candidates(
+        root, TagScope("fdo"), 1, rows(*ids, blocked=("b4",)), goal_profile(root), 5
+    )
+    assert [b.id for b in found] == ["b3", "b5"]
+
+
+def test_prioritise_rows_asks_the_filter_for_the_wsjf_scorer_by_default(tmp_path, monkeypatch):
+    seen = []
+
+    def fake(cmd, **kw):
+        seen.append(cmd)
+        return rank.subprocess.CompletedProcess(cmd, 0, "[]", "")
+
+    monkeypatch.setattr(rank.subprocess, "run", fake)
+    rank.prioritise_rows(tmp_path)
+    rank.prioritise_rows(tmp_path, "additive")
+    assert [cmd[-2:] for cmd in seen] == [["--scorer", "wsjf"], ["--scorer", "additive"]]
+
+
+def test_the_filter_scorer_and_goal_allowance_are_configurable_with_sane_defaults(tmp_path):
+    root = queue(tmp_path)
+    assert (rank.settings(root)["scorer"], rank.settings(root)["goal_candidates"]) == ("wsjf", 20)
+    (root / "tasks.toml").write_text(
+        (root / "tasks.toml").read_text() + '\n[rank]\nscorer = "additive"\ngoal_candidates = 3\n'
+    )
+    assert (rank.settings(root)["scorer"], rank.settings(root)["goal_candidates"]) == (
+        "additive",
+        3,
+    )
+
+
+def test_run_feeds_the_head_from_the_configured_scorer_and_adds_goal_briefs(tmp_path, monkeypatch):
+    root, ids = many(tmp_path, fdo=("b5",))
+    (root / "tasks.toml").write_text(
+        (root / "tasks.toml").read_text() + '\n[rank]\ncandidates = 2\nscorer = "additive"\n'
+    )
+    scorers = []
+
+    def fake_filter(root, scorer):
+        scorers.append(scorer)
+        return rows(*ids)(root)
+
+    monkeypatch.setattr(rank, "prioritise_rows", fake_filter)
+    predict = FakePredict(reply("b5", "b1", "b2"), reply("b5", "b1", "b2"))
+    ranking = rank.run(root, AllScope(""), 3, None, predict)
+    assert scorers == ["additive"]
+    assert [i.id for i in ranking.items] == ["b5", "b1", "b2"]

@@ -7,6 +7,7 @@ the CLI.
 """
 
 import datetime
+import json
 
 import init_queue
 import prioritise
@@ -761,3 +762,49 @@ def test_the_queue_order_of_tied_briefs_does_not_depend_on_file_names(tmp_path):
         ],
     )
     assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["a", "b", "c"]
+
+
+# ── liveness ──────────────────────────────────────────────────────────────────
+
+
+class _Dead:
+    """A Liveness stand-in that calls these ids dead."""
+
+    def __init__(self, *ids):
+        self.ids = set(ids)
+
+    def dead(self, texts):
+        return self.ids & set(texts)
+
+
+def test_rank_drops_a_brief_the_liveness_check_calls_dead(tmp_path, capsys):
+    root = _queue(
+        tmp_path,
+        [
+            ("ready", "gone.md", _brief("gone", importance="1")),
+            ("ready", "kept.md", _brief("kept")),
+        ],
+    )
+    ranked = prioritise.rank(root, today=TODAY, liveness=_Dead("gone"))
+    assert [b["id"] for b in ranked] == ["kept"]
+    assert (
+        "dropped 1 brief whose cited PRs are all merged or closed: gone" in capsys.readouterr().err
+    )
+
+
+def test_rank_without_a_liveness_check_keeps_every_brief(tmp_path, capsys):
+    root = _queue(tmp_path, [("ready", "gone.md", _brief("gone"))])
+    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["gone"]
+    assert capsys.readouterr().err == ""
+
+
+def test_main_checks_liveness_by_default_and_not_with_no_liveness(tmp_path, monkeypatch, capsys):
+    root = _queue(
+        tmp_path, [("ready", "gone.md", _brief("gone")), ("ready", "kept.md", _brief("kept"))]
+    )
+    monkeypatch.setenv("CLAUDE_TASKS_DIR", str(root))
+    monkeypatch.setattr(prioritise.Liveness, "for_queue", classmethod(lambda cls, r: _Dead("gone")))
+    prioritise.main(["--json"])
+    assert [b["id"] for b in json.loads(capsys.readouterr().out)] == ["kept"]
+    prioritise.main(["--json", "--no-liveness"])
+    assert [b["id"] for b in json.loads(capsys.readouterr().out)] == ["gone", "kept"]

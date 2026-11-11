@@ -115,3 +115,81 @@ def test_main_reports_what_it_drafted(sources, capsys):
     assert capsys.readouterr().out.startswith(
         f"drafted {taste.profile_path(sources)}: 2 goals, 0 values, 2 patterns."
     )
+
+
+def finished(root, name, tags):
+    (root / "done").mkdir(exist_ok=True)
+    (root / "done" / f"{name}.md").write_text(f"---\nid: {name}\ntags: [{tags}]\n---\n\nbody\n")
+
+
+def test_draft_learns_the_tags_the_owner_keeps_finishing_from_done_history(sources):
+    for n in range(3):
+        finished(sources, f"d{n}", "fdo, project:lite")
+    finished(sources, "e", "fdo, one-off")
+    finished(sources, "f", "")
+    (sources / "done" / "unreadable.md").mkdir()
+    patterns = seed_profile.draft(sources, "").patterns
+    assert patterns[2:] == (
+        "Often finished: fdo (4 briefs)",
+        "Often finished: project:lite (3 briefs)",
+    )
+
+
+def test_done_history_patterns_are_capped_and_need_a_repeat(sources):
+    (sources / "tasks.toml").write_text(
+        (sources / "tasks.toml").read_text() + "done_tags_limit = 1\ndone_tags_min = 3\n"
+    )
+    for n in range(3):
+        finished(sources, f"d{n}", "a, b")
+    finished(sources, "x", "b, c")
+    assert seed_profile.draft(sources, "").patterns[2:] == ("Often finished: b (4 briefs)",)
+
+
+def test_draft_learns_the_tags_the_queue_config_weights_up(sources):
+    (sources / "tasks.toml").write_text(
+        (sources / "tasks.toml").read_text()
+        + '[priority]\ntag_weights = { "tier:quick" = 100, "tier:human" = 0, "later" = -5,'
+        ' "tier:smoke" = 50, "odd" = "x" }\n'
+    )
+    assert seed_profile.draft(sources, "").patterns[2:] == (
+        "Prioritised by tag: tier:quick (weight 100)",
+        "Prioritised by tag: tier:smoke (weight 50)",
+    )
+
+
+def test_a_queue_with_no_history_or_weights_adds_no_learned_patterns(sources):
+    assert len(seed_profile.draft(sources, "").patterns) == 2
+
+
+def test_north_stars_default_to_the_lite_north_stars_doc():
+    assert seed_profile.DEFAULTS["north_stars"] == (
+        "Panaseer/ai-knowledge-mm:experiments/panaseer-lite/docs/north-stars.md"
+    )
+
+
+def test_the_default_north_stars_seed_the_values_when_nothing_overrides_them(tmp_path):
+    root = make_queue(tmp_path, {})
+    (root / "tasks.toml").write_text(
+        (root / "tasks.toml").read_text()
+        + f'\n[profile]\ngoals_dir = "{tmp_path}/none"\ndecisions_dir = "{tmp_path}/none"\n'
+    )
+    seen = []
+    profile = seed_profile.draft(
+        root, None, fetch=lambda spec: seen.append(spec) or "## NS-1 First\n## NS-2 Second\n"
+    )
+    assert seen == [seed_profile.DEFAULTS["north_stars"]]
+    assert profile.values == ("NS-1 First", "NS-2 Second")
+
+
+def test_main_never_overwrites_an_existing_profile_and_does_not_even_fetch(
+    sources, monkeypatch
+):
+    path = taste.profile_path(sources)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("## Goals\n- Mine | weight 1\n")
+    monkeypatch.setattr(
+        seed_profile, "gh_fetch", lambda spec: pytest.fail("fetched for an existing profile")
+    )
+    with pytest.raises(SystemExit, match="exists; edit it, or re-seed with --force"):
+        seed_profile.main(["--root", str(sources)])
+    assert path.read_text() == "## Goals\n- Mine | weight 1\n"
