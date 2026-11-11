@@ -444,13 +444,19 @@ def test_factors_divide_cost_of_delay_by_job_size_and_add_age():
         TODAY,
         leverage=1,
     )
-    assert f.cost_of_delay == 1000 + 200 + 150
-    assert f.total == round(1350 / 2 + 4, 1)
-    assert f.why()["cost_of_delay"] == 1350 and f.why()["size"] == 2
+    assert f.signals == {"clears-blocker": 800}
+    assert f.cost_of_delay == 1000 + 200 + 150 + 800
+    assert f.total == round(2150 / 2 + 4, 1)
+    assert f.why()["cost_of_delay"] == 2150 and f.why()["size"] == 2
+
+
+NO_SIGNALS = {kind: {"multiplier": 0, "ships-pr": 0, "clears-blocker": 0} for kind in ("all",)}
 
 
 def test_wsjf_keeps_the_pr_tier_order_and_lets_a_bump_jump_it():
-    w = prioritise.Weights.from_priority({"tag_weights": {"tier:quick": 100, "tier:smoke": 50}})
+    w = prioritise.Weights.from_priority(
+        {"tag_weights": {"tier:quick": 100, "tier:smoke": 50}, "scope_weights": NO_SIGNALS}
+    )
     pr = {"importance": "3"}
     quick = prioritise.wsjf_score(
         {**pr, "estimated-effort": "xs", "tags": "[tier:quick]"}, TODAY, weights=w
@@ -463,6 +469,14 @@ def test_wsjf_keeps_the_pr_tier_order_and_lets_a_bump_jump_it():
     )
     bumped = prioritise.wsjf_score({"importance": "1", "estimated-effort": "l"}, TODAY, weights=w)
     assert quick > smoke > human and bumped > quick
+
+
+def test_ships_pr_weight_puts_a_quick_pr_above_an_importance_1_bump():
+    quick = prioritise.wsjf_score(
+        {"importance": "3", "estimated-effort": "xs", "tags": "[tier:quick]"}, TODAY
+    )
+    bumped = prioritise.wsjf_score({"importance": "1", "estimated-effort": "l"}, TODAY)
+    assert (quick, bumped) == (300 + 800, 2500 / 5)
 
 
 def test_wsjf_spreads_what_additive_ties():

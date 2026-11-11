@@ -19,6 +19,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --top 5       # top 5
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --actionable  # only what Claude can run now
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --json        # machine-readable
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --context cloud  # skip requires-local / requires-repo
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --scope project:lite   # one project, project weights
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --scope session:<id> --ids a,b --root <queue>
 ```
 
 The script resolves the queue via `$CLAUDE_TASKS_DIR` → nearest `.tasks/` → `~/tasks`.
@@ -97,13 +99,44 @@ tag_weights = { urgent = 500, frog = 400 }
 Briefs carrying those tags get the weight added to their score. Empty by default — the
 base ranking stays purely mechanical (due / importance / effort / unlocks).
 
+## Scopes and work signals
+
+`--scope` (`all`, `tag:<t>`, `project:<slug>`, `session:<id>`; the same parser `rank.py` uses)
+filters the briefs ranked and picks the signal weights. Three typed signals add to the score
+under both scorers: `multiplier`, `ships-pr` and `clears-blocker`. `[priority.signals]` says
+how a brief earns each (any of `tags`, `types`, `fields`, `min_leverage`), and
+`[priority.scope_weights]` weights them per scope kind. The defaults:
+
+```toml
+[priority.signals.multiplier]
+tags = ["multiplier", "tax", "fleet"]
+[priority.signals.ships-pr]
+tags = ["tier:quick", "tier:smoke", "pr"]
+fields = ["pr"]
+[priority.signals.clears-blocker]
+tags = ["blocker"]
+fields = ["clears"]
+min_leverage = 1           # something live waits on it; 0 turns this matcher off
+
+[priority.scope_weights]
+all = { multiplier = 1500, ships-pr = 800, clears-blocker = 800 }      # also tag and session
+project = { ships-pr = 2000, clears-blocker = 2000, multiplier = 500 }
+```
+
+Each matcher and weight merges over its default, so `tags = []` drops one matcher. `--ids`
+ranks just the named briefs wherever they are live (ready/, in-progress/, blocked/), which is
+how a session ranks its own open ledger. `why.signals` and `why.scope` in `--json`, and
+`+<signal> N` in text output, show what each signal added. The `fleet-blocker` lane still sorts
+above every signal.
+
 ## WSJF scorer (opt-in)
 
 `additive` (above) is the default and what every consumer reads. A second scorer, `wsjf`,
 ranks by cost of delay divided by job size, plus an aging term:
 
 - **cost of delay** = importance value + time criticality (due curve, plus lead time) +
-  milestone weight + tag weights + leverage (longest chain of live briefs waiting on it).
+  milestone weight + tag weights + leverage (longest chain of live briefs waiting on it) +
+  the scope's signal weights.
 - **job size** = `estimated-effort` points (xs 1, s 2, m 3, l 5, xl 8, blank 3).
 - **inheritance**: a blocker scores at least as high as the highest brief waiting on it.
 - **lanes** from a `cos:` field or tag: `expedite` (capped), `fixed-date` (joins near its

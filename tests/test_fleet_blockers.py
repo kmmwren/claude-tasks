@@ -15,7 +15,8 @@ import pytest
 import rank
 import taste
 from fleet_blockers import BlockerStatus, FleetBlocker, FleetBlockers
-from rank import AllScope, Ranker
+from rank import Ranker
+from scope import AllScope
 
 TODAY = datetime.date(2026, 11, 11)
 W = prioritise.DEFAULT_WEIGHTS
@@ -210,9 +211,9 @@ def test_a_cleared_or_missing_record_leaves_the_brief_in_its_normal_lane(tmp_pat
         _record(root.parent / "blockers", "hooks-down", record)
     else:
         (root.parent / "blockers").mkdir()
-    ranked = prioritise.rank(root, today=TODAY)
-    assert _ids(ranked) == ["a", "fix"] and ranked[1]["_lane"] is prioritise.Lane.STANDARD
-    assert "fleet_blocker" not in ranked[1]["_why"] and capsys.readouterr().err == ""
+    fix = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}["fix"]
+    assert fix["_lane"] is prioritise.Lane.STANDARD
+    assert "fleet_blocker" not in fix["_why"] and capsys.readouterr().err == ""
 
 
 def test_without_the_config_key_clears_is_ignored(tmp_path):
@@ -222,7 +223,8 @@ def test_without_the_config_key_clears_is_ignored(tmp_path):
         blockers_dir="",
     )
     _record(root.parent / "blockers", "hooks-down")
-    assert _ids(prioritise.rank(root, today=TODAY)) == ["a", "fix"]
+    lanes = {b["id"]: b["_lane"] for b in prioritise.rank(root, today=TODAY)}
+    assert lanes == {"a": prioritise.Lane.STANDARD, "fix": prioritise.Lane.STANDARD}
 
 
 def test_a_blocked_brief_does_not_take_the_lane_but_a_needs_input_one_does(tmp_path):
@@ -302,7 +304,7 @@ def _candidates(root, limit=15):
         root,
         AllScope(""),
         limit,
-        lambda r: [
+        lambda r, scope: [
             {
                 **row,
                 "lane": "fleet-blocker",

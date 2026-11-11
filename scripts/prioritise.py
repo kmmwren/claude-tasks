@@ -13,6 +13,12 @@ Two scorers, chosen by `[priority] scorer` in tasks.toml (default "additive") or
             service (`cos:` field or `cos:<lane>` tag) picks the lane: expedite (capped),
             fixed-date (once its due date is near), standard, or chore (a reserved share).
 
+Under either scorer each typed work signal a brief carries (`multiplier`, `ships-pr`,
+`clears-blocker`, matched by `[priority.signals]`) adds its weight for the scope kind being ranked
+(`[priority.scope_weights]`): the whole queue favours multipliers, a project favours shipping PRs
+and clearing blockers. `--scope` also filters the briefs ranked; `--ids` narrows to named briefs
+across ready/, in-progress/ and blocked/, so a session can rank its own open ledger.
+
 Under either scorer a brief whose `clears: <id>` names an active or unverified fleet blocker
 (record in tasks.toml `fleet_blockers_dir`) sorts first, in the uncapped `fleet-blocker` lane.
 
@@ -30,6 +36,8 @@ Usage:
   python scripts/prioritise.py --top 5 --json  # machine-readable, top 5, with the "why"
   python scripts/prioritise.py --scorer wsjf   # rank by WSJF for this call
   python scripts/prioritise.py --context cloud # exclude briefs needing local/other-repo access
+  python scripts/prioritise.py --scope project:lite --json      # a project's queue, project weights
+  python scripts/prioritise.py --scope session:<id> --ids a,b   # rank a session's ledger briefs
 """
 
 import argparse
@@ -46,6 +54,8 @@ from _paths import require_queue, resolve_root
 from config import load_config
 from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
+from scope import SCOPE_HELP, AllScope, Scope, parse_scope
+from signals import Signal, SignalWeights, Subject
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
 SIZE_ORDER = ("xs", "s", "m", "l", "xl")
@@ -70,6 +80,26 @@ PRIORITY_DEFAULTS: dict[str, Any] = {
     "fixed_date_horizon_days": 7,
     "human_tags": ["tier:human"],
     "tag_weights": {},
+    "signals": {
+        Signal.MULTIPLIER.value: {"tags": ["multiplier", "tax", "fleet"]},
+        Signal.SHIPS_PR.value: {"tags": ["tier:quick", "tier:smoke", "pr"], "fields": ["pr"]},
+        Signal.CLEARS_BLOCKER.value: {"tags": ["blocker"], "fields": ["clears"], "min_leverage": 1},
+    },
+    "scope_weights": {
+        kind: {
+            Signal.MULTIPLIER.value: 1500,
+            Signal.SHIPS_PR.value: 800,
+            Signal.CLEARS_BLOCKER.value: 800,
+        }
+        for kind in ("all", "tag", "session")
+    }
+    | {
+        "project": {
+            Signal.SHIPS_PR.value: 2000,
+            Signal.CLEARS_BLOCKER.value: 2000,
+            Signal.MULTIPLIER.value: 500,
+        }
+    },
 }
 
 # A context excludes briefs declaring a requires-* field it cannot satisfy.
@@ -102,13 +132,13 @@ class Move(enum.Enum):
     BLOCKED = "blocked"
 
 
-def _merged(overrides: dict[str, Any]) -> dict[str, Any]:
-    """PRIORITY_DEFAULTS under `overrides`, merging table values one level deep."""
-    out = dict(PRIORITY_DEFAULTS)
+def _merged(overrides: dict[str, Any], base: dict[str, Any] = PRIORITY_DEFAULTS) -> dict[str, Any]:
+    """`base` under `overrides`, merging tables at every depth; any other value replaces."""
+    out = dict(base)
     for key, value in overrides.items():
-        base = out.get(key)
+        under = out.get(key)
         out[key] = (
-            {**base, **value} if isinstance(base, dict) and isinstance(value, dict) else value
+            _merged(value, under) if isinstance(under, dict) and isinstance(value, dict) else value
         )
     return out
 
@@ -131,6 +161,7 @@ class Weights:
     fixed_date_horizon_days: int
     human_tags: frozenset[str]
     tags: dict[str, int]
+    signals: SignalWeights
 
     @classmethod
     def from_priority(cls, table: dict[str, Any]) -> "Weights":
@@ -150,6 +181,7 @@ class Weights:
             fixed_date_horizon_days=int(p["fixed_date_horizon_days"]),
             human_tags=frozenset(p["human_tags"]),
             tags=dict(p["tag_weights"]),
+            signals=SignalWeights.from_tables(p["signals"], p["scope_weights"]),
         )
 
     @classmethod
@@ -197,10 +229,22 @@ class Factors:
     leverage: float
     size: float
     age: float
+    signals: dict[str, float] = dataclasses.field(default_factory=dict)
+
+    @property
+    def signal_total(self) -> float:
+        return sum(self.signals.values())
 
     @property
     def cost_of_delay(self) -> float:
-        return self.importance + self.time_criticality + self.goal + self.tags + self.leverage
+        return (
+            self.importance
+            + self.time_criticality
+            + self.goal
+            + self.tags
+            + self.leverage
+            + self.signal_total
+        )
 
     @property
     def total(self) -> float:
@@ -208,6 +252,10 @@ class Factors:
 
     def why(self) -> dict[str, float]:
         return {**dataclasses.asdict(self), "cost_of_delay": self.cost_of_delay}
+
+
+def subject(brief: dict[str, Any], leverage: int = 0) -> Subject:
+    return Subject(brief, frozenset(_parse_tags(brief)), leverage)
 
 
 def _parse_tags(brief: dict[str, Any]) -> set[str]:
@@ -261,8 +309,9 @@ def score(
     *,
     unlocks: int = 0,
     tag_weights: dict[str, int] | None = None,
-) -> int:
-    """The additive score: the original ranking, unchanged."""
+    signals: float = 0.0,
+) -> float:
+    """The additive score: the original ranking plus the scope's signal weights."""
     due_score = 0
     if brief.get("due"):
         try:
@@ -286,6 +335,7 @@ def score(
         + lead_bonus
         + tag_score
         + unlocks * UNLOCK_WEIGHT
+        + signals
     )
 
 
@@ -295,6 +345,7 @@ def factors(
     *,
     leverage: int = 0,
     weights: Weights = DEFAULT_WEIGHTS,
+    scope_kind: str = AllScope.name,
 ) -> Factors:
     tags = _parse_tags(brief)
     lead = weights.lead_time if lead_time_urgent(brief, today) else 0.0
@@ -306,6 +357,7 @@ def factors(
         leverage=leverage * weights.leverage,
         size=weights.size(brief.get("estimated-effort", "") or ""),
         age=min(weights.aging_cap, age_days(brief, today) * weights.aging_per_day),
+        signals=weights.signals.values(subject(brief, leverage), scope_kind),
     )
 
 
@@ -315,8 +367,9 @@ def wsjf_score(
     *,
     leverage: int = 0,
     weights: Weights = DEFAULT_WEIGHTS,
+    scope_kind: str = AllScope.name,
 ) -> float:
-    return factors(brief, today, leverage=leverage, weights=weights).total
+    return factors(brief, today, leverage=leverage, weights=weights, scope_kind=scope_kind).total
 
 
 def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
@@ -407,6 +460,7 @@ class _RankContext:
 
     today: datetime.date
     context: str
+    scope: Scope
     weights: Weights
     tag_weights: dict[str, int]
     unlocks: dict[str, int]
@@ -422,6 +476,7 @@ class _RankContext:
         root: pathlib.Path,
         today: datetime.date,
         context: str,
+        scope: Scope,
         weights: Weights,
         tag_weights: dict[str, int],
     ) -> "_RankContext":
@@ -429,13 +484,16 @@ class _RankContext:
         graph = WaitGraph.build(queue)
         depth = graph.depth()
         scored = {
-            b.id: factors(b.fields, today, leverage=int(depth(b.id)), weights=weights)
+            b.id: factors(
+                b.fields, today, leverage=int(depth(b.id)), weights=weights, scope_kind=scope.name
+            )
             for b in queue
             if b.status in LIVE_DIRS
         }
         return cls(
             today,
             context,
+            scope,
             weights,
             tag_weights,
             index_queue(root)[1],
@@ -457,13 +515,21 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
     blocked, pending = is_blocked(b, ctx.done_ids)
     own, wsjf = ctx.wsjf(bid)
     blocker = None if blocked else ctx.fleet.clearing(b)
-    why: dict[str, Any] = {**own.why(), "inherited": round(wsjf - own.total, 1)}
+    why: dict[str, Any] = {
+        **own.why(),
+        "inherited": round(wsjf - own.total, 1),
+        "scope": ctx.scope.key,
+    }
     if blocker:
         why["fleet_blocker"] = blocker.label()
     b.update(
         {
             "_score_additive": score(
-                b, ctx.today, unlocks=ctx.unlocks.get(bid, 0), tag_weights=ctx.tag_weights
+                b,
+                ctx.today,
+                unlocks=ctx.unlocks.get(bid, 0),
+                tag_weights=ctx.tag_weights,
+                signals=own.signal_total,
             ),
             "_score_wsjf": wsjf,
             "_why": why,
@@ -549,6 +615,14 @@ def _load_fields(path: pathlib.Path) -> dict[str, Any]:
     return fields
 
 
+def _brief_files(root: pathlib.Path, ids: frozenset[str] | None) -> list[pathlib.Path]:
+    """ready/ briefs, or the named briefs wherever they are live."""
+    if ids is None:
+        return sorted((root / "ready").glob("*.md"))
+    live = (f for d in LIVE_DIRS for f in sorted((root / d).glob("*.md")))
+    return [f for f in live if brief_id(fm(f.read_text()), f.stem) in ids]
+
+
 def rank(
     root: pathlib.Path,
     today: datetime.date | None = None,
@@ -556,12 +630,16 @@ def rank(
     tag_weights: dict[str, int] | None = None,
     weights: Weights | None = None,
     scorer: Scorer | None = None,
+    scope: Scope | None = None,
+    ids: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Every ready/ brief, scored both ways and annotated, in the chosen scorer's order."""
+    """The scope's ready/ briefs (or the named live ones), scored both ways, in the scorer's order."""
     weights = weights or Weights.for_queue(root)
+    scope = scope or AllScope("")
     tags = weights.tags if tag_weights is None else tag_weights
-    ctx = _RankContext.load(root, today or datetime.date.today(), context, weights, tags)
-    items = [_annotate(f, _load_fields(f), ctx) for f in sorted((root / "ready").glob("*.md"))]
+    ctx = _RankContext.load(root, today or datetime.date.today(), context, scope, weights, tags)
+    fields = [(f, _load_fields(f)) for f in _brief_files(root, ids)]
+    items = [_annotate(f, b, ctx) for f, b in fields if scope.admits(subject(b))]
     chosen = scorer or weights.scorer
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]
@@ -588,6 +666,8 @@ def _why_text(why: dict[str, Any]) -> str:
         text += f" +age {why['age']:g}"
     if why["inherited"]:
         text += f" +inh {why['inherited']:g}"
+    for name, weight in why["signals"].items():
+        text += f" +{name} {weight:g}"
     if why.get("fleet_blocker"):
         text += f" clears {why['fleet_blocker']}"
     return text
@@ -602,11 +682,11 @@ def _row(b: dict[str, Any]) -> str:
     )
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _json_row(b: dict[str, Any]) -> dict[str, Any]:
-    """Pre-v2 keys keep their meaning; v2 keys are additive."""
+    """Earlier keys keep their meaning; v3 adds `status`, `why.signals` and `why.scope`."""
     return {
         "id": b["id"],
         "score": b["_score"],
@@ -615,6 +695,7 @@ def _json_row(b: dict[str, Any]) -> dict[str, Any]:
         "due": b.get("due", ""),
         "effort": b.get("estimated-effort", ""),
         "file": b["_file"],
+        "status": b.get("status", ""),
         "blocked": b["_blocked"],
         "unmet": b["_unmet"],
         "unlocks": b["_unlocks"],
@@ -643,10 +724,21 @@ def main(argv: list[str] | None = None) -> None:
         choices=[s.value for s in Scorer],
         help="override tasks.toml [priority] scorer for this call",
     )
+    ap.add_argument("--scope", default="all", help=SCOPE_HELP)
+    ap.add_argument("--root", default=None, help="queue root (default: resolved, or the session's)")
+    ap.add_argument("--ids", default="", help="comma-separated brief ids to rank, wherever live")
     a = ap.parse_args(argv)
 
-    root = require_queue(resolve_root())
-    items = rank(root, context=a.context, scorer=Scorer(a.scorer) if a.scorer else None)
+    scope = parse_scope(a.scope)
+    root = require_queue(pathlib.Path(a.root) if a.root else scope.root(resolve_root()))
+    ids = frozenset(i.strip() for i in a.ids.split(",") if i.strip()) or None
+    items = rank(
+        root,
+        context=a.context,
+        scorer=Scorer(a.scorer) if a.scorer else None,
+        scope=scope,
+        ids=ids,
+    )
     if a.actionable:
         items = [b for b in items if b["_actionable"]]
     if a.top:
