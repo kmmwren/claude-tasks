@@ -714,3 +714,50 @@ def test_an_id_less_brief_is_a_dependency_target_under_its_stem(tmp_path):
     )
     ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
     assert (ranked["stemmed"]["_unlocks"], ranked["stemmed"]["_leverage"]) == (1, 1)
+
+
+# ── tie-break ─────────────────────────────────────────────────────────────────
+
+
+def _tied(**by_id):
+    return [{"id": bid, "estimated-effort": effort, "k": 1} for bid, effort in by_id.items()]
+
+
+def test_ties_order_by_job_size_not_by_the_effort_string():
+    rows = _tied(e="xl", d="l", c="m", b="s", a="xs")
+    assert [b["id"] for b in prioritise._by("k", rows)] == ["a", "b", "c", "d", "e"]
+
+
+def test_equal_size_ties_fall_back_to_the_id():
+    rows = _tied(c="m", a="m", b="m")
+    assert [b["id"] for b in prioritise._by("k", rows)] == ["a", "b", "c"]
+
+
+def test_a_missing_or_unknown_effort_sorts_after_xl():
+    rows = [
+        {"id": "unknown", "estimated-effort": "huge", "k": 1},
+        {"id": "xl", "estimated-effort": "xl", "k": 1},
+        {"id": "missing", "k": 1},
+        {"id": "xs", "estimated-effort": "xs", "k": 1},
+    ]
+    assert [b["id"] for b in prioritise._by("k", rows)] == ["xs", "xl", "missing", "unknown"]
+
+
+def test_a_higher_score_still_beats_a_smaller_size():
+    rows = [
+        {"id": "small", "estimated-effort": "xs", "k": 1},
+        {"id": "big", "estimated-effort": "xl", "k": 2},
+    ]
+    assert [b["id"] for b in prioritise._by("k", rows)] == ["big", "small"]
+
+
+def test_the_queue_order_of_tied_briefs_does_not_depend_on_file_names(tmp_path):
+    root = _queue(
+        tmp_path,
+        [
+            ("ready", "1.md", _brief("c", effort="m")),
+            ("ready", "2.md", _brief("a", effort="m")),
+            ("ready", "3.md", _brief("b", effort="m")),
+        ],
+    )
+    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["a", "b", "c"]

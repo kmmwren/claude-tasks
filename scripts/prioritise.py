@@ -48,6 +48,7 @@ from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
+SIZE_ORDER = ("xs", "s", "m", "l", "xl")
 EFFORT_DAYS = {"xs": 0.125, "s": 0.5, "m": 2, "l": 7, "xl": 14}
 UNLOCK_WEIGHT = 150
 INDEX_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
@@ -482,8 +483,15 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
     return b
 
 
+def _size_position(brief: dict[str, Any]) -> int:
+    """Where the brief's effort sits from xs up; a missing or unknown one sorts after xl."""
+    effort = brief.get("estimated-effort", "")
+    return SIZE_ORDER.index(effort) if effort in SIZE_ORDER else len(SIZE_ORDER)
+
+
 def _by(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(items, key=lambda b: (-b[key], b.get("estimated-effort", "z")))
+    """Highest `key` first; ties go smallest first, then by id, so the order is deterministic."""
+    return sorted(items, key=lambda b: (-b[key], _size_position(b), b["id"]))
 
 
 def _interleave(
