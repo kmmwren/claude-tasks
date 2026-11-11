@@ -111,11 +111,46 @@ def test_find_brief_prefers_brief_folder_over_inbox(root):
     assert transition.find_brief("rotate-the-api-key", root) == root / "ready" / "rotate-the-api-key.md"
 
 
-def test_move_promotes_inbox_brief_to_ready(root):
-    newp = transition.move_brief("raw-staging-thought", "ready", root, today="2026-06-02")
-    assert newp == root / "ready" / "raw-staging-thought.md"
+RAW_CAPTURE = "# a thought with no frontmatter\n"
+RAW_TRUE_CAPTURE = "---\nid: 2026-06-01-0900-a-thought\nraw: true\nstatus: inbox\n---\n\n# a thought\n"
+
+
+@pytest.mark.parametrize("target", ["done", "parked"])
+def test_move_closes_folded_inbox_brief(root, target):
+    newp = transition.move_brief("raw-staging-thought", target, root, today="2026-06-02")
+    assert newp == root / target / "raw-staging-thought.md"
     assert not (root / "inbox" / "raw-staging-thought.md").exists()
-    assert transition.fm(newp.read_text())["status"] == "ready"
+    assert transition.fm(newp.read_text())["status"] == target
+
+
+@pytest.mark.parametrize("target", ["ready", "in-progress"])
+def test_move_refuses_to_promote_inbox_brief_without_enrichment(root, target):
+    with pytest.raises(ValueError, match="no brief with id"):
+        transition.move_brief("raw-staging-thought", target, root)
+    assert (root / "inbox" / "raw-staging-thought.md").exists()
+
+
+def test_move_to_blocked_refuses_inbox_brief(root):
+    with pytest.raises(ValueError, match="no brief with id"):
+        transition.move_brief("raw-staging-thought", "blocked", root, blocked_by=["external:vendor"],
+                              probes=["1: human"], confirmed=["1: 2026-06-02 me"])
+    assert (root / "inbox" / "raw-staging-thought.md").exists()
+
+
+@pytest.mark.parametrize("text", [RAW_CAPTURE, RAW_TRUE_CAPTURE])
+@pytest.mark.parametrize("target", ["done", "parked"])
+def test_move_refuses_to_close_a_raw_capture(root, text, target):
+    (root / "inbox" / "a-thought.md").write_text(text)
+    with pytest.raises(ValueError, match="no brief with id"):
+        transition.move_brief("a-thought", target, root)
+    assert (root / "inbox" / "a-thought.md").exists()
+
+
+def test_move_prefers_brief_folder_over_inbox_duplicate(root):
+    (root / "inbox" / "rotate-the-api-key.md").write_text(_brief("inbox", "rotate-the-api-key", "dup"))
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
+    assert newp == root / "in-progress" / "rotate-the-api-key.md"
+    assert (root / "inbox" / "rotate-the-api-key.md").exists()
 
 
 # --------------------------------------------------------------------------- #

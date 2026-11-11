@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- **Only a folded brief can leave `inbox/` by a move, and only to `done` or `parked`.**
+  `transition.py move` refuses an inbox file for `ready`, `in-progress` and `blocked` (promoting
+  skipped enrichment and its `.processed/` archive) and refuses a raw capture (no `id:`, or
+  `raw: true`) for any target; a brief folded in by `fold_session.py` keeps its `id:` and closes.
 - **`git_sync.py` commits only what the caller names.** It no longer runs `git add --ignore-removal .`,
   which swept another writer's uncommitted edit into an unrelated brief's commit. `ids` stage that
   brief's file at any depth (moves included); `paths` stage explicit pathspecs (`fold_session.py`

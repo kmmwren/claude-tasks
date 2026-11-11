@@ -51,8 +51,10 @@ from git_sync import sync_commit
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # Folders that hold briefs. inbox is left out: free-text resolve skips raw pre-briefs, but
-# find_brief still reaches them by exact id so they can be promoted.
+# find_brief still reaches them by exact id; move_brief lets only a closing move take one.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
+# Moves that may take a folded inbox brief by id; anything else needs it enriched into ready/ first.
+CLOSING_STATUSES = ("done", "parked")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
 # Default execution-log line per target state when the caller gives none.
@@ -73,6 +75,21 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
         if p.exists():
             return p
     return None
+
+
+def _is_folded_brief(path: pathlib.Path) -> bool:
+    """A brief folded into inbox/ keeps its `id:`; a raw capture has none, or is marked `raw: true`."""
+    meta = fm(path.read_text())
+    return bool(meta.get("id")) and meta.get("raw") != "true"
+
+
+def _require_movable(brief_id: str, new_status: str, path: pathlib.Path) -> None:
+    """Refuse an inbox file unless the move closes a folded brief: promoting skips enrichment."""
+    if path.parent.name == "inbox" and not (new_status in CLOSING_STATUSES and _is_folded_brief(path)):
+        raise ValueError(
+            f"no brief with id {brief_id!r}: it is only in inbox/, where just a folded brief "
+            "(has an id, not raw: true) can be closed; enrich it into ready/ first"
+        )
 
 
 def _tokens(query: str) -> list[str]:
@@ -285,6 +302,7 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
+    _require_movable(brief_id, new_status, path)
     today = today or datetime.date.today().isoformat()
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
