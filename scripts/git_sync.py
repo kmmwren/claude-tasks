@@ -49,18 +49,39 @@ _SECRET = re.compile(
 )
 
 
+def _split_z(output: str) -> list[str]:
+    return [p for p in output.split("\0") if p]
+
+
 def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
-    """Changed or new files under `paths` that hold a credential; they are left unstaged and reported."""
+    """Changed or new files under `paths` that hold a credential."""
     out = _git(root, "ls-files", "-z", "--modified", "--others", "--exclude-standard", "--", *paths,
                capture_output=True, text=True).stdout
     found = []
-    for rel in (p for p in out.split("\0") if p):
+    for rel in _split_z(out):
         try:
             if _SECRET.search((root / rel).read_text(errors="ignore")):
                 found.append(rel)
         except OSError:
             continue  # deleted or unreadable: nothing to leak
     return found
+
+
+def _staged_secret_bearing(root: pathlib.Path) -> list[str]:
+    """Files already in the index whose staged content holds a credential: `git commit` takes them all."""
+    out = _git(root, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR",
+               capture_output=True, text=True).stdout
+    staged = (
+        (rel, _git(root, "show", f":{rel}", capture_output=True).stdout.decode(errors="ignore"))
+        for rel in _split_z(out)
+    )
+    return [rel for rel, content in staged if _SECRET.search(content)]
+
+
+def _unstage(root: pathlib.Path, rels: Sequence[str]) -> None:
+    """Drop `rels` from the pending commit; the files stay on disk."""
+    if rels:
+        _git(root, "reset", "-q", "--", *(f":(literal){rel}" for rel in rels))
 
 
 def _brief_pathspec(brief_id: str) -> str:
@@ -164,10 +185,12 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
         for path in shadows:
             print(f"  (refused: {path} would re-create an id already filed in another state; "
                   "sharpen the existing brief instead. Left untracked.)")
-        leaks = _secret_bearing(root, paths) if paths else []
-        for path in leaks:
-            print(f"  (refused: {path} holds what looks like a credential. "
-                  "Left uncommitted: remove it, then re-sync.)")
+        staged_leaks = _staged_secret_bearing(root)
+        _unstage(root, staged_leaks)
+        leaks = list(dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])]))
+        if leaks:  # a count, not names: the paths come from scanning credential-bearing files
+            print(f"  (refused: {len(leaks)} held back for looking like a credential. "
+                  "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)")
         refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
         _stage_named_briefs(root, ids, refused)
         if paths:
