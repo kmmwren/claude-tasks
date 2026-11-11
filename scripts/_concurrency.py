@@ -24,6 +24,10 @@ This module fixes both with stdlib only:
   * reserve_name() — claim a unique filename with O_CREAT|O_EXCL, so two simultaneous
                      captures of the same title can't overwrite one another.
 """
+
+import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
+
+# isort: split
 import contextlib
 import errno
 import fcntl
@@ -61,8 +65,9 @@ def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
 
 
 @contextlib.contextmanager
-def file_lock(path: pathlib.Path, shared: bool = False, timeout: float = 30.0,
-              poll: float = 0.1) -> Iterator[bool]:
+def file_lock(
+    path: pathlib.Path, shared: bool = False, timeout: float = 30.0, poll: float = 0.1
+) -> Iterator[bool]:
     """Hold an exclusive (or shared) flock on `path`; yields False if `timeout` passed first."""
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     acquired = False
@@ -87,8 +92,9 @@ def try_lock(path: pathlib.Path) -> int | None:
     return None
 
 
-def repo_lock(root: pathlib.Path, timeout: float = 30.0,
-              poll: float = 0.1) -> contextlib.AbstractContextManager[bool]:
+def repo_lock(
+    root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
     """Serialize git index operations across processes.
 
     Yields True if the lock was acquired, False on timeout. Callers treat a timeout as
@@ -96,6 +102,17 @@ def repo_lock(root: pathlib.Path, timeout: float = 30.0,
     file write already succeeded before the lock was ever requested.
     """
     return file_lock(lock_path(root), timeout=timeout, poll=poll)
+
+
+@contextlib.contextmanager
+def require_lock(root: pathlib.Path, timeout: float = 30.0) -> Iterator[None]:
+    """repo_lock for a read-modify-write that must not run unlocked: a timeout raises instead."""
+    with repo_lock(root, timeout) as acquired:
+        if not acquired:
+            raise TimeoutError(
+                f"queue lock at {root} not acquired within {timeout}s; nothing written"
+            )
+        yield
 
 
 def atomic_write(path: pathlib.Path, text: str) -> None:

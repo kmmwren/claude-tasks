@@ -24,6 +24,7 @@ Usage:
   python scripts/transition.py move <brief-id> done   --log "shipped; tests green"
   python scripts/transition.py move <brief-id> parked --log "ESCALATED — needs a login"
 """
+
 import argparse
 import datetime
 import json
@@ -47,6 +48,7 @@ from deps import (
     probe_gaps,
 )
 from git_sync import sync_commit
+from picks import note_choice
 from readiness import brief_missing_fields
 
 # Every lifecycle state == a folder of the same name.
@@ -125,16 +127,17 @@ def _score(query: str, brief: dict[str, str]) -> int:
     id_toks = _tokens(bid)
     if qtoks and id_toks:
         matched = sum(1 for t in id_toks if t in qtoks)
-        score += 60 * matched // len(id_toks)   # tightness: fraction of the id the query covers
+        score += 60 * matched // len(id_toks)  # tightness: fraction of the id the query covers
         if "-".join(qtoks) in bid:
-            score += 60                          # query phrase is contiguous in the id
+            score += 60  # query phrase is contiguous in the id
     if qtoks and query.strip().lower() in title:
-        score += 30                              # query phrase is contiguous in the title
+        score += 30  # query phrase is contiguous in the title
     return score
 
 
-def resolve_brief(query: str, root: pathlib.Path,
-                  statuses: tuple[str, ...] = RESOLVE_STATUSES) -> list[dict[str, Any]]:
+def resolve_brief(
+    query: str, root: pathlib.Path, statuses: tuple[str, ...] = RESOLVE_STATUSES
+) -> list[dict[str, Any]]:
     """Rank actionable briefs by relevance to `query`. Best first; non-matches dropped."""
     hits: list[dict[str, Any]] = []
     for d in statuses:
@@ -142,27 +145,33 @@ def resolve_brief(query: str, root: pathlib.Path,
             brief = fm(f.read_text())
             s = _score(query, brief)
             if s > 0:
-                hits.append({
-                    "id": brief.get("id", f.stem),
-                    "title": brief.get("title", ""),
-                    "status": d,
-                    "score": s,
-                    "path": f,
-                })
+                hits.append(
+                    {
+                        "id": brief.get("id", f.stem),
+                        "title": brief.get("title", ""),
+                        "status": d,
+                        "score": s,
+                        "path": f,
+                    }
+                )
     hits.sort(key=lambda h: (-h["score"], h["id"]))
     return hits
 
 
-def _set_field(block: str, key: str, value: str) -> str:
+def set_field(block: str, key: str, value: str) -> str:
     """Set `key: value` in a frontmatter block, appending the line when the key is absent."""
     line = f"{key}: {value}".rstrip()
     block, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _: line, block, count=1)
     return block if n else block + "\n" + line
 
 
-def _update_frontmatter(text: str, new_status: str, today: str,
-                        assignee: str | None = None,
-                        blocked_by: list[str] | None = None) -> str:
+def _update_frontmatter(
+    text: str,
+    new_status: str,
+    today: str,
+    assignee: str | None = None,
+    blocked_by: list[str] | None = None,
+) -> str:
     """Set `status:`/`updated:` (plus `assignee:` and `blocked_by:` when given) in the block.
 
     `assignee=None` leaves any existing claim untouched, so briefs written before the field
@@ -176,10 +185,10 @@ def _update_frontmatter(text: str, new_status: str, today: str,
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
     if assignee is not None:
-        block = _set_field(block, "assignee", assignee)
+        block = set_field(block, "assignee", assignee)
     if blocked_by is not None:
-        block = _set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
-    return text[: m.start(2)] + block + text[m.end(2):]
+        block = set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
+    return text[: m.start(2)] + block + text[m.end(2) :]
 
 
 def _set_repeated(block: str, key: str, values: list[str]) -> str:
@@ -191,8 +200,13 @@ def _set_repeated(block: str, key: str, values: list[str]) -> str:
 def _override_numbered(block: str, key: str, values: list[str]) -> str:
     """Set `key:` lines for the blocker numbers in `values`, keeping the lines of every other blocker."""
     numbers = {blocker_number(v) for v in values}
-    kept = [v for v in (ln.partition(":")[2].strip() for ln in block.splitlines() if ln.startswith(f"{key}:"))
-            if blocker_number(v) not in numbers]
+    kept = [
+        v
+        for v in (
+            ln.partition(":")[2].strip() for ln in block.splitlines() if ln.startswith(f"{key}:")
+        )
+        if blocker_number(v) not in numbers
+    ]
     return _set_repeated(block, key, sorted(kept + values, key=lambda v: blocker_number(v) or 0))
 
 
@@ -226,8 +240,14 @@ def carry_blocker_lines(block: str, old: list[str], new: list[str]) -> str:
     return "\n".join(kept + [f"{k}: {n}:{t}" for k, n, t in sorted(carried)])
 
 
-def _update_probes(text: str, new_status: str, probes: list[str], confirmed: list[str],
-                   old_blocked_by: list[str], blocked_by: list[str]) -> str:
+def _update_probes(
+    text: str,
+    new_status: str,
+    probes: list[str],
+    confirmed: list[str],
+    old_blocked_by: list[str],
+    blocked_by: list[str],
+) -> str:
     """Blocked briefs carry their `blocked_probe:` lines; leaving blocked/ drops them with the blocker."""
     m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
     if not m:
@@ -239,7 +259,7 @@ def _update_probes(text: str, new_status: str, probes: list[str], confirmed: lis
         for key, values in ((PROBE_KEY, probes), (CONFIRMED_KEY, confirmed)):
             if values:
                 block = _override_numbered(block, key, values)
-    return text[: m.start(2)] + block + text[m.end(2):]
+    return text[: m.start(2)] + block + text[m.end(2) :]
 
 
 def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
@@ -249,7 +269,8 @@ def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
         raise ValueError(
             f"{brief_id!r} cannot enter blocked/: blocker(s) {gaps} have no probe. Add `blocked_probe: N: <command>` "
             "(exit 0 = cleared, 10 = still blocked, anything else = unverified) or `blocked_probe: N: human` "
-            "with a dated `blocked_confirmed: N: <YYYY-MM-DD> <who>` line, via --probe and --confirmed.")
+            "with a dated `blocked_confirmed: N: <YYYY-MM-DD> <who>` line, via --probe and --confirmed."
+        )
 
 
 def _append_log(text: str, today: str, message: str) -> str:
@@ -270,12 +291,18 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
         raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
 
 
-def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
-               log: str | None = None, today: str | None = None,
-               assignee: str | None = None,
-               blocked_by: list[str] | None = None,
-               only_if: Callable[[], bool] | None = None,
-               probes: list[str] | None = None, confirmed: list[str] | None = None) -> pathlib.Path:
+def move_brief(
+    brief_id: str,
+    new_status: str,
+    root: pathlib.Path,
+    log: str | None = None,
+    today: str | None = None,
+    assignee: str | None = None,
+    blocked_by: list[str] | None = None,
+    only_if: Callable[[], bool] | None = None,
+    probes: list[str] | None = None,
+    confirmed: list[str] | None = None,
+) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
@@ -310,15 +337,11 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
         if not acquired:
-            raise RuntimeError(
-                f"timed out waiting for the queue lock; {brief_id!r} was NOT moved"
-            )
+            raise RuntimeError(f"timed out waiting for the queue lock; {brief_id!r} was NOT moved")
         # Re-verify the source still exists: another actor may have claimed it
         # (moved/deleted it) while we were waiting for the lock.
         if not path.exists():
-            raise ValueError(
-                f"no brief with id {brief_id!r} (claimed by another actor)"
-            )
+            raise ValueError(f"no brief with id {brief_id!r} (claimed by another actor)")
         if only_if is not None and not only_if():
             raise ValueError(f"{brief_id!r} changed while waiting for the lock; not moved")
         text = path.read_text()
@@ -331,9 +354,12 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
                     f'--assignee "".'
                 )
         old_blocked_by = parse_list(fm(text).get("blocked_by", ""))
-        text = _update_frontmatter(text, new_status, today, assignee=assignee,
-                                   blocked_by=blocked_by)
-        text = _update_probes(text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by)
+        text = _update_frontmatter(
+            text, new_status, today, assignee=assignee, blocked_by=blocked_by
+        )
+        text = _update_probes(
+            text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by
+        )
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
         text = _append_log(text, today, message)
@@ -364,14 +390,28 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("status", choices=VALID_STATUSES)
     m.add_argument("--root", default=None)
     m.add_argument("--log", default=None, help="execution-log line (default per target state)")
-    m.add_argument("--assignee", default=None,
-                   help="claim the brief for someone (person or agent); '' releases it")
-    m.add_argument("--blocked-by", default=None,
-                   help="comma-separated brief ids or external:<reason> (required for blocked)")
-    m.add_argument("--probe", action="append", default=None,
-                   help="`N: <command>` probe for blocker N of --blocked-by (repeatable; `N: human` needs --confirmed)")
-    m.add_argument("--confirmed", action="append", default=None,
-                   help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N is still blocked (repeatable)")
+    m.add_argument(
+        "--assignee",
+        default=None,
+        help="claim the brief for someone (person or agent); '' releases it",
+    )
+    m.add_argument(
+        "--blocked-by",
+        default=None,
+        help="comma-separated brief ids or external:<reason> (required for blocked)",
+    )
+    m.add_argument(
+        "--probe",
+        action="append",
+        default=None,
+        help="`N: <command>` probe for blocker N of --blocked-by (repeatable; `N: human` needs --confirmed)",
+    )
+    m.add_argument(
+        "--confirmed",
+        action="append",
+        default=None,
+        help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N is still blocked (repeatable)",
+    )
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
@@ -381,11 +421,21 @@ def main(argv: list[str] | None = None) -> None:
     if a.cmd == "resolve":
         hits = resolve_brief(a.query, root)
         if a.json:
-            print(json.dumps(
-                [{"id": h["id"], "title": h["title"], "status": h["status"],
-                  "score": h["score"], "path": str(h["path"])} for h in hits],
-                indent=2,
-            ))
+            print(
+                json.dumps(
+                    [
+                        {
+                            "id": h["id"],
+                            "title": h["title"],
+                            "status": h["status"],
+                            "score": h["score"],
+                            "path": str(h["path"]),
+                        }
+                        for h in hits
+                    ],
+                    indent=2,
+                )
+            )
             return
         if not hits:
             print(f"No matching brief for: {a.query}")
@@ -399,9 +449,17 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     try:
-        new_path = move_brief(a.brief_id, a.status, root, log=a.log, today=a.today,
-                              assignee=a.assignee, blocked_by=parse_list(a.blocked_by or ""), probes=a.probe,
-                              confirmed=a.confirmed)
+        new_path = move_brief(
+            a.brief_id,
+            a.status,
+            root,
+            log=a.log,
+            today=a.today,
+            assignee=a.assignee,
+            blocked_by=parse_list(a.blocked_by or ""),
+            probes=a.probe,
+            confirmed=a.confirmed,
+        )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -410,11 +468,14 @@ def main(argv: list[str] | None = None) -> None:
         from unblock import (
             release_unblocked,  # unblock imports this module; defer to break the cycle
         )
+
         released = list(release_unblocked(root, today=a.today))
         for released_id in released:
             print(f"unblocked {released_id} → ready")
     if not a.no_sync:
         sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
+    if a.status == "in-progress":
+        note_choice(root, "pick", a.brief_id)
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 

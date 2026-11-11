@@ -18,6 +18,9 @@ A resolved directory only becomes a *usable* queue once it has a tasks.toml (wri
 by /tasks-init). require_queue() refuses to operate on an uninitialised directory so a
 stray run can never silently scatter folders into the wrong place.
 """
+import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
+
+# isort: split
 import os
 import pathlib
 import re
