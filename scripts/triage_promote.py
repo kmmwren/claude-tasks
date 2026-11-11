@@ -30,7 +30,7 @@ class Promotion:
     reason: str
 
 
-def _batches(briefs: Sequence[InboxBrief], size: int) -> Iterator[Sequence[InboxBrief]]:
+def batches(briefs: Sequence[InboxBrief], size: int) -> Iterator[Sequence[InboxBrief]]:
     return (briefs[i : i + size] for i in range(0, len(briefs), size))
 
 
@@ -78,7 +78,7 @@ class Gate:
         """Fill every brief in batches of `size`, `jobs` batches at a time; keep the fills that pass."""
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             fills = [
-                f for batch in pool.map(predict, _batches(briefs, size)) for f in batch.items()
+                f for batch in pool.map(predict, batches(briefs, size)) for f in batch.items()
             ]
         by_id = {b.id: b for b in briefs}
         found = (self.enriched(by_id[bid], fill) for bid, fill in fills)

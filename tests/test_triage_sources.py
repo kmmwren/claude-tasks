@@ -5,7 +5,15 @@ import subprocess
 
 import pytest
 import triage_sources
-from triage_sources import LiveSources, cited_sources, gh_resolves, grounded, specific_path
+from triage_sources import (
+    LiveSources,
+    PrState,
+    cited_sources,
+    gh_resolves,
+    grounded,
+    pr_state,
+    specific_path,
+)
 
 
 @pytest.mark.parametrize(
