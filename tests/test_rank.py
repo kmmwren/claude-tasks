@@ -4,10 +4,12 @@ import json
 
 import pytest
 import rank
+import scope as scope_mod
 import taste
 from judge import ClaudeBackend, DirectLaunch, WrapperLaunch
 from picks import PickLog
-from rank import AllScope, ProjectScope, Ranker, SessionScope, TagScope
+from rank import Ranker
+from scope import AllScope, ProjectScope, SessionScope, TagScope
 
 from tests.queue_helpers import make_queue
 
@@ -37,7 +39,7 @@ def queue(tmp_path, profile=PROFILE):
 
 
 def rows(*ids, blocked=()):
-    return lambda root: [
+    return lambda root, scope: [
         {
             "id": i,
             "title": f"Title of {i}",
@@ -66,14 +68,14 @@ def briefs(root, *ids, scope=None):
     ],
 )
 def test_parse_scope(text, cls, key):
-    scope = rank.parse_scope(text)
+    scope = scope_mod.parse_scope(text)
     assert (type(scope), scope.key) == (cls, key)
 
 
 @pytest.mark.parametrize("text", ["tag", "tag:", "milestone:m1"])
 def test_parse_scope_rejects_unknown_or_empty_scopes(text):
     with pytest.raises(SystemExit, match="--scope must be"):
-        rank.parse_scope(text)
+        scope_mod.parse_scope(text)
 
 
 def test_scopes_admit_by_tag_and_by_project_tag_or_field(tmp_path):
@@ -81,8 +83,12 @@ def test_scopes_admit_by_tag_and_by_project_tag_or_field(tmp_path):
     (root / "ready" / "c.md").write_text(
         (root / "ready" / "c.md").read_text().replace("tags:", "project: lite\ntags:")
     )
-    assert [b.id for b in briefs(root, "a", "b", "c", scope=TagScope("fdo"))] == ["a"]
-    assert [b.id for b in briefs(root, "a", "b", "c", scope=ProjectScope("lite"))] == ["b", "c"]
+
+    def ids(scope):
+        return [b.id for b in rank.candidates(root, scope, 15, rank.prioritise_rows)]
+
+    assert ids(TagScope("fdo")) == ["a"]
+    assert sorted(ids(ProjectScope("lite"))) == ["b", "c"]
 
 
 def test_session_scope_uses_the_bound_queue(tmp_path, monkeypatch):

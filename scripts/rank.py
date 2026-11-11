@@ -15,12 +15,10 @@ order and says why. This is for lists a person reads; automations keep using pri
 
 from __future__ import annotations
 
-import abc
 import argparse
 import dataclasses
 import hashlib
 import json
-import os
 import pathlib
 import subprocess
 import sys
@@ -29,7 +27,7 @@ from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _concurrency import atomic_write  # noqa: E402
-from _paths import ENV_VAR, SESSION_ENV, require_queue, resolve_root, session_root  # noqa: E402
+from _paths import require_queue, resolve_root  # noqa: E402
 from config import load_config  # noqa: E402
 from deps import fm, parse_list  # noqa: E402
 from judge import (  # noqa: E402
@@ -44,6 +42,7 @@ from judge import (  # noqa: E402
     WrapperLaunch,
 )
 from picks import PickLog, Shown, ShownItem, state_dir  # noqa: E402
+from scope import SCOPE_HELP, AllScope, Scope, parse_scope  # noqa: E402
 from taste import Profile, ProfileError, load_profile  # noqa: E402
 
 DEFAULTS: dict[str, Any] = {
@@ -85,81 +84,25 @@ class QueueBrief:
         return hashlib.sha256(self.text.encode()).hexdigest()[:16]
 
 
-class Scope(abc.ABC):
-    name = ""
-
-    def __init__(self, value: str) -> None:
-        self.value = value
-
-    @property
-    def key(self) -> str:
-        return f"{self.name}:{self.value}" if self.value else self.name
-
-    def root(self, default: pathlib.Path) -> pathlib.Path:
-        return default
-
-    @abc.abstractmethod
-    def admits(self, brief: QueueBrief) -> bool: ...
+FilterFn = Callable[[pathlib.Path, Scope], list[dict[str, Any]]]
 
 
-class AllScope(Scope):
-    name = "all"
-
-    def admits(self, brief: QueueBrief) -> bool:
-        return True
-
-
-class TagScope(Scope):
-    name = "tag"
-
-    def admits(self, brief: QueueBrief) -> bool:
-        return self.value in brief.tags
-
-
-class ProjectScope(Scope):
-    name = "project"
-
-    def admits(self, brief: QueueBrief) -> bool:
-        return brief.project == self.value or f"project:{self.value}" in brief.tags
-
-
-class SessionScope(AllScope):
-    """Everything ready in the queue a session is bound to (its `sessions/<id>.toml`)."""
-
-    name = "session"
-
-    def root(self, default: pathlib.Path) -> pathlib.Path:
-        bound = session_root({**os.environ, SESSION_ENV: self.value})
-        if bound is None:
-            raise SystemExit(f"session {self.value} is not bound to a queue")
-        return bound
-
-
-SCOPES: dict[str, type[Scope]] = {
-    cls.name: cls for cls in (AllScope, TagScope, ProjectScope, SessionScope)
-}
-
-
-def parse_scope(text: str) -> Scope:
-    name, _, value = text.partition(":")
-    if name not in SCOPES or (name != "all" and not value):
-        raise SystemExit(
-            f"--scope must be all, tag:<t>, project:<slug> or session:<id>, not {text!r}"
-        )
-    return SCOPES[name](value)
-
-
-FilterFn = Callable[[pathlib.Path], list[dict[str, Any]]]
-
-
-def prioritise_rows(root: pathlib.Path) -> list[dict[str, Any]]:
-    """prioritise.py's --json order, through its CLI so its scorer stays its own business."""
+def prioritise_rows(root: pathlib.Path, scope: Scope | None = None) -> list[dict[str, Any]]:
+    """prioritise.py's --json order for the scope, through its CLI so scoring stays its business."""
+    key = (scope or AllScope("")).key
     proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "prioritise.py"), "--json"],
+        [
+            sys.executable,
+            str(SCRIPTS / "prioritise.py"),
+            "--json",
+            "--scope",
+            key,
+            "--root",
+            str(root),
+        ],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, ENV_VAR: str(root)},
     )
     try:
         rows: Any = json.loads(proc.stdout) if proc.returncode == 0 else None
@@ -207,8 +150,9 @@ def load_brief(root: pathlib.Path, row: Mapping[str, Any]) -> QueueBrief | None:
 def candidates(
     root: pathlib.Path, scope: Scope, limit: int, filter_fn: FilterFn
 ) -> list[QueueBrief]:
-    briefs = (load_brief(root, row) for row in filter_fn(root) if not row.get("blocked"))
-    return [b for b in briefs if b is not None and scope.admits(b)][:limit]
+    """The filter's unblocked rows for the scope, already scope-filtered and scope-weighted."""
+    rows = (row for row in filter_fn(root, scope) if not row.get("blocked"))
+    return [b for b in (load_brief(root, row) for row in rows) if b is not None][:limit]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -457,7 +401,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         description="Rank a scope's ready briefs against the taste profile."
     )
-    ap.add_argument("--scope", default="all", help="all | tag:<t> | project:<slug> | session:<id>")
+    ap.add_argument("--scope", default="all", help=SCOPE_HELP)
     ap.add_argument("--top", type=int, default=None)
     ap.add_argument("--root", default=None)
     ap.add_argument("--json", action="store_true")

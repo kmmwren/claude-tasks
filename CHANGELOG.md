@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
+  filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
+  `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by
+  `[priority.signals]` (tags, types, fields, min_leverage) and weighted by `[priority.scope_weights]`:
+  the whole queue favours multipliers (1500) over shipping and unblocking (800 each), a project favours
+  shipping and unblocking (2000 each) over multipliers (500). Both scorers add them; `--json` (schema 3)
+  adds `status`, `why.signals` and `why.scope`. `--ids` ranks named briefs across the live folders, and
+  `--root` names the queue. With the defaults, a brief with a `clears:` field or a live waiter now ranks
+  higher than before.
 - **A brief can declare the fleet blocker it clears, and `prioritise.py` ranks it first.** A new optional
   `clears: <blocker-id>` (or `[ids]`) names a blocker whose record sits in `fleet_blockers_dir` (a new
   `tasks.toml` key, unset by default so the feature is off). While the record's `status` is `active` or
