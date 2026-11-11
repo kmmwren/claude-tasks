@@ -43,7 +43,7 @@ def slug(s: str, maxwords: int = 6) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Add a brief to the tasks queue")
-    ap.add_argument("--title", required=True)
+    ap.add_argument("--title", required=True, type=str.strip)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
     ap.add_argument(

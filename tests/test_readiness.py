@@ -56,7 +56,7 @@ def test_add_task_placeholders_count_as_missing(tmp_path):
     assert readiness.brief_missing_fields(filed.read_text()) == ["criteria", "context"]
 
 
-@pytest.mark.parametrize("title", ["Capture me", "Review PR #42"])
+@pytest.mark.parametrize("title", ["Capture me", "Review PR #42", "Trailing space "])
 def test_add_task_defaults_all_count_as_missing_whatever_the_title(tmp_path, title):
     queue = init_queue.init_queue(tmp_path / "q", name="demo")
     add_task.main(["--title", title, "--root", str(queue)])
