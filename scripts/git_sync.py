@@ -23,6 +23,7 @@ which no scripted writer could name. A queue root that is not the top of its own
 
 Exit codes: 0 — committed (push in the background) or safely deferred; 1 — bad usage.
 """
+
 import os
 import pathlib
 import re
@@ -63,8 +64,18 @@ def _split_z(output: str) -> list[str]:
 
 def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
     """Changed or new files under `paths` that hold a credential."""
-    out = _git(root, "ls-files", "-z", "--modified", "--others", "--exclude-standard", "--", *paths,
-               capture_output=True, text=True).stdout
+    out = _git(
+        root,
+        "ls-files",
+        "-z",
+        "--modified",
+        "--others",
+        "--exclude-standard",
+        "--",
+        *paths,
+        capture_output=True,
+        text=True,
+    ).stdout
     found = []
     for rel in _split_z(out):
         try:
@@ -77,8 +88,16 @@ def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
 
 def _staged_secret_bearing(root: pathlib.Path) -> list[str]:
     """Files already in the index whose staged content holds a credential: `git commit` takes them all."""
-    out = _git(root, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR",
-               capture_output=True, text=True).stdout
+    out = _git(
+        root,
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--diff-filter=ACMR",
+        capture_output=True,
+        text=True,
+    ).stdout
     staged = (
         (rel, _git(root, "show", f":{rel}", capture_output=True).stdout.decode(errors="ignore"))
         for rel in _split_z(out)
@@ -108,8 +127,15 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path:
     git = root / ".git"
     if git.is_dir():
         return git / "FETCH_HEAD"
-    out = _git(root, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD",
-               capture_output=True, text=True).stdout.strip()
+    out = _git(
+        root,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "FETCH_HEAD",
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     return pathlib.Path(out)
 
 
@@ -133,25 +159,53 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     _fetch_if_stale(root)
     # Only briefs origin gained since our history diverged are rivals; an older origin path
     # we already moved away locally (committed but unpushed) is not.
-    remote = _git(root, "diff", "--relative", "--name-only", "--diff-filter=A", "HEAD...origin/main",
-                  capture_output=True, text=True)
-    moved_away = set(_tracked(root, "--deleted"))  # the old half of an in-flight move is not a rival
-    filed = [pathlib.PurePath(p) for p in (*_tracked(root), *remote.stdout.splitlines())
-             if p not in moved_away]
+    remote = _git(
+        root,
+        "diff",
+        "--relative",
+        "--name-only",
+        "--diff-filter=A",
+        "HEAD...origin/main",
+        capture_output=True,
+        text=True,
+    )
+    moved_away = set(
+        _tracked(root, "--deleted")
+    )  # the old half of an in-flight move is not a rival
+    filed = [
+        pathlib.PurePath(p)
+        for p in (*_tracked(root), *remote.stdout.splitlines())
+        if p not in moved_away
+    ]
     shadows = []
     for new in _tracked(root, "--others", "--exclude-standard"):
         path = pathlib.PurePath(new)
-        if path.parent.name in TASK_DIRS and path.suffix == ".md" and any(
+        if (
+            path.parent.name in TASK_DIRS
+            and path.suffix == ".md"
+            and any(
                 f.name == path.name and f.parent.name in TASK_DIRS and f.parent != path.parent
-                for f in filed):
+                for f in filed
+            )
+        ):
             shadows.append(new)
     return shadows
 
 
-def _stage_named_briefs(root: pathlib.Path, ids: Sequence[str], refused: Sequence[str] = ()) -> None:
+def _stage_named_briefs(
+    root: pathlib.Path, ids: Sequence[str], refused: Sequence[str] = ()
+) -> None:
     for brief_id in ids:
-        staged = _git(root, "add", "--all", "--", _brief_pathspec(brief_id), *refused,
-                      capture_output=True, text=True)
+        staged = _git(
+            root,
+            "add",
+            "--all",
+            "--",
+            _brief_pathspec(brief_id),
+            *refused,
+            capture_output=True,
+            text=True,
+        )
         if staged.returncode != 0:
             print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
 
@@ -162,9 +216,11 @@ def _short_log(root: pathlib.Path, rev_range: str) -> str:
 
 
 def _report_divergence(root: pathlib.Path, why: str) -> None:
-    print(f"  (push deferred: {why}. Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
-          f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
-          "Resolve in a worktree, rebase onto origin/main and push.)")
+    print(
+        f"  (push deferred: {why}. Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
+        f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
+        "Resolve in a worktree, rebase onto origin/main and push.)"
+    )
 
 
 def _integrate_remote(root: pathlib.Path) -> bool:
@@ -176,23 +232,41 @@ def _integrate_remote(root: pathlib.Path) -> bool:
     _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
     with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
-        _git(root, "worktree", "add", "-q", "--detach", str(wt), "HEAD", capture_output=True, text=True)
+        _git(
+            root,
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            str(wt),
+            "HEAD",
+            capture_output=True,
+            text=True,
+        )
         try:
             if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
-                conflicts = _git(wt, "diff", "--name-only", "--diff-filter=U",
-                                 capture_output=True, text=True).stdout.split()
+                conflicts = _git(
+                    wt, "diff", "--name-only", "--diff-filter=U", capture_output=True, text=True
+                ).stdout.split()
                 _git(wt, "rebase", "--abort", capture_output=True, text=True)
                 _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
                 return False
-            if _git(wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True).returncode != 0:
+            if (
+                _git(
+                    wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True
+                ).returncode
+                != 0
+            ):
                 _report_divergence(root, "origin moved again while rebasing")
                 return False
         finally:
             _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
     _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
     if _git(root, "reset", "--keep", "origin/main", capture_output=True, text=True).returncode != 0:
-        print("  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
-              "commit or move them, then run: git reset --keep origin/main)")
+        print(
+            "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
+            "commit or move them, then run: git reset --keep origin/main)"
+        )
     return True
 
 
@@ -274,9 +348,18 @@ def _spawn_pusher(root: pathlib.Path, fd: int) -> None:
         _report_last_push(root)
         with open(lock_path(root, PUSH_LOG), "a") as log:
             subprocess.Popen(
-                [sys.executable, str(SCRIPTS_DIR / "git_sync.py"), "--push-pending", str(root),
-                 "--lock-fd", str(fd)],
-                pass_fds=(fd,), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "git_sync.py"),
+                    "--push-pending",
+                    str(root),
+                    "--lock-fd",
+                    str(fd),
+                ],
+                pass_fds=(fd,),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
     finally:
@@ -325,19 +408,27 @@ def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequenc
     """Stage what the caller names and commit it under the queue lock; False if the lock timed out."""
     with repo_lock(root) as acquired:
         if not acquired:
-            print("  (sync deferred: lock held; your files are safe on disk. "
-                  "Re-run git_sync.py with the same message and ids to commit them.)")
+            print(
+                "  (sync deferred: lock held; your files are safe on disk. "
+                "Re-run git_sync.py with the same message and ids to commit them.)"
+            )
             return False
         shadows = _shadowing_briefs(root)
         for path in shadows:
-            print(f"  (refused: {path} would re-create an id already filed in another state; "
-                  "sharpen the existing brief instead. Left untracked.)")
+            print(
+                f"  (refused: {path} would re-create an id already filed in another state; "
+                "sharpen the existing brief instead. Left untracked.)"
+            )
         staged_leaks = _staged_secret_bearing(root)
         _unstage(root, staged_leaks)
-        leaks = list(dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])]))
+        leaks = list(
+            dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])])
+        )
         if leaks:  # a count, not names: the paths come from scanning credential-bearing files
-            print(f"  (refused: {len(leaks)} held back for looking like a credential. "
-                  "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)")
+            print(
+                f"  (refused: {len(leaks)} held back for looking like a credential. "
+                "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
+            )
         refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
         _stage_named_briefs(root, ids, refused)
         if paths:
@@ -347,8 +438,13 @@ def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequenc
     return True
 
 
-def sync_commit(message: str, root: pathlib.Path | None = None,
-                ids: Sequence[str] = (), paths: Sequence[str] = (), wait: bool = False) -> bool:
+def sync_commit(
+    message: str,
+    root: pathlib.Path | None = None,
+    ids: Sequence[str] = (),
+    paths: Sequence[str] = (),
+    wait: bool = False,
+) -> bool:
     """Commit only what the caller names under the cross-process lock, then push coalesced.
 
     `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
@@ -383,8 +479,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     # A flag in the message slot would otherwise be committed and pushed as the message.
     if not argv or argv[0].startswith("-"):
-        print("Usage: python scripts/git_sync.py '<commit-message>' [brief-id ...]",
-              file=sys.stderr)
+        print(
+            "Usage: python scripts/git_sync.py '<commit-message>' [brief-id ...]", file=sys.stderr
+        )
         sys.exit(0 if argv and argv[0] in ("-h", "--help") else 1)
     sync_commit(argv[0], ids=argv[1:])
 
