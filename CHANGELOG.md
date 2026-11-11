@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
+  outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
+  parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.
 - **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
   context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
   applies (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming

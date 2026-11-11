@@ -54,7 +54,7 @@ VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # Folders that hold briefs. inbox is left out: free-text resolve skips raw pre-briefs, but
 # find_brief still reaches them by exact id so they can be closed or, once enriched, promoted.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
-# Targets that mean "work on this", so an inbox file must be enriched before it moves there.
+# Targets that mean "work on this", so a brief arriving from any other folder must be enriched first.
 ENRICHED_STATUSES = ("ready", "in-progress", "blocked")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
@@ -79,13 +79,18 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
 
 
 def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
-    """Refuse to promote an inbox file that still lacks a goal, success criteria or context."""
-    if path.parent.name != "inbox" or new_status not in ENRICHED_STATUSES:
+    """Refuse to promote a brief that still lacks a goal, success criteria or context.
+
+    inbox/, parked/ and done/ hold un-enriched briefs freely; only a move from one of them into
+    a gated state is checked, so a brief cannot skip the gate by detouring through parked/.
+    """
+    source = path.parent.name
+    if source in ENRICHED_STATUSES or new_status not in ENRICHED_STATUSES:
         return
     missing = brief_missing_fields(path.read_text())
     if missing:
         raise ValueError(
-            f"{brief_id!r} is still in inbox/ and cannot move to {new_status} without "
+            f"{brief_id!r} is still in {source}/ and cannot move to {new_status} without "
             f"{', '.join(missing)}; enrich it first"
         )
 
