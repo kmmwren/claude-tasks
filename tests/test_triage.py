@@ -1,5 +1,6 @@
 """Tests for triage.py: the dry-run and apply passes over a whole inbox."""
 
+import dataclasses
 import json
 
 import pytest
@@ -8,6 +9,7 @@ from triage_enrich import Fill
 
 from tests.queue_helpers import inbox_text, make_inbox
 
+BC = triage.BriefClass
 READY = dict(goal="Ship it.", criteria=("It ships.",))
 LIVE = {"o/r#1", "o/r#2"}.__contains__
 GATE = triage.Gate(LIVE)
@@ -87,5 +89,74 @@ def test_main_prints_the_dry_run_report(tmp_path, capsys, offline):
 
 def test_main_wires_the_llm_backend(tmp_path, capsys, monkeypatch, offline):
     monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
+    monkeypatch.setattr(triage, "claude_classify", lambda model: lambda briefs, examples: {})
     triage.main(["promote", "--root", str(make_inbox(tmp_path, {"thin": QUEUE["thin"]})), "--llm"])
     assert json.loads(capsys.readouterr().out)["promoted_enriched"] == 1
+
+
+def _log(root):
+    return triage.ClassLog(root)
+
+
+def test_apply_logs_a_verdict_for_every_inbox_brief_and_ready_only_for_those_moved(tmp_path, synced):
+    root = make_inbox(tmp_path, QUEUE)
+    report = triage.run(_opts(root, apply=True))
+    classes = {v.brief_id: v.cls for v in _log(root).verdicts()}
+    assert classes == {
+        "filed": "ready",
+        "thin": "ready",
+        "bare": "needs-info",
+        "peer-a-batch": "needs-info",
+    }
+    assert report.classes == {"ready": 2, "needs-info": 2}
+    assert {v["id"] for v in report.verdicts} == set(classes)
+
+
+def test_dry_run_reports_verdicts_and_logs_nothing(tmp_path, synced):
+    root = make_inbox(tmp_path, QUEUE)
+    report = triage.run(_opts(root, apply=False))
+    assert report.classes["ready"] == 2 and not _log(root).path.exists()
+
+
+def test_a_repeat_of_an_earlier_brief_is_a_duplicate_and_is_not_promoted(tmp_path, synced):
+    twin = inbox_text("filed-again", title="Title of filed", context="Per o/r#2.", **READY)
+    root = make_inbox(tmp_path, {"filed": QUEUE["filed"], "filed-again": twin})
+    report = triage.run(_opts(root, apply=True))
+    assert (report.duplicates, report.promoted_as_filed) == (1, 1)
+    assert [p.stem for p in (root / "inbox").glob("*.md")] == ["filed-again"]
+    assert [(v.brief_id, v.cls) for v in _log(root).verdicts()] == [
+        ("filed-again", "duplicate"),
+        ("filed", "ready"),
+    ]
+
+
+def test_a_promotion_the_owner_moved_back_is_logged_and_not_promoted_again(tmp_path, synced):
+    root = make_inbox(tmp_path, {"filed": QUEUE["filed"]})
+    log = _log(root)
+    log.append(triage.Verdict("filed", BC.READY, "ready as filed", "Title of filed", "t0"))
+    report = triage.run(_opts(root, apply=True))
+    assert report.corrections_logged == 1 and report.promoted_as_filed == 0
+    assert (root / "inbox" / "filed.md").exists()
+    assert [(c.predicted, c.actual) for c in log.corrections()] == [("ready", "needs-info")]
+    assert log.latest()["filed"].reason == "moved back from ready by the owner"
+
+
+def test_a_dry_run_does_not_reconcile(tmp_path, synced):
+    root = make_inbox(tmp_path, {"filed": QUEUE["filed"]})
+    _log(root).append(triage.Verdict("filed", BC.READY, "r", "T", "t0"))
+    assert triage.run(_opts(root, apply=False)).corrections_logged == 0
+
+
+def test_the_classifier_is_shown_earlier_corrections(tmp_path, synced):
+    root = make_inbox(tmp_path, {"bare": QUEUE["bare"]})
+    log = _log(root)
+    log.append(triage.Verdict("old", BC.DROP, "stale", "Old one", "t0"))
+    log.append(triage.Correction("old", "t0", BC.DROP, BC.READY, "ready", "t1"))
+    seen = []
+
+    def classify(briefs, examples):
+        seen.append(([b.id for b in briefs], [e.title for e in examples]))
+        return {"bare": triage.Call(BC.DROP, "obsolete")}
+
+    opts = dataclasses.replace(_opts(root, apply=True), classify=classify)
+    assert triage.run(opts).classes == {"drop": 1} and seen == [(["bare"], ["Old one"])]
