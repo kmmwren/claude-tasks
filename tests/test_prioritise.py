@@ -566,3 +566,32 @@ def test_a_bad_priority_setting_warns_and_keeps_tag_weights(tmp_path, capsys):
     w = prioritise.Weights.for_queue(root)
     assert w.scorer is prioritise.Scorer.ADDITIVE and w.tags == {"urgent": 7}
     assert "ignoring [priority] settings" in capsys.readouterr().err
+
+
+# ── ids ───────────────────────────────────────────────────────────────────────
+
+def _no_id(text):
+    return "\n".join(line for line in text.splitlines() if not line.startswith("id:")) + "\n"
+
+
+def test_a_brief_with_no_id_field_takes_its_file_stem_as_id(tmp_path, monkeypatch, capsys):
+    root = _queue(tmp_path, [("ready", "stemmed-brief.md", _no_id(_brief("x", importance="1")))])
+    monkeypatch.setenv("CLAUDE_TASKS_DIR", str(root))
+    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["stemmed-brief"]
+    prioritise.main(["--json"])
+    import json
+    assert [row["id"] for row in json.loads(capsys.readouterr().out)] == ["stemmed-brief"]
+
+
+def test_an_empty_id_field_also_falls_back_to_the_file_stem(tmp_path):
+    root = _queue(tmp_path, [("ready", "blank.md", _brief("x").replace("id: x", "id:"))])
+    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["blank"]
+
+
+def test_an_id_less_brief_is_a_dependency_target_under_its_stem(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "stemmed.md", _no_id(_brief("x"))),
+        ("ready", "waiter.md", _brief("waiter", blockers="[stemmed]")),
+    ])
+    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    assert (ranked["stemmed"]["_unlocks"], ranked["stemmed"]["_leverage"]) == (1, 1)

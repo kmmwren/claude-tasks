@@ -70,6 +70,11 @@ def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[in
             if is_external(b) and (i not in probes or (probes[i] == HUMAN_PROBE and i not in confirmed))]
 
 
+def brief_id(fields: dict[str, str], stem: str) -> str:
+    """A brief's `id:`, or its file stem when the field is absent or blank."""
+    return fields.get("id") or stem
+
+
 def parse_list(raw: str) -> list[str]:
     """Items of a `[a, b, c]` frontmatter list, in order. Reasons may not contain commas."""
     return [t.strip() for t in (raw or "").strip().strip("[]").split(",") if t.strip()]
@@ -134,7 +139,7 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
         for f in sorted((root / d).glob("*.md")):
             text = f.read_text()
             fields = fm(text)
-            out.append(Brief(fields.get("id", f.stem), d, fields, fm_repeated(text)))
+            out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text)))
     return out
 
 
