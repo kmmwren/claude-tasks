@@ -34,6 +34,7 @@ import datetime
 import enum
 import json
 import pathlib
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -132,12 +133,19 @@ class Weights:
             chore_share=float(p["chore_share"]),
             fixed_date_horizon_days=int(p["fixed_date_horizon_days"]),
             human_tags=frozenset(p["human_tags"]),
-            tags={str(k): int(v) for k, v in p["tag_weights"].items()},
+            tags=dict(p["tag_weights"]),
         )
 
     @classmethod
     def for_queue(cls, root: pathlib.Path) -> "Weights":
-        return cls.from_priority(load_config(root).get("priority", {}))
+        """A bad setting falls back to the defaults, keeping tag_weights, rather than failing."""
+        table = load_config(root).get("priority", {})
+        try:
+            return cls.from_priority(table)
+        except (ValueError, TypeError, AttributeError) as err:
+            print(f"prioritise: ignoring [priority] settings in tasks.toml ({err}); "
+                  "using defaults with tag_weights", file=sys.stderr)
+            return cls.from_priority({"tag_weights": table.get("tag_weights", {})})
 
     def importance_value(self, raw: str) -> float:
         level = int(raw) if raw.strip().isdigit() else DEFAULT_IMPORTANCE
