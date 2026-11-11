@@ -24,6 +24,9 @@ This module fixes both with stdlib only:
   * reserve_name() — claim a unique filename with O_CREAT|O_EXCL, so two simultaneous
                      captures of the same title can't overwrite one another.
 """
+import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
+
+# isort: split
 import contextlib
 import errno
 import fcntl
