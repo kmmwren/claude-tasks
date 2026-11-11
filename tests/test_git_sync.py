@@ -407,7 +407,47 @@ def test_sweep_keeps_a_credential_bearing_file_local(tmp_path, capsys):
     git(repo, "fetch", "-q", "origin")
     assert "inbox/fine.md" in committed_files(repo, "origin/main")
     assert "inbox/leaky.md" not in committed_files(repo, "origin/main")
-    assert "holds what looks like a credential" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "1 held back" in out
+    assert "leaky" not in out
+
+
+def test_sweep_unstages_a_credential_bearing_file_someone_already_staged(tmp_path):
+    repo = make_repo(tmp_path)
+    leaky = repo / "inbox" / "staged-leaky.md"
+    leaky.write_text("token ghp_" + "b" * 30)
+    git(repo, "add", "inbox/staged-leaky.md")
+    (repo / "inbox" / "fine.md").write_text("ok")
+
+    git_sync.sweep(repo)
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/fine.md" in committed_files(repo, "origin/main")
+    assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
+    assert leaky.is_file()
+
+
+def test_a_named_sync_never_commits_a_staged_credential(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "named")
+    (repo / "inbox" / "staged-leaky.md").write_text("AKIA" + "A" * 16)
+    git(repo, "add", "inbox/staged-leaky.md")
+
+    git_sync.sync_commit("brief(named): x", repo, ids=["named"])
+
+    git(repo, "fetch", "-q", "origin")
+    assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
+
+
+def test_sweep_commits_a_deleted_brief_without_scanning_it(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "gone")
+    (repo / "ready" / "gone.md").unlink()
+
+    assert git_sync.sweep(repo) is True
+
+    git(repo, "fetch", "-q", "origin")
+    assert "ready/gone.md" not in committed_files(repo, "origin/main")
 
 
 def test_a_queue_inside_another_repo_is_never_synced(tmp_path):
