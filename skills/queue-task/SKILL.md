@@ -56,12 +56,11 @@ pass `--root <path>` explicitly. If it reports "No task queue", run `/tasks-init
 
 ## Dedup first
 
-Before adding, check for an existing brief on the same thing:
-```bash
-grep -rl "<keyword>" "$CLAUDE_TASKS_DIR"/{inbox,ready,in-progress,done} 2>/dev/null
-```
-If one exists, sharpen it (add a note to its body) instead of duplicating. Fewer, richer
-briefs beat many thin ones.
+add_task.py checks for you: a capture with the same normalised title and cited sources as a brief
+already in the queue is merged into it (a log line, plus a note when the context is new) and the
+output says `merged into <folder>/<id>.md`. `--on-duplicate refuse` files nothing and exits 1;
+`--on-duplicate file` captures it anyway. A same-title brief citing different sources is a different
+task. Fewer, richer briefs beat many thin ones.
 
 ## Honesty rules
 

@@ -44,10 +44,11 @@ from typing import Any
 
 from _paths import require_queue, resolve_root
 from config import load_config
-from deps import Brief, dependency_edges, fm, load_queue, unmet
+from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
 
 EFFORT_RANK = {"xs": 40, "s": 30, "m": 20, "l": 10, "xl": 5, "": 15}
+SIZE_ORDER = ("xs", "s", "m", "l", "xl")
 EFFORT_DAYS = {"xs": 0.125, "s": 0.5, "m": 2, "l": 7, "xl": 14}
 UNLOCK_WEIGHT = 150
 INDEX_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
@@ -325,7 +326,7 @@ def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
     for d in INDEX_DIRS:
         for f in (root / d).glob("*.md"):
             b = fm(f.read_text())
-            status_by_id[b.get("id", f.stem)] = d
+            status_by_id[brief_id(b, f.stem)] = d
             for dep in parse_deps(b):
                 unlocks[dep] = unlocks.get(dep, 0) + 1
     return status_by_id, unlocks
@@ -452,7 +453,7 @@ class _RankContext:
 
 
 def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str, Any]:
-    bid = b.get("id", f.stem)
+    bid = b["id"]
     blocked, pending = is_blocked(b, ctx.done_ids)
     own, wsjf = ctx.wsjf(bid)
     blocker = None if blocked else ctx.fleet.clearing(b)
@@ -482,8 +483,15 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
     return b
 
 
+def _size_position(brief: dict[str, Any]) -> int:
+    """Where the brief's effort sits from xs up; a missing or unknown one sorts after xl."""
+    effort = brief.get("estimated-effort", "")
+    return SIZE_ORDER.index(effort) if effort in SIZE_ORDER else len(SIZE_ORDER)
+
+
 def _by(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(items, key=lambda b: (-b[key], b.get("estimated-effort", "z")))
+    """Highest `key` first; ties go smallest first, then by id, so the order is deterministic."""
+    return sorted(items, key=lambda b: (-b[key], _size_position(b), b["id"]))
 
 
 def _interleave(
@@ -534,6 +542,13 @@ def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[
     return orders
 
 
+def _load_fields(path: pathlib.Path) -> dict[str, Any]:
+    """The brief's frontmatter with `id` always set, so no row ever carries a null id."""
+    fields: dict[str, Any] = dict(fm(path.read_text()))
+    fields["id"] = brief_id(fields, path.stem)
+    return fields
+
+
 def rank(
     root: pathlib.Path,
     today: datetime.date | None = None,
@@ -546,9 +561,7 @@ def rank(
     weights = weights or Weights.for_queue(root)
     tags = weights.tags if tag_weights is None else tag_weights
     ctx = _RankContext.load(root, today or datetime.date.today(), context, weights, tags)
-    items = [
-        _annotate(f, dict(fm(f.read_text())), ctx) for f in sorted((root / "ready").glob("*.md"))
-    ]
+    items = [_annotate(f, _load_fields(f), ctx) for f in sorted((root / "ready").glob("*.md"))]
     chosen = scorer or weights.scorer
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]
@@ -595,7 +608,7 @@ SCHEMA_VERSION = 2
 def _json_row(b: dict[str, Any]) -> dict[str, Any]:
     """Pre-v2 keys keep their meaning; v2 keys are additive."""
     return {
-        "id": b.get("id"),
+        "id": b["id"],
         "score": b["_score"],
         "title": b.get("title", ""),
         "importance": b.get("importance"),

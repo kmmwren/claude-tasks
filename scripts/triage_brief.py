@@ -19,8 +19,8 @@ from transition import set_field
 from triage_sources import cited_sources
 
 GENERATED_BY = "inbox-triage"
-_FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
-_EXECUTION_LOG = re.compile(r"^##[ \t]+Execution log\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
+FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
+EXECUTION_LOG = re.compile(r"^##[ \t]+Execution log\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,7 +39,7 @@ class InboxBrief:
     @property
     def structured(self) -> bool:
         """Filed through add_task with frontmatter, as opposed to a raw capture the enrich skill has yet to shape."""
-        return bool(_FRONTMATTER.match(self.text)) and bool(raw_title(self.text))
+        return bool(FRONTMATTER.match(self.text)) and bool(raw_title(self.text))
 
     @property
     def title(self) -> str:
@@ -60,11 +60,11 @@ class InboxBrief:
     @functools.cached_property
     def sources(self) -> set[str]:
         """Sources the brief's author cited; the execution log only records which tool filed it."""
-        return cited_sources(_EXECUTION_LOG.sub("", self.text))
+        return cited_sources(EXECUTION_LOG.sub("", self.text))
 
     def with_field(self, key: str, value: str) -> "InboxBrief":
         """This brief with frontmatter `key: value` set."""
-        text = _FRONTMATTER.sub(
+        text = FRONTMATTER.sub(
             lambda m: m.group(1) + set_field(m.group(2), key, value) + m.group(3),
             self.text,
             count=1,

@@ -102,7 +102,7 @@ def test_same_title_concurrent_adds_do_not_overwrite(queue):
     """Two sessions capturing the same title must produce two distinct briefs."""
     n = 6
     with ThreadPoolExecutor(max_workers=n) as ex:
-        results = list(ex.map(lambda _: run_add(queue, "identical title here"), range(n)))
+        results = list(ex.map(lambda _: run_add(queue, "identical title here", "--on-duplicate", "file"), range(n)))
     assert all(r.returncode == 0 for r in results)
     files = list((queue / "inbox").glob("*.md"))
     assert len(files) == n  # no lost write — distinct -2, -3, … suffixes

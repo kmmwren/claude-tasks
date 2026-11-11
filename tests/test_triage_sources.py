@@ -5,7 +5,15 @@ import subprocess
 
 import pytest
 import triage_sources
-from triage_sources import LiveSources, cited_sources, gh_resolves, grounded, specific_path
+from triage_sources import (
+    LiveSources,
+    PrState,
+    cited_sources,
+    gh_resolves,
+    grounded,
+    pr_state,
+    specific_path,
+)
 
 
 @pytest.mark.parametrize(
@@ -78,6 +86,17 @@ class FakeGh:
         return api_path in self.live
 
 
+class FakePrs:
+    """`gh pr view` answers by (repo, number); anything unlisted is unverified."""
+
+    def __init__(self, states: dict[tuple[str, int], PrState] | None = None) -> None:
+        self.states, self.calls = states or {}, list[tuple[str, int]]()
+
+    def __call__(self, repo: str, number: int) -> PrState | None:
+        self.calls.append((repo, number))
+        return self.states.get((repo, number))
+
+
 @pytest.fixture
 def queue(tmp_path):
     (tmp_path / "ready").mkdir()
@@ -101,7 +120,7 @@ def queue(tmp_path):
 )
 def test_live_sources_checks_each_kind_against_its_own_authority(queue, home, source, ok):
     gh = FakeGh({"repos/o/r/issues/7", "repos/o/r/branches/feat/x"})
-    assert LiveSources(queue, gh)(source) is ok
+    assert LiveSources(queue, gh, FakePrs({("o/r", 7): PrState.OPEN}))(source) is ok
 
 
 def test_a_local_path_is_checked_on_disk(queue, home):
@@ -109,10 +128,61 @@ def test_a_local_path_is_checked_on_disk(queue, home):
 
 
 def test_each_source_is_checked_once_per_run(queue):
-    gh = FakeGh({"repos/o/r/issues/7"})
-    live = LiveSources(queue, gh)
+    prs = FakePrs({("o/r", 7): PrState.OPEN})
+    live = LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)
     live("o/r#7"), live("o/r#7")
-    assert gh.calls == ["repos/o/r/issues/7"]
+    assert prs.calls == [("o/r", 7)]
+
+
+@pytest.mark.parametrize("source", ["https://github.com/o/r/pull/7", "o/r#7"])
+@pytest.mark.parametrize(
+    "state, ok",
+    [(PrState.OPEN, True), (PrState.MERGED, False), (PrState.CLOSED, False), (None, False)],
+)
+def test_a_pr_counts_only_while_open_and_an_unverified_one_never_counts(queue, source, state, ok):
+    prs = FakePrs({("o/r", 7): state} if state else {})
+    assert LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)(source) is ok
+
+
+def test_a_number_that_is_not_a_pr_falls_back_to_the_issue_check(queue):
+    prs = FakePrs({("o/r", 7): PrState.NOT_A_PR})
+    assert LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)("o/r#7")
+    assert not LiveSources(queue, FakeGh(set()), prs)("o/r#7")
+    assert not LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)("https://github.com/o/r/pull/7")
+
+
+def _gh_answers(monkeypatch, returncode, out="", err=""):
+    monkeypatch.setattr(
+        triage_sources.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, returncode, out, err),
+    )
+
+
+@pytest.mark.parametrize(
+    "out, state",
+    [("OPEN\n", PrState.OPEN), ("MERGED\n", PrState.MERGED), ("CLOSED\n", PrState.CLOSED)],
+)
+def test_pr_state_reads_the_state_gh_prints(monkeypatch, out, state):
+    _gh_answers(monkeypatch, 0, out)
+    assert pr_state("o/r", 7) is state
+
+
+def test_pr_state_tells_a_plain_issue_from_a_failure(monkeypatch):
+    _gh_answers(monkeypatch, 1, err="GraphQL: Could not resolve to a PullRequest with the number of 7.")
+    assert pr_state("o/r", 7) is PrState.NOT_A_PR
+    _gh_answers(monkeypatch, 1, err="error connecting to api.github.com")
+    assert pr_state("o/r", 7) is None
+    _gh_answers(monkeypatch, 0, "WEIRD\n")
+    assert pr_state("o/r", 7) is None
+
+
+def test_pr_state_treats_a_missing_gh_as_unverified(monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("no gh")
+
+    monkeypatch.setattr(triage_sources.subprocess, "run", boom)
+    assert pr_state("o/r", 7) is None
 
 
 def test_gh_resolves_reads_the_exit_code(monkeypatch):
