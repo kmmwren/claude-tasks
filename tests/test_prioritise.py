@@ -473,10 +473,27 @@ def test_interleave_reserves_a_share_of_slots_for_chores():
 
 def test_expedite_over_the_cap_drops_to_standard():
     E, S = prioritise.Lane.EXPEDITE, prioritise.Lane.STANDARD
-    items = [{"id": i, "_score_wsjf": s, "_lane": E} for i, s in (("a", 3), ("b", 2), ("c", 1))]
-    items.append({"id": "d", "_score_wsjf": 9, "_lane": S})
+    items = [{"id": i, "_score_wsjf": s, "_lane": E, "_actionable": True}
+             for i, s in (("a", 3), ("b", 2), ("c", 1))]
+    items.append({"id": "d", "_score_wsjf": 9, "_lane": S, "_actionable": True})
     w = prioritise.Weights.from_priority({"expedite_cap": 2})
     assert [b["id"] for b in prioritise.order_lanes(items, w)] == ["a", "b", "d", "c"]
+
+
+def test_a_blocked_expedite_brief_holds_no_expedite_slot():
+    E = prioritise.Lane.EXPEDITE
+    items = [{"id": i, "_score_wsjf": s, "_lane": E, "_actionable": ok}
+             for i, s, ok in (("x", 9, False), ("y", 8, False), ("a", 3, True), ("b", 2, True))]
+    w = prioritise.Weights.from_priority({"expedite_cap": 2})
+    assert [b["id"] for b in prioritise.order_lanes(items, w)][:2] == ["a", "b"]
+
+
+def test_a_zero_job_size_is_a_bad_setting(tmp_path, capsys):
+    root = _queue(tmp_path, [("ready", "a.md", _brief("a"))])
+    (root / "tasks.toml").write_text('name = "demo"\n[priority]\njob_size = { "" = 0 }\n')
+    assert prioritise.Weights.for_queue(root).size("") == 3
+    assert prioritise.rank(root, today=TODAY)[0]["id"] == "a"
+    assert "job_size values must be positive" in capsys.readouterr().err
 
 
 # ── wsjf: rank ────────────────────────────────────────────────────────────────

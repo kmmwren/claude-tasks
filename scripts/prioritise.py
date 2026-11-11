@@ -151,6 +151,10 @@ class Weights:
         level = int(raw) if raw.strip().isdigit() else DEFAULT_IMPORTANCE
         return self.importance.get(level, self.importance[DEFAULT_IMPORTANCE])
 
+    def __post_init__(self) -> None:
+        if min(self.job_size.values()) <= 0:
+            raise ValueError(f"job_size values must be positive: {self.job_size}")
+
     def size(self, effort: str) -> float:
         return self.job_size.get(effort, self.job_size[""])
 
@@ -419,10 +423,13 @@ def _interleave(main: list[dict[str, Any]], chores: list[dict[str, Any]],
 
 
 def order_lanes(items: list[dict[str, Any]], weights: Weights) -> list[dict[str, Any]]:
-    """Expedite (up to the cap), then fixed-date, then standard with chores interleaved."""
+    """Expedite (actionable, up to the cap), then fixed-date, then standard with chores."""
     ranked = _by("_score_wsjf", items)
-    for b in [b for b in ranked if b["_lane"] is Lane.EXPEDITE][weights.expedite_cap:]:
-        b["_lane"] = Lane.STANDARD
+    expedite = [b for b in ranked if b["_lane"] is Lane.EXPEDITE]
+    held = {id(b) for b in [b for b in expedite if b["_actionable"]][:weights.expedite_cap]}
+    for b in expedite:
+        if id(b) not in held:
+            b["_lane"] = Lane.STANDARD
     lane = {ln: [b for b in ranked if b["_lane"] is ln] for ln in Lane}
     return (lane[Lane.EXPEDITE] + lane[Lane.FIXED_DATE]
             + _interleave(lane[Lane.STANDARD], lane[Lane.CHORE], weights.chore_share))
