@@ -47,6 +47,7 @@ from deps import (
     probe_gaps,
 )
 from git_sync import sync_commit
+from picks import note_choice
 from readiness import brief_missing_fields
 
 # Every lifecycle state == a folder of the same name.
@@ -415,6 +416,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"unblocked {released_id} → ready")
     if not a.no_sync:
         sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
+    if a.status == "in-progress":
+        note_choice(root, "pick", a.brief_id)
     print(f"{a.brief_id} → {a.status}: {new_path}")
 
 
