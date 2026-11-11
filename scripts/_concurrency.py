@@ -37,6 +37,7 @@ import time
 from collections.abc import Iterable, Iterator
 
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
+LOCK_TIMEOUT = 30.0
 
 
 def lock_path(root: pathlib.Path) -> pathlib.Path:
@@ -50,7 +51,7 @@ def lock_path(root: pathlib.Path) -> pathlib.Path:
 
 
 @contextlib.contextmanager
-def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> Iterator[bool]:
+def repo_lock(root: pathlib.Path, timeout: float = LOCK_TIMEOUT, poll: float = 0.1) -> Iterator[bool]:
     """Serialize git index operations across processes.
 
     Blocks (polling, non-blocking flock) until the lock is free or `timeout` seconds
@@ -82,7 +83,7 @@ def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> I
 
 
 @contextlib.contextmanager
-def require_lock(root: pathlib.Path, timeout: float = 30.0) -> Iterator[None]:
+def require_lock(root: pathlib.Path, timeout: float = LOCK_TIMEOUT) -> Iterator[None]:
     """repo_lock for a read-modify-write that must not run unlocked: a timeout raises instead."""
     with repo_lock(root, timeout) as acquired:
         if not acquired:

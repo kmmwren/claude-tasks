@@ -32,6 +32,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from _concurrency import repo_lock  # noqa: E402
 from _log_merge import merge_log_appends  # noqa: E402
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
+from _rebase_recovery import recover_stale_rebase  # noqa: E402
 
 
 def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProcess[Any]":
@@ -264,6 +265,8 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
             print("  (sync deferred: lock held; your files are safe on disk. "
                   "Re-run git_sync.py with the same message and ids to commit them.)")
             return False
+        for note in recover_stale_rebase(root):
+            print(f"  ({note})")
         shadows = _shadowing_briefs(root)
         for path in shadows:
             print(f"  (refused: {path} would re-create an id already filed in another state; "
