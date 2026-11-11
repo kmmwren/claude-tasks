@@ -1,4 +1,5 @@
 """Tests for headless.py: the isolated, schema-bound claude -p call."""
+
 import json
 import subprocess
 
@@ -27,11 +28,14 @@ def _run_returning(stdout):
     def run(cmd, **kw):
         assert kw["env"]["CLAUDE_LOCAL_OK"] == "read-only-research:why" and kw["input"] == "prompt"
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout)
+
     return run
 
 
 def test_returns_the_structured_output(monkeypatch):
-    monkeypatch.setattr(subprocess, "run", _run_returning(json.dumps({"structured_output": {"a": 1}})))
+    monkeypatch.setattr(
+        subprocess, "run", _run_returning(json.dumps({"structured_output": {"a": 1}}))
+    )
     assert ask_json("prompt", SCHEMA, "sonnet", "why") == {"a": 1}
 
 
@@ -44,6 +48,7 @@ def test_bad_output_is_none(monkeypatch, stdout):
 def test_a_failed_call_is_none_and_says_so(monkeypatch, capsys):
     def boom(cmd, **kw):
         raise subprocess.CalledProcessError(3, cmd)
+
     monkeypatch.setattr(subprocess, "run", boom)
     assert ask_json("prompt", SCHEMA, "sonnet", "why") is None
     assert "headless call failed" in capsys.readouterr().err

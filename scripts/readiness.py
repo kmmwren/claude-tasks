@@ -8,6 +8,7 @@ filed to inbox/ gets placeholder stubs for these fields, so the stubs count as m
 
 Stdlib only.
 """
+
 import re
 from collections.abc import Sequence
 
@@ -56,10 +57,14 @@ def brief_missing_fields(text: str) -> list[str]:
     """
     text = _HTML_COMMENT.sub("", text)
     title = raw_title(text)
-    criteria = [c for c in _CRITERION.findall(section(text, "Success criteria"))
-                if c != placeholder_criterion(title) and not _STUB.fullmatch(c)]
+    criteria = [
+        c
+        for c in _CRITERION.findall(section(text, "Success criteria"))
+        if c != placeholder_criterion(title) and not _STUB.fullmatch(c)
+    ]
     goal, context = section(text, "Goal"), section(text, "Context")
     return missing_ready_fields(
         "" if goal == placeholder_goal(title) or _STUB.fullmatch(goal) else goal,
         criteria,
-        "" if context == PLACEHOLDER_CONTEXT or _STUB.fullmatch(context) else context)
+        "" if context == PLACEHOLDER_CONTEXT or _STUB.fullmatch(context) else context,
+    )

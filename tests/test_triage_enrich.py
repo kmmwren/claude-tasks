@@ -1,4 +1,5 @@
 """Tests for triage_enrich.py: schema-validated fills of missing fields."""
+
 import pytest
 import triage_enrich
 from triage_brief import InboxBrief
@@ -23,13 +24,21 @@ GOOD = {"id": "b", "goal": " Ship. ", "criteria": ["It ships.", " "], "context":
 
 def test_parse_keeps_valid_fills_for_asked_ids():
     assert parse_fills({"briefs": [GOOD, {**GOOD, "id": "z"}]}, {"b"}) == {
-        "b": Fill("Ship.", ("It ships.",), "See o/r#2.")}
+        "b": Fill("Ship.", ("It ships.",), "See o/r#2.")
+    }
 
 
-@pytest.mark.parametrize("payload", [
-    None, {"briefs": "x"}, {"briefs": [GOOD | {"goal": 3}]}, {"briefs": [GOOD | {"criteria": "x"}]},
-    {"briefs": [GOOD | {"criteria": [1]}]}, {"briefs": ["x"]},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"briefs": "x"},
+        {"briefs": [GOOD | {"goal": 3}]},
+        {"briefs": [GOOD | {"criteria": "x"}]},
+        {"briefs": [GOOD | {"criteria": [1]}]},
+        {"briefs": ["x"]},
+    ],
+)
 def test_parse_drops_anything_off_schema(payload):
     assert parse_fills(payload, {"b"}) == {}
 
@@ -38,6 +47,7 @@ def test_predict_asks_with_the_fill_schema_and_parses_the_answer(brief, monkeypa
     def ask(prompt, schema, model, reason, timeout):
         assert schema is FILL_SCHEMA and '<brief id="b">' in prompt and "tools off" in reason
         return {"briefs": [GOOD]}
+
     monkeypatch.setattr(triage_enrich, "ask_json", ask)
     assert claude_predict()([brief])["b"].goal == "Ship."
 

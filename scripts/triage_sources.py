@@ -11,6 +11,7 @@ qualify a brief on their own.
 
 Stdlib only.
 """
+
 import pathlib
 import re
 import subprocess
@@ -48,7 +49,12 @@ def cited_sources(text: str) -> set[str]:
 def gh_resolves(api_path: str) -> bool:
     """True when the GitHub API answers `api_path`; offline or unknown counts as not found."""
     try:
-        return subprocess.run(["gh", "api", api_path, "--silent"], capture_output=True, timeout=30).returncode == 0
+        return (
+            subprocess.run(
+                ["gh", "api", api_path, "--silent"], capture_output=True, timeout=30
+            ).returncode
+            == 0
+        )
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -82,7 +88,10 @@ class LiveSources:
 
     def _branch_exists(self, repo: str, parts: list[str]) -> bool:
         """A tree or blob link holds while a leading part of its path is a live branch; branch names may hold slashes."""
-        return any(self._gh(f"repos/{repo}/branches/{'/'.join(parts[:n])}") for n in range(1, len(parts) + 1))
+        return any(
+            self._gh(f"repos/{repo}/branches/{'/'.join(parts[:n])}")
+            for n in range(1, len(parts) + 1)
+        )
 
 
 def grounded(generated: str, original: str, exists: SourceCheck) -> bool:

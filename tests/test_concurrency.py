@@ -6,6 +6,7 @@ Reproduces the original failure (concurrent `add_task --commit` colliding on
 .git/index.lock and silently dropping briefs) and proves the fix: every brief lands
 exactly once, committed and pushed, with no wedged lock and no overwritten files.
 """
+
 import os
 import pathlib
 import shutil
@@ -23,6 +24,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def git(repo, *args, **kw):
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, **kw)
 
@@ -39,9 +41,19 @@ def _env(repo):
 
 def run_add(repo, title, *extra):
     return subprocess.run(
-        [sys.executable, str(repo / "scripts" / "add_task.py"), "--title", title,
-         "--source", "claude", "--commit", *extra],
-        capture_output=True, text=True, env=_env(repo),
+        [
+            sys.executable,
+            str(repo / "scripts" / "add_task.py"),
+            "--title",
+            title,
+            "--source",
+            "claude",
+            "--commit",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        env=_env(repo),
     )
 
 
@@ -67,6 +79,7 @@ def queue(tmp_path):
 
 
 # ── the headline race ─────────────────────────────────────────────────────────
+
 
 def test_concurrent_adds_all_land_committed_and_pushed(queue):
     n = 8
@@ -106,6 +119,7 @@ def test_sync_does_not_sweep_an_orphan_into_another_briefs_commit(queue):
 
 
 # ── unit-level guarantees the race test relies on ─────────────────────────────
+
 
 def test_repo_lock_is_mutually_exclusive(tmp_path):
     order = []
@@ -194,10 +208,13 @@ def test_reserve_name_concurrent_callers_never_collide(tmp_path):
 
 # ── git_sync races with add_task ──────────────────────────────────────────────
 
+
 def run_git_sync(repo, msg):
     return subprocess.run(
         [sys.executable, str(repo / "scripts" / "git_sync.py"), msg, "test-transition"],
-        capture_output=True, text=True, env=_env(repo),
+        capture_output=True,
+        text=True,
+        env=_env(repo),
     )
 
 
@@ -231,7 +248,8 @@ def test_git_sync_races_add_task_both_land(queue):
 def test_git_sync_usage_error_exits_1(queue):
     result = subprocess.run(
         [sys.executable, str(queue / "scripts" / "git_sync.py")],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 1
     assert "Usage:" in result.stderr

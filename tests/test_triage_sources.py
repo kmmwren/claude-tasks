@@ -1,4 +1,5 @@
 """Tests for triage_sources.py: what counts as a citable source, whether it exists, and grounding."""
+
 import pathlib
 import subprocess
 
@@ -7,13 +8,16 @@ import triage_sources
 from triage_sources import LiveSources, cited_sources, gh_resolves, grounded, specific_path
 
 
-@pytest.mark.parametrize("text, source", [
-    ("see https://github.com/o/r/pull/7.", "https://github.com/o/r/pull/7"),
-    ("lives at ~/.claude/hooks/gate.py", "~/.claude/hooks/gate.py"),
-    ("landed as kmmwren/claude-tasks#24", "kmmwren/claude-tasks#24"),
-    ("tracked in ABC-42", "ABC-42"),
-    ("edit build_anatomy.py first", "build_anatomy.py"),
-])
+@pytest.mark.parametrize(
+    "text, source",
+    [
+        ("see https://github.com/o/r/pull/7.", "https://github.com/o/r/pull/7"),
+        ("lives at ~/.claude/hooks/gate.py", "~/.claude/hooks/gate.py"),
+        ("landed as kmmwren/claude-tasks#24", "kmmwren/claude-tasks#24"),
+        ("tracked in ABC-42", "ABC-42"),
+        ("edit build_anatomy.py first", "build_anatomy.py"),
+    ],
+)
 def test_each_kind_of_source_is_found(text, source):
     assert source in cited_sources(text)
 
@@ -46,13 +50,16 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
-@pytest.mark.parametrize("rel, ok", [
-    (".claude", False),
-    (".claude/skills", False),
-    (".claude/skills/enrich", True),
-    (".claude/CLAUDE.md", True),
-    (".claude/missing.md", False),
-])
+@pytest.mark.parametrize(
+    "rel, ok",
+    [
+        (".claude", False),
+        (".claude/skills", False),
+        (".claude/skills/enrich", True),
+        (".claude/CLAUDE.md", True),
+        (".claude/missing.md", False),
+    ],
+)
 def test_a_path_counts_when_it_is_a_file_or_a_directory_below_a_generic_root(home, rel, ok):
     assert specific_path(home / rel) is ok
 
@@ -77,17 +84,20 @@ def queue(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("source, ok", [
-    ("https://github.com/o/r/pull/7", True),
-    ("o/r#8", False),
-    ("https://github.com/o/r/tree/feat/x/docs/a.md", True),
-    ("https://github.com/o/r/blob/gone/a.md", False),
-    ("https://github.com/o/r", False),
-    ("ready/known.md", True),
-    ("inbox/unknown.md", False),
-    ("ABC-42", False),
-    ("build_anatomy.py", False),
-])
+@pytest.mark.parametrize(
+    "source, ok",
+    [
+        ("https://github.com/o/r/pull/7", True),
+        ("o/r#8", False),
+        ("https://github.com/o/r/tree/feat/x/docs/a.md", True),
+        ("https://github.com/o/r/blob/gone/a.md", False),
+        ("https://github.com/o/r", False),
+        ("ready/known.md", True),
+        ("inbox/unknown.md", False),
+        ("ABC-42", False),
+        ("build_anatomy.py", False),
+    ],
+)
 def test_live_sources_checks_each_kind_against_its_own_authority(queue, home, source, ok):
     gh = FakeGh({"repos/o/r/issues/7", "repos/o/r/branches/feat/x"})
     assert LiveSources(queue, gh)(source) is ok
@@ -112,5 +122,6 @@ def test_gh_resolves_reads_the_exit_code(monkeypatch):
 def test_gh_resolves_treats_a_missing_gh_as_not_found(monkeypatch):
     def boom(*_a, **_k):
         raise OSError("no gh")
+
     monkeypatch.setattr(triage_sources.subprocess, "run", boom)
     assert not gh_resolves("repos/o/r")

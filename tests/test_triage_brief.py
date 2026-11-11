@@ -1,4 +1,5 @@
 """Tests for triage_brief.py: the inbox brief model and its pure edits."""
+
 from triage_brief import GENERATED_BY, InboxBrief, load_inbox
 
 from tests.queue_helpers import inbox_text, make_inbox

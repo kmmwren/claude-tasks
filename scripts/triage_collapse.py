@@ -9,6 +9,7 @@ capture. The parent lists every child and its context; each child moves to done/
 
 Stdlib only.
 """
+
 import collections
 import dataclasses
 import pathlib
@@ -46,7 +47,11 @@ class Collapse:
         return f"{self.stem}-batch"
 
     def _importance(self) -> str:
-        ranks = [int(c.fields["importance"]) for c in self.children if c.fields.get("importance", "").isdigit()]
+        ranks = [
+            int(c.fields["importance"])
+            for c in self.children
+            if c.fields.get("importance", "").isdigit()
+        ]
         return str(min(ranks)) if ranks else "3"
 
     def _child_context(self, child: InboxBrief) -> str:
@@ -55,29 +60,58 @@ class Collapse:
 
     def parent_text(self, today: str) -> str:
         first, n = self.children[0], len(self.children)
-        return "\n".join((
-            "---", f"id: {self.parent_id}", f"title: {title_shape(first.title)} ({n} filed)",
-            f"created: {today}", f"updated: {today}", "status: inbox", "type: todo",
-            f"importance: {self._importance()}", f"autonomy: {first.fields.get('autonomy', '')}",
-            "estimated-effort: ", "due: ", f"domain: {first.fields.get('domain', '')}",
-            f"tags: [{', '.join(first.tags)}]", "parent: ", "source: claude",
-            f"generated-by: {GENERATED_BY}", "blockers: []", "related: []", "---", "",
-            "## Goal", "", f"Every one of the {n} briefs filed as `{self.stem}` is done, answered or closed.", "",
-            "## Context", "",
-            f"inbox-triage collapsed {n} inbox briefs sharing the id stem `{self.stem}`, their tags and "
-            f"their title shape. Each child is in done/ with `parent: {self.parent_id}`; move one back to "
-            "inbox/ to restore it.", "",
-            *(self._child_context(c) + "\n" for c in self.children),
-            "## Success criteria", "",
-            *(f"- [ ] {c.id}: {c.title} is done or answered." for c in self.children), "",
-            "## Execution log", "", f"{today}: collapsed {n} inbox briefs into this one (inbox-triage).", ""))
+        return "\n".join(
+            (
+                "---",
+                f"id: {self.parent_id}",
+                f"title: {title_shape(first.title)} ({n} filed)",
+                f"created: {today}",
+                f"updated: {today}",
+                "status: inbox",
+                "type: todo",
+                f"importance: {self._importance()}",
+                f"autonomy: {first.fields.get('autonomy', '')}",
+                "estimated-effort: ",
+                "due: ",
+                f"domain: {first.fields.get('domain', '')}",
+                f"tags: [{', '.join(first.tags)}]",
+                "parent: ",
+                "source: claude",
+                f"generated-by: {GENERATED_BY}",
+                "blockers: []",
+                "related: []",
+                "---",
+                "",
+                "## Goal",
+                "",
+                f"Every one of the {n} briefs filed as `{self.stem}` is done, answered or closed.",
+                "",
+                "## Context",
+                "",
+                f"inbox-triage collapsed {n} inbox briefs sharing the id stem `{self.stem}`, their tags and "
+                f"their title shape. Each child is in done/ with `parent: {self.parent_id}`; move one back to "
+                "inbox/ to restore it.",
+                "",
+                *(self._child_context(c) + "\n" for c in self.children),
+                "## Success criteria",
+                "",
+                *(f"- [ ] {c.id}: {c.title} is done or answered." for c in self.children),
+                "",
+                "## Execution log",
+                "",
+                f"{today}: collapsed {n} inbox briefs into this one (inbox-triage).",
+                "",
+            )
+        )
 
 
 def _key(brief: InboxBrief) -> tuple[str, tuple[str, ...], str]:
     return stem(brief.id), brief.tags, title_shape(brief.title)
 
 
-def plan_collapses(briefs: Sequence[InboxBrief], root: pathlib.Path, min_size: int = 2) -> list[Collapse]:
+def plan_collapses(
+    briefs: Sequence[InboxBrief], root: pathlib.Path, min_size: int = 2
+) -> list[Collapse]:
     """Groups of at least `min_size` unparented briefs whose parent id is not already taken."""
     groups: dict[tuple[str, tuple[str, ...], str], list[InboxBrief]] = collections.defaultdict(list)
     for brief in briefs:

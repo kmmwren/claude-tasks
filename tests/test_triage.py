@@ -1,4 +1,5 @@
 """Tests for triage.py: the dry-run and apply passes over a whole inbox."""
+
 import json
 
 import pytest
@@ -10,9 +11,17 @@ from tests.queue_helpers import inbox_text, make_inbox
 READY = dict(goal="Ship it.", criteria=("It ships.",))
 LIVE = {"o/r#1", "o/r#2"}.__contains__
 GATE = triage.Gate(LIVE)
-PEERS = {f"peer-a-{h}": inbox_text(f"peer-a-{h}", title=f"Peer a ({h})", tags="[peer]") for h in ("0a0a0a0a", "1b1b1b1b")}
-QUEUE = {**PEERS, "filed": inbox_text("filed", context="Per o/r#2.", **READY),
-         "thin": inbox_text("thin", title="Fix o/r#1"), "bare": inbox_text("bare"), "raw": "a note\n"}
+PEERS = {
+    f"peer-a-{h}": inbox_text(f"peer-a-{h}", title=f"Peer a ({h})", tags="[peer]")
+    for h in ("0a0a0a0a", "1b1b1b1b")
+}
+QUEUE = {
+    **PEERS,
+    "filed": inbox_text("filed", context="Per o/r#2.", **READY),
+    "thin": inbox_text("thin", title="Fix o/r#1"),
+    "bare": inbox_text("bare"),
+    "raw": "a note\n",
+}
 
 
 def _fill(briefs):
@@ -22,12 +31,16 @@ def _fill(briefs):
 @pytest.fixture
 def synced(monkeypatch):
     calls = []
-    monkeypatch.setattr(triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True)
+    monkeypatch.setattr(
+        triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True
+    )
     return calls
 
 
 def _opts(root, apply, predict=_fill):
-    return triage.Options(root, apply, GATE, predict, batch_size=5, jobs=1, limit=None, today="2026-11-11")
+    return triage.Options(
+        root, apply, GATE, predict, batch_size=5, jobs=1, limit=None, today="2026-11-11"
+    )
 
 
 def test_dry_run_counts_without_writing(tmp_path, synced):
@@ -49,6 +62,7 @@ def test_apply_collapses_promotes_and_commits_once(tmp_path, synced):
 def test_a_promotion_refused_by_the_move_counts_as_changed_underfoot(tmp_path, synced, monkeypatch):
     def refuse(*_):
         raise ValueError("moved elsewhere")
+
     monkeypatch.setattr(triage, "promote", refuse)
     report = triage.run(_opts(make_inbox(tmp_path, {"filed": QUEUE["filed"]}), apply=True))
     assert report.changed_underfoot == 1 and not report.synced

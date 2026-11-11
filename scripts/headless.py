@@ -7,6 +7,7 @@ prompt can ask for anything and nothing can act on it. A failed or malformed cal
 
 Stdlib only.
 """
+
 import json
 import os
 import pathlib
@@ -26,9 +27,23 @@ def headless_claude() -> list[str]:
 
 def command(model: str, schema: dict[str, Any]) -> list[str]:
     """Headless claude with no tools, no MCP servers, no settings and no saved session."""
-    return [*headless_claude(), "--model", model, "--tools", "", "--setting-sources", "",
-            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence",
-            "--output-format", "json", "--json-schema", json.dumps(schema)]
+    return [
+        *headless_claude(),
+        "--model",
+        model,
+        "--tools",
+        "",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--no-session-persistence",
+        "--output-format",
+        "json",
+        "--json-schema",
+        json.dumps(schema),
+    ]
 
 
 def local_run(reason: str) -> dict[str, str]:
@@ -36,12 +51,22 @@ def local_run(reason: str) -> dict[str, str]:
     return dict(os.environ, CLAUDE_ANY_STDIN="1", CLAUDE_LOCAL_OK=f"read-only-research:{reason}")
 
 
-def ask_json(prompt: str, schema: dict[str, Any], model: str, reason: str, timeout: int = 600) -> Any:
+def ask_json(
+    prompt: str, schema: dict[str, Any], model: str, reason: str, timeout: int = 600
+) -> Any:
     """The structured output of one call, or None when the call fails or answers off-schema."""
     try:
         with tempfile.TemporaryDirectory() as scratch:
-            out = subprocess.run(command(model, schema), input=prompt, capture_output=True, text=True,
-                                 timeout=timeout, check=True, env=local_run(reason), cwd=scratch).stdout
+            out = subprocess.run(
+                command(model, schema),
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True,
+                env=local_run(reason),
+                cwd=scratch,
+            ).stdout
         return json.loads(out).get("structured_output")
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as e:
         print(f"inbox-triage: headless call failed: {str(e)[:300]}", file=sys.stderr)

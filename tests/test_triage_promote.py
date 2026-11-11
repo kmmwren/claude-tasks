@@ -1,4 +1,5 @@
 """Tests for triage_promote.py: the gate from inbox/ to ready/ and the write that crosses it."""
+
 from triage_brief import InboxBrief, load_inbox
 from triage_enrich import Fill
 from triage_promote import Gate, promote
@@ -28,14 +29,20 @@ def test_a_context_without_a_source_gains_the_brief_s_live_sources(tmp_path):
 
 
 def test_cited_context_is_unchanged_when_nothing_live_to_add(tmp_path):
-    for b in (_brief(tmp_path, context="Per o/r#2."), _brief(tmp_path, title="Fix o/r#1"),
-              _brief(tmp_path, title="Fix ABC-1", context="Because.")):
+    for b in (
+        _brief(tmp_path, context="Per o/r#2."),
+        _brief(tmp_path, title="Fix o/r#1"),
+        _brief(tmp_path, title="Fix ABC-1", context="Because."),
+    ):
         assert GATE.with_cited_context(b) is b
 
 
 def test_the_execution_log_s_tool_name_is_not_a_source(tmp_path):
     b = _brief(tmp_path, context="Because.", **READY)
-    assert GATE.as_filed(InboxBrief(b.path, b.text + "\n## Execution log\n\nfiled by add_task.py\n")) is None
+    assert (
+        GATE.as_filed(InboxBrief(b.path, b.text + "\n## Execution log\n\nfiled by add_task.py\n"))
+        is None
+    )
 
 
 def test_a_grounded_fill_promotes_and_a_fabricated_one_does_not(tmp_path):
@@ -56,14 +63,19 @@ def test_enrich_all_batches_and_keeps_passing_fills(tmp_path):
 
     def predict(batch):
         calls.append(len(batch))
-        return {b.id: Fill("Ship.", ("Done.",), f"Start at o/r#{1 if b.id == 'a' else 9}.") for b in batch}
+        return {
+            b.id: Fill("Ship.", ("Done.",), f"Start at o/r#{1 if b.id == 'a' else 9}.")
+            for b in batch
+        }
 
     assert [p.original.id for p in GATE.enrich_all(briefs, predict, size=2, jobs=2)] == ["a"]
     assert sorted(calls) == [1, 2]
 
 
 def test_promote_writes_the_candidate_and_moves_it_to_ready(tmp_path):
-    root = make_inbox(tmp_path, {"b": inbox_text("b", title="Fix o/r#1", context="Because.", **READY)})
+    root = make_inbox(
+        tmp_path, {"b": inbox_text("b", title="Fix o/r#1", context="Because.", **READY)}
+    )
     [b] = load_inbox(root)
     assert promote(GATE.as_filed(b), root, "2026-11-11")
     text = (root / "ready" / "b.md").read_text()

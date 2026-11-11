@@ -24,6 +24,7 @@ This module fixes both with stdlib only:
   * reserve_name() — claim a unique filename with O_CREAT|O_EXCL, so two simultaneous
                      captures of the same title can't overwrite one another.
 """
+
 import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
 
 # isort: split
@@ -85,7 +86,9 @@ def require_lock(root: pathlib.Path, timeout: float = 30.0) -> Iterator[None]:
     """repo_lock for a read-modify-write that must not run unlocked: a timeout raises instead."""
     with repo_lock(root, timeout) as acquired:
         if not acquired:
-            raise TimeoutError(f"queue lock at {root} not acquired within {timeout}s; nothing written")
+            raise TimeoutError(
+                f"queue lock at {root} not acquired within {timeout}s; nothing written"
+            )
         yield
 
 

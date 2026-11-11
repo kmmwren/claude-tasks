@@ -7,6 +7,7 @@ before anything touches disk.
 
 Stdlib only.
 """
+
 import dataclasses
 import functools
 import pathlib
@@ -63,14 +64,21 @@ class InboxBrief:
 
     def with_field(self, key: str, value: str) -> "InboxBrief":
         """This brief with frontmatter `key: value` set."""
-        text = _FRONTMATTER.sub(lambda m: m.group(1) + set_field(m.group(2), key, value) + m.group(3),
-                                self.text, count=1)
+        text = _FRONTMATTER.sub(
+            lambda m: m.group(1) + set_field(m.group(2), key, value) + m.group(3),
+            self.text,
+            count=1,
+        )
         return dataclasses.replace(self, text=text)
 
     def with_section(self, name: str, body: str) -> "InboxBrief":
         """This brief with the `## name` section's body replaced, marked as generated."""
-        pattern = re.compile(rf"(^##[ \t]+{re.escape(name)}[ \t]*\n).*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
-        text, found = pattern.subn(lambda m: f"{m.group(1)}\n{body.strip()}\n\n", self.text, count=1)
+        pattern = re.compile(
+            rf"(^##[ \t]+{re.escape(name)}[ \t]*\n).*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE
+        )
+        text, found = pattern.subn(
+            lambda m: f"{m.group(1)}\n{body.strip()}\n\n", self.text, count=1
+        )
         text = text if found else self.text.rstrip("\n") + f"\n\n## {name}\n\n{body.strip()}\n"
         return dataclasses.replace(self, text=text).with_field("generated-by", GENERATED_BY)
 
