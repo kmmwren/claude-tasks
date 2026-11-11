@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-git_sync.py — commit + push the queue under the cross-process lock.
+git_sync.py — commit the queue under the cross-process lock, then push it coalesced.
 
 Shared commit helper for every writer that touches the queue working tree (add_task.py
 for new briefs, transition.py for status changes). Routing all commits through here means
 concurrent writers take turns on the git index via the same mutex, instead of colliding
 on .git/index.lock and silently dropping commits. Each writer commits only the briefs it names.
 
+The commit is synchronous; the push is not. A writer marks the clone dirty and returns. At
+most one detached pusher runs per clone: it waits for in-flight writers to land, pushes once,
+and pushes again only if a write marked the clone dirty meanwhile. A burst of writes from
+concurrent sessions therefore costs one or two `git push` processes, not one per write.
+
 Usage (run from anywhere):
   python scripts/git_sync.py "brief(my-id): completed" my-id
   python scripts/git_sync.py --sweep [queue-root]   # commit+push everything dirty (timer job)
+  python scripts/git_sync.py --push-pending ROOT --lock-fd N   # the detached pusher (internal)
 
 `--sweep` is the same helper over the whole tree: it catches files a session edited by hand,
 which no scripted writer could name. A queue root that is not the top of its own git repo
@@ -17,18 +23,20 @@ which no scripted writer could name. A queue root that is not the top of its own
 
 Exit codes: 0 — committed+pushed or safely deferred; 1 — bad usage.
 """
+import os
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Sequence
 from typing import Any
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import repo_lock  # noqa: E402
+from _concurrency import file_lock, lock_path, repo_lock, try_lock  # noqa: E402
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
 
 
@@ -165,17 +173,117 @@ def _integrate_remote(root: pathlib.Path) -> bool:
     return True
 
 
-def sync_commit(message: str, root: pathlib.Path | None = None,
-                ids: Sequence[str] = (), paths: Sequence[str] = ()) -> bool:
-    """Commit and push only what the caller names, under the cross-process lock.
+# Per-clone state of the coalesced pusher, all beside the sync lock inside .git.
+PUSH_LOCK = ".tasks-push.lock"  # held by the one running pusher
+WRITERS_LOCK = ".tasks-writers.lock"  # shared by every writer between commit start and dirty mark
+DIRTY = ".tasks-push.dirty"  # a commit landed that no push has started from yet
+PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
+SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
+PUSH_WAIT = 120.0  # longest a `wait=True` caller waits for a running pusher
 
-    `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
-    explicit pathspecs (`.` when the caller owns the whole tree). Anything else dirty in the
-    checkout stays unstaged. Returns False if deferred; a deferred caller re-runs with the same args.
-    """
-    root = resolve_root() if root is None else root
-    if not owns_repo(root):
-        return False  # a project queue lives inside another repo, which ships it
+
+def _mark_dirty(root: pathlib.Path) -> None:
+    lock_path(root, DIRTY).touch()
+
+
+def _is_dirty(root: pathlib.Path) -> bool:
+    return lock_path(root, DIRTY).exists()
+
+
+def _take_dirty(root: pathlib.Path) -> bool:
+    """Clear the dirty mark; True if it was set. Cleared before pushing, so a later mark means a later commit."""
+    try:
+        lock_path(root, DIRTY).unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _push(root: pathlib.Path) -> bool:
+    """Push main; on rejection rebase onto origin under the queue lock and push again."""
+    if _git(root, "push", "-q", "origin", "main").returncode == 0:
+        return True
+    with repo_lock(root) as acquired:
+        if not acquired:
+            print("  (push deferred: lock held; the next write or sweep pushes these commits.)")
+            return False
+        return _integrate_remote(root)
+
+
+def _drain(root: pathlib.Path) -> bool:
+    """Push until no commit is waiting; the caller holds the push lock. Returns the last push's result."""
+    pushed = True
+    while True:
+        # Let writers already committing land first, so one push carries the whole burst.
+        with file_lock(lock_path(root, WRITERS_LOCK), timeout=SETTLE_MAX, poll=0.05):
+            pass
+        if not _take_dirty(root):
+            return pushed
+        pushed = _push(root)
+
+
+def _release(fd: int) -> None:
+    os.close(fd)  # closing the last fd on the lock's open file releases the flock
+
+
+def _run_pusher(root: pathlib.Path, fd: int | None) -> None:
+    """Drain while holding the push lock `fd`; re-take it if a write slipped in as it was released."""
+    while fd is not None:
+        try:
+            _drain(root)
+        finally:
+            _release(fd)
+        fd = try_lock(lock_path(root, PUSH_LOCK)) if _is_dirty(root) else None
+
+
+def _spawn_pusher(root: pathlib.Path, fd: int) -> None:
+    """Hand the held push lock to a detached pusher process, so the caller returns at once."""
+    with open(lock_path(root, PUSH_LOG), "w") as log:
+        subprocess.Popen(
+            [sys.executable, str(SCRIPTS_DIR / "git_sync.py"), "--push-pending", str(root),
+             "--lock-fd", str(fd)],
+            pass_fds=(fd,), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _release(fd)
+
+
+def request_push(root: pathlib.Path) -> bool:
+    """Start a detached pusher unless one is running; a running one picks up the dirty mark."""
+    fd = try_lock(lock_path(root, PUSH_LOCK))
+    if fd is not None:
+        _spawn_pusher(root, fd)
+    return True
+
+
+def push_now(root: pathlib.Path) -> bool:
+    """Push synchronously, after any running pusher, for callers that need origin current."""
+    with file_lock(lock_path(root, PUSH_LOCK), timeout=PUSH_WAIT) as acquired:
+        if not acquired:
+            print("  (push deferred: another pusher still running; it will push these commits.)")
+            return False
+        _mark_dirty(root)
+        pushed = _drain(root)
+    if _is_dirty(root):  # a write that found the lock held just before it was released
+        request_push(root)
+    return pushed
+
+
+def wait_for_push(root: pathlib.Path, timeout: float = 60.0, poll: float = 0.05) -> bool:
+    """Block until no pusher runs and no commit awaits a push; False if `timeout` passed first."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        fd = None if _is_dirty(root) else try_lock(lock_path(root, PUSH_LOCK))
+        if fd is not None:
+            _release(fd)
+            if not _is_dirty(root):
+                return True
+        time.sleep(poll)
+    return False
+
+
+def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]) -> bool:
+    """Stage what the caller names and commit it under the queue lock; False if the lock timed out."""
     with repo_lock(root) as acquired:
         if not acquired:
             print("  (sync deferred: lock held; your files are safe on disk. "
@@ -197,9 +305,28 @@ def sync_commit(message: str, root: pathlib.Path | None = None,
             _git(root, "add", "--all", "--", *paths, *refused)
         # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
         _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
-        if _git(root, "push", "-q", "origin", "main").returncode != 0:
-            return _integrate_remote(root)
     return True
+
+
+def sync_commit(message: str, root: pathlib.Path | None = None,
+                ids: Sequence[str] = (), paths: Sequence[str] = (), wait: bool = False) -> bool:
+    """Commit only what the caller names under the cross-process lock, then push coalesced.
+
+    `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
+    explicit pathspecs (`.` when the caller owns the whole tree). Anything else dirty in the
+    checkout stays unstaged. The push runs detached and True means committed; `wait=True`
+    pushes before returning and reports the push. Returns False if deferred; a deferred caller
+    re-runs with the same args.
+    """
+    root = resolve_root() if root is None else root
+    if not owns_repo(root):
+        return False  # a project queue lives inside another repo, which ships it
+    # Shared while committing, so a pusher waiting for exclusive access waits for the whole burst.
+    with file_lock(lock_path(root, WRITERS_LOCK), shared=True):
+        if not _commit(message, root, ids, paths):
+            return False
+        _mark_dirty(root)
+    return push_now(root) if wait else request_push(root)
 
 
 def sweep(root: pathlib.Path | None = None) -> bool:
@@ -211,6 +338,9 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "--sweep":
         sweep(pathlib.Path(argv[1]).expanduser() if len(argv) > 1 else None)
+        return
+    if argv[:1] == ["--push-pending"] and argv[2:3] == ["--lock-fd"]:
+        _run_pusher(pathlib.Path(argv[1]), int(argv[3]))
         return
     # A flag in the message slot would otherwise be committed and pushed as the message.
     if not argv or argv[0].startswith("-"):

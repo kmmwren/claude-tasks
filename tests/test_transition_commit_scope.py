@@ -1,6 +1,7 @@
 """transition.py move commits the moved brief's own paths and nothing else in the queue."""
 import subprocess
 
+import git_sync
 import transition
 
 ID = "rotate-the-api-key"
@@ -33,6 +34,7 @@ def test_move_commits_only_the_moved_briefs_paths(tmp_path):
     (main / "ready" / "other.md").write_text("---\nid: other\nstatus: ready\n---\nhalf-written note\n")
     (main / "inbox" / "peer-unrelated-1234abcd.md").write_text("---\nid: peer-unrelated-1234abcd\n---\n")
     transition.main(["move", ID, "in-progress", "--root", str(main)])
+    assert git_sync.wait_for_push(main)
     changed = git(origin, "show", "--no-renames", "--name-status", "--format=", "main").split("\n")
     assert sorted(filter(None, changed)) == [f"A\tin-progress/{ID}.md", f"D\tready/{ID}.md"]
     status = git(main, "status", "--porcelain", "--untracked-files=all")

@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import _concurrency as C
+import git_sync
 import pytest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
@@ -77,6 +78,7 @@ def test_concurrent_adds_all_land_committed_and_pushed(queue):
     assert all(r.returncode == 0 for r in results), [r.stderr for r in results]
     # Every brief committed locally AND present on the remote — none silently dropped.
     assert len(briefs_on(queue, "HEAD")) == n
+    assert git_sync.wait_for_push(queue)
     git(queue, "fetch", "-q", "origin")
     assert len(briefs_on(queue, "origin/main")) == n
     # The repo is not wedged: no orphaned index.lock left behind.

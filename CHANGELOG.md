@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- **Queue writes no longer fork a `git push` each.** `git_sync.sync_commit` still commits
+  synchronously, then marks the clone dirty and returns; one detached pusher per clone (a flock on
+  `.git/.tasks-push.lock`) waits for in-flight writers, pushes once, and pushes again only if a write
+  landed meanwhile. Twenty concurrent writes cost at most two pushes. Its output, including any
+  divergence report, goes to `.git/.tasks-push.log`. `sync_commit(..., wait=True)` pushes before
+  returning, which `append_log.py` uses because it reads the brief back from `origin/main`.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
   outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
   parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.

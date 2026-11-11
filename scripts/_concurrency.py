@@ -35,46 +35,67 @@ from collections.abc import Iterable, Iterator
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
-def lock_path(root: pathlib.Path) -> pathlib.Path:
-    """Where the sync lock lives. Inside .git so it is per-clone and never committed.
+def lock_path(root: pathlib.Path, name: str = ".tasks-sync.lock") -> pathlib.Path:
+    """Where the sync lock (or another per-clone state file `name`) lives.
 
-    Falls back to the repo root for worktrees (where .git is a file, not a dir) and
-    for non-git callers (tests), so the lock always has a real directory to live in.
+    Inside .git so it is per-clone and never committed. Falls back to the repo root for
+    worktrees (where .git is a file, not a dir) and for non-git callers (tests).
     """
     git = root / ".git"
-    return (git if git.is_dir() else root) / ".tasks-sync.lock"
+    return (git if git.is_dir() else root) / name
+
+
+def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
+    """Take flock `op` on `fd`, polling until `timeout` seconds pass; True once held."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, op | fcntl.LOCK_NB)
+            return True
+        except OSError as e:
+            if e.errno not in (errno.EAGAIN, errno.EACCES):
+                raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll)
 
 
 @contextlib.contextmanager
-def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> Iterator[bool]:
-    """Serialize git index operations across processes.
-
-    Blocks (polling, non-blocking flock) until the lock is free or `timeout` seconds
-    pass. Yields True if the lock was acquired, False on timeout — callers treat a
-    timeout as "the brief is safe on disk; sync was deferred" rather than an error,
-    because the file write already succeeded before the lock was ever requested.
-    """
-    path = lock_path(root)
+def file_lock(path: pathlib.Path, shared: bool = False, timeout: float = 30.0,
+              poll: float = 0.1) -> Iterator[bool]:
+    """Hold an exclusive (or shared) flock on `path`; yields False if `timeout` passed first."""
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
-    deadline = time.monotonic() + timeout
     acquired = False
     try:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except OSError as e:
-                if e.errno not in (errno.EAGAIN, errno.EACCES):
-                    raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(poll)
+        acquired = _flock_within(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX, timeout, poll)
         yield acquired
     finally:
         if acquired:
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+def try_lock(path: pathlib.Path) -> int | None:
+    """Take an exclusive flock on `path` without waiting; the open fd holds it, None if busy.
+
+    The fd can be handed to a child process (`pass_fds`), which then owns the lock.
+    """
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    if _flock_within(fd, fcntl.LOCK_EX, 0.0, 0.0):
+        return fd
+    os.close(fd)
+    return None
+
+
+def repo_lock(root: pathlib.Path, timeout: float = 30.0,
+              poll: float = 0.1) -> contextlib.AbstractContextManager[bool]:
+    """Serialize git index operations across processes.
+
+    Yields True if the lock was acquired, False on timeout. Callers treat a timeout as
+    "the brief is safe on disk; sync was deferred" rather than an error, because the
+    file write already succeeded before the lock was ever requested.
+    """
+    return file_lock(lock_path(root), timeout=timeout, poll=poll)
 
 
 def atomic_write(path: pathlib.Path, text: str) -> None:

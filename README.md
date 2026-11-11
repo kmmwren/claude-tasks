@@ -169,7 +169,8 @@ assignee:              # empty = unclaimed
    ```
    python3 scripts/transition.py move <id> in-progress --assignee alice --log "started"
    ```
-3. That pushes **the claim alone**, immediately, before any of the actual work.
+3. That commits **the claim alone** and pushes it in the background straight away, before
+   any of the actual work.
 
 The point of step 3 is that your claim becomes visible to everyone else in seconds rather
 than whenever your first real commit happens to land. Later transitions leave the claim
@@ -194,7 +195,8 @@ serialise concurrent moves on a file lock, so two local processes cannot both mo
 brief, and the claim check happens under that same lock so two local sessions cannot both
 claim it. What it cannot do is coordinate *across* clones: pulling first narrows the race
 window, it does not close it, and two people who claim on separate machines within the same
-few seconds will still collide (git tells you on push, and you sort it out between you).
+few seconds will still collide (the background push reports it in `.git/.tasks-push.log`, and
+you sort it out between you).
 Treat it as a coordination signal, not a mutex. Briefs without the field are simply
 unclaimed; the board shows a claimed brief with an assignee chip and matches it in search.
 

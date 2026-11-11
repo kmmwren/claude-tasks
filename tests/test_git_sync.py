@@ -5,10 +5,15 @@ sync_commit stages only the briefs the caller names by id (moves and deletions i
 the pathspecs it passes explicitly; any other dirty file stays unstaged.
 """
 import contextlib
+import os
 import pathlib
 import shutil
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
+import _concurrency as C
 import git_sync
 import pytest
 
@@ -83,6 +88,7 @@ def test_sync_commit_stages_explicit_paths(tmp_path):
 
     assert "docs/note.md" in committed_files(repo)
     assert "other.txt" not in committed_files(repo)
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "docs/note.md" in committed_files(repo, "origin/main")
 
@@ -141,7 +147,7 @@ def test_sync_conflict_is_reported_and_local_commits_are_kept(tmp_path, capsys):
     (repo / "ready" / "shared.md").write_text("local edit")
     (repo / "inbox" / "unrelated.md").write_text("dirty")
 
-    assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is False
+    assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"], wait=True) is False
 
     out = capsys.readouterr().out
     assert "rebase conflict in ready/shared.md" in out
@@ -161,8 +167,9 @@ def test_sync_recovers_after_remote_moved_keeping_unrelated_edits(tmp_path):
     (repo / "ready" / "theirs.md").write_text("an uncommitted note")
     (repo / "inbox" / "mine.md").write_text("y")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert {"inbox/mine.md", "inbox/from-other.md"} <= committed_files(repo, "origin/main")
     assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
@@ -178,10 +185,11 @@ def test_sync_pushed_but_checkout_not_advanced_when_an_edit_overlaps(tmp_path, c
     (repo / "ready" / "theirs.md").write_text("an uncommitted note")
     (repo / "inbox" / "mine.md").write_text("y")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
 
     assert "checkout was not advanced" in capsys.readouterr().out
     assert (repo / "ready" / "theirs.md").read_text() == "an uncommitted note"
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "inbox/mine.md" in committed_files(repo, "origin/main")
 
@@ -200,7 +208,7 @@ def test_sync_reports_when_origin_moves_again_during_the_rebase(tmp_path, monkey
 
     monkeypatch.setattr(git_sync, "_git", losing_push)
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is False
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is False
     assert "origin moved again while rebasing" in capsys.readouterr().out
 
 
@@ -347,6 +355,7 @@ def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
     (repo / "inbox" / "moved.md").write_text("\nlate note\n")
 
     git_sync.sync_commit("test: stale capture", root=repo)
+    assert git_sync.wait_for_push(repo)
 
     assert "inbox/moved.md" not in committed_files(repo)
     assert "inbox/moved.md" not in committed_files(repo, "origin/main")
@@ -360,6 +369,7 @@ def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
     (repo / "inbox" / "closed.md").write_text("\nlate note\n")
 
     git_sync.sync_commit("test: named capture", root=repo, ids=["closed"])
+    assert git_sync.wait_for_push(repo)
 
     assert "inbox/closed.md" not in committed_files(repo)
     assert "inbox/closed.md" not in committed_files(repo, "origin/main")
@@ -392,6 +402,7 @@ def test_sweep_commits_and_pushes_every_uncommitted_change(tmp_path):
     assert git_sync.sweep(repo) is True
 
     assert git(repo, "status", "--porcelain").stdout == ""
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
     assert "inbox/new.md" in committed_files(repo, "origin/main")
@@ -404,6 +415,7 @@ def test_sweep_keeps_a_credential_bearing_file_local(tmp_path, capsys):
 
     git_sync.sweep(repo)
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "inbox/fine.md" in committed_files(repo, "origin/main")
     assert "inbox/leaky.md" not in committed_files(repo, "origin/main")
@@ -421,6 +433,7 @@ def test_sweep_unstages_a_credential_bearing_file_someone_already_staged(tmp_pat
 
     git_sync.sweep(repo)
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "inbox/fine.md" in committed_files(repo, "origin/main")
     assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
@@ -435,6 +448,7 @@ def test_a_named_sync_never_commits_a_staged_credential(tmp_path):
 
     git_sync.sync_commit("brief(named): x", repo, ids=["named"])
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "inbox/staged-leaky.md" not in committed_files(repo, "origin/main")
 
@@ -446,6 +460,7 @@ def test_sweep_commits_a_deleted_brief_without_scanning_it(tmp_path):
 
     assert git_sync.sweep(repo) is True
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "ready/gone.md" not in committed_files(repo, "origin/main")
 
@@ -466,5 +481,180 @@ def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
 
     git_sync.main(["--sweep", str(repo)])
 
+    assert git_sync.wait_for_push(repo)
     git(repo, "fetch", "-q", "origin")
     assert "inbox/cli.md" in committed_files(repo, "origin/main")
+
+
+# ── coalesced push: one pusher per clone, writes during a push still land ────
+
+def _fake_git_on_path(tmp_path, monkeypatch):
+    """A `git` shim on PATH that logs each `push` (and stalls it while SLOW exists) before running git."""
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    log, slow, started = shim_dir / "pushes.log", shim_dir / "SLOW", shim_dir / "STARTED"
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'sub="$1"; [ "$1" = "-C" ] && sub="$3"\n'
+        f'if [ "$sub" = push ]; then echo push >> "{log}"; '
+        f'if [ -f "{slow}" ]; then touch "{started}"; sleep 1; fi; fi\n'
+        f'exec "{shutil.which("git")}" "$@"\n'
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
+    return log, slow, started
+
+
+def _push_count(log):
+    return len(log.read_text().splitlines()) if log.exists() else 0
+
+
+def _remote_head(repo):
+    return git(tmp_remote(repo), "rev-parse", "main").stdout
+
+
+def tmp_remote(repo):
+    return repo.parent / "remote"
+
+
+def test_twenty_concurrent_writes_commit_twenty_times_and_push_at_most_twice(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+    base = int(git(repo, "rev-list", "--count", "HEAD").stdout)
+    ids = [f"burst-{i}" for i in range(20)]
+    for brief_id in ids:
+        (repo / "inbox" / f"{brief_id}.md").write_text(brief_id)
+    start = threading.Barrier(len(ids))
+
+    def write(brief_id):
+        start.wait()
+        return git_sync.sync_commit(f"brief({brief_id}): captured", root=repo, ids=[brief_id])
+
+    with ThreadPoolExecutor(max_workers=len(ids)) as ex:
+        assert all(ex.map(write, ids))
+    assert git_sync.wait_for_push(repo)
+
+    assert int(git(repo, "rev-list", "--count", "HEAD").stdout) == base + 20
+    assert _push_count(log) <= 2
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+
+
+def test_a_write_during_an_in_flight_push_is_still_pushed(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
+    slow.touch()
+    (repo / "inbox" / "first.md").write_text("1")
+    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    deadline = time.monotonic() + 10
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert started.exists()
+    slow.unlink()
+    (repo / "inbox" / "second.md").write_text("2")
+
+    assert git_sync.sync_commit("brief(second): captured", root=repo, ids=["second"]) is True
+    assert git_sync.wait_for_push(repo)
+
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+    assert "inbox/second.md" in committed_files(repo, _remote_head(repo).strip())
+    assert _push_count(log) == 2
+
+
+def test_a_running_pusher_means_a_write_spawns_no_process(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    monkeypatch.setattr(git_sync, "_spawn_pusher", lambda *a: pytest.fail("spawned a second pusher"))
+    (repo / "inbox" / "mine.md").write_text("x")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+
+    assert git_sync._is_dirty(repo)
+    assert git_sync.wait_for_push(repo, timeout=0.2) is False
+    os.close(held)
+
+
+def test_pusher_retakes_the_lock_for_a_write_that_landed_as_it_released(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    drains = []
+
+    def drain(root):
+        drains.append(root)
+        if len(drains) == 1:
+            git_sync._mark_dirty(root)  # lands after the drain loop's last check
+        else:
+            git_sync._take_dirty(root)
+        return True
+
+    monkeypatch.setattr(git_sync, "_drain", drain)
+    git_sync.main(["--push-pending", str(repo), "--lock-fd",
+                   str(C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK)))])
+
+    assert drains == [repo, repo]
+    assert git_sync.wait_for_push(repo, timeout=1)
+
+
+def test_pusher_leaves_a_late_write_to_the_pusher_that_took_the_lock(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    rival = []
+
+    def drain(root):
+        git_sync._mark_dirty(root)
+        return True
+
+    def release(fd):
+        os.close(fd)
+        rival.append(C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK)))
+
+    monkeypatch.setattr(git_sync, "_drain", drain)
+    monkeypatch.setattr(git_sync, "_release", release)
+    git_sync._run_pusher(repo, C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK)))
+
+    assert rival[0] is not None and git_sync._is_dirty(repo)
+    os.close(rival[0])
+
+
+def test_push_now_hands_a_write_that_raced_its_release_to_a_new_pusher(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    spawned = []
+    monkeypatch.setattr(git_sync, "_drain", lambda root: git_sync._mark_dirty(root) or True)
+    monkeypatch.setattr(git_sync, "_spawn_pusher", lambda root, fd: spawned.append(os.close(fd)))
+
+    assert git_sync.push_now(repo) is True
+    assert len(spawned) == 1
+
+
+def test_push_now_defers_when_a_pusher_never_finishes(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    monkeypatch.setattr(git_sync, "PUSH_WAIT", 0.1)
+
+    assert git_sync.push_now(repo) is False
+    assert "another pusher still running" in capsys.readouterr().out
+    os.close(held)
+
+
+def test_a_rejected_push_defers_when_the_queue_lock_is_held(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    _push_from_other(_clone_other(tmp_path), "inbox/from-other.md", "x")
+    (repo / "inbox" / "mine.md").write_text("y")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "local only")
+    monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
+
+    assert git_sync._push(repo) is False
+    assert "next write or sweep pushes" in capsys.readouterr().out
+
+
+def test_detached_pusher_output_goes_to_the_push_log(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "shared")
+    git(repo, "push", "-q", "origin", "main")
+    _push_from_other(_clone_other(tmp_path), "ready/shared.md", "remote edit")
+    (repo / "ready" / "shared.md").write_text("local edit")
+
+    assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is True
+    assert git_sync.wait_for_push(repo)
+
+    assert "rebase conflict in ready/shared.md" in C.lock_path(repo, git_sync.PUSH_LOCK).with_name(
+        git_sync.PUSH_LOG).read_text()
