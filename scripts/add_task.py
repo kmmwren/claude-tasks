@@ -25,6 +25,15 @@ from _concurrency import atomic_write, reserve_name
 from _log_merge import LOG_HEADING
 from _paths import TASK_DIRS, require_queue, resolve_root
 from git_sync import sync_commit as _sync_commit
+from readiness import (
+    PLACEHOLDER_CONTEXT,
+    missing_ready_fields,
+    placeholder_criterion,
+    placeholder_goal,
+)
+
+# The CLI flag that supplies each field a ready brief needs.
+FLAGS = {"goal": "--goal", "criteria": "--criteria/--success", "context": "--context"}
 
 
 def slug(s: str, maxwords: int = 6) -> str:
@@ -35,7 +44,7 @@ def slug(s: str, maxwords: int = 6) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Add a brief to the tasks queue")
-    ap.add_argument("--title", required=True)
+    ap.add_argument("--title", required=True, type=str.strip)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
     ap.add_argument(
@@ -73,15 +82,7 @@ def main(argv: list[str] | None = None) -> None:
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     if status == "ready":
-        missing = [
-            flag
-            for flag, value in (
-                ("--goal", a.goal.strip()),
-                ("--criteria/--success", a.criteria),
-                ("--context", context),
-            )
-            if not value
-        ]
+        missing = [FLAGS[f] for f in missing_ready_fields(a.goal, a.criteria, context)]
         if missing:
             ap.error(
                 f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
     crit = (
-        "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {a.title} is done."
+        "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {placeholder_criterion(a.title)}"
     )
     fm = f"""---
 id: {nid}
@@ -118,11 +119,11 @@ related: []
 
 ## Goal
 
-{a.goal or a.title}
+{a.goal or placeholder_goal(a.title)}
 
 ## Context
 
-{context or "_none recorded_"}
+{context or PLACEHOLDER_CONTEXT}
 
 ## Success criteria
 

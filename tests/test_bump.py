@@ -15,6 +15,15 @@ def brief(root, importance=3):
     return path
 
 
+def test_pr_ref_bumps_the_pr_queue_brief_not_a_hand_brief_sorting_first(tmp_path):
+    own = brief(tmp_path)
+    own.write_text(own.read_text().replace("---\ntags:", "---\ntitle: PR repo#1: fix it\ntags:", 1))
+    hand = tmp_path / "ready" / "a-hand.md"
+    hand.write_text("---\ntitle: Make repo#1 tests green\ntags: [pr:repo#1]\nimportance: 3\n---\nbody\n")
+    bump.bump(tmp_path, "repo#1", 1, "urgent", NOW)
+    assert "importance: 1" in own.read_text() and "importance: 3" in hand.read_text()
+
+
 def test_ref_maps_to_pr_tag_and_literal_tag_is_kept():
     assert (bump.tag_for("repo#1"), bump.tag_for("fdo")) == ("pr:repo#1", "fdo")
 

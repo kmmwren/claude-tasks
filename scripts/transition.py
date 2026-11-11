@@ -48,12 +48,15 @@ from deps import (
     probe_gaps,
 )
 from git_sync import sync_commit
+from readiness import brief_missing_fields
 
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # Folders that hold briefs. inbox is left out: free-text resolve skips raw pre-briefs, but
-# find_brief still reaches them by exact id so they can be promoted.
+# find_brief still reaches them by exact id so they can be closed or, once enriched, promoted.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
+# Targets that mean "work on this", so an inbox file must be enriched before it moves there.
+ENRICHED_STATUSES = ("ready", "in-progress", "blocked")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
 # Default execution-log line per target state when the caller gives none.
@@ -74,6 +77,18 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
         if p.exists():
             return p
     return None
+
+
+def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
+    """Refuse to promote an inbox file that still lacks a goal, success criteria or context."""
+    if path.parent.name != "inbox" or new_status not in ENRICHED_STATUSES:
+        return
+    missing = brief_missing_fields(path.read_text())
+    if missing:
+        raise ValueError(
+            f"{brief_id!r} is still in inbox/ and cannot move to {new_status} without "
+            f"{', '.join(missing)}; enrich it first"
+        )
 
 
 def _tokens(query: str) -> list[str]:
@@ -286,6 +301,7 @@ def move_brief(brief_id: str, new_status: str, root: pathlib.Path,
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
+    _require_enriched(brief_id, new_status, path)
     today = today or datetime.date.today().isoformat()
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:

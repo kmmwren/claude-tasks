@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
+  context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
+  applies (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming
+  the missing fields. `done` and `parked` are unconditional, so a folded brief can still be closed.
 - **`git_sync.py` commits only what the caller names.** It no longer runs `git add --ignore-removal .`,
   which swept another writer's uncommitted edit into an unrelated brief's commit. `ids` stage that
   brief's file at any depth (moves included); `paths` stage explicit pathspecs (`fold_session.py`
@@ -20,11 +24,24 @@
   commit a new brief file whose id is already filed in another state dir (`done/` included), on
   disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
   moved brief cannot leave the id in two states.
+- **`append_log.py` finds a brief that is uncommitted in the main checkout.** A brief filed on disk
+  but never committed (a peer-message brief, say) was invisible to the temporary worktree and
+  failed with "no brief with id". It is now committed through `git_sync` first, staging only that
+  brief, so the log line lands and the checkout's next pull is not blocked by an untracked copy.
+- **`append_log.py` no longer gives up while other writers keep pushing.** Local callers take turns
+  on the queue lock, and a push that loses a race retries from fresh `origin/main` with jittered
+  backoff (8 attempts). A push refused for any other reason fails at once with git's message, and
+  every failure prints the line that was not logged.
 
 ### Added
 - **`append_log.py`** appends a dated execution-log line to a brief from a temporary worktree
   off `origin/main`, commits, pushes and removes the worktree, so a subagent refused writes in
   the queue's main checkout can still log: `python scripts/append_log.py <id> "<line>"`.
+- **Slack handoffs can go to `parked/`.** `slack_links.py` flags each link `parked` when the
+  batch direction or that link's own note says park; `handoff` files flagged links with
+  `--status parked`, other directions still route through Directed handoff, and `queue-task`
+  sends pasted Slack links there. A Slack or artifact handoff captures only those links: the
+  session keeps its open work and carries on.
 - **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
   note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
   before the first link as a shared direction.

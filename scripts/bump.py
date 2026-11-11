@@ -27,12 +27,17 @@ def tag_for(ref: str) -> str:
 
 
 def find(root: pathlib.Path, tag: str) -> pathlib.Path | None:
-    for folder in FOLDERS:
-        for path in sorted((root / folder).glob("*.md")):
-            raw = fm(path.read_text()).get("tags", "").strip().strip("[]")
-            if tag in {t.strip() for t in raw.split(",")}:
-                return path
-    return None
+    tagged = [path for folder in FOLDERS for path in sorted((root / folder).glob("*.md")) if tag in tags(path)]
+    return next((p for p in tagged if owned_by_pr_queue(p, tag)), tagged[0] if tagged else None)
+
+
+def tags(path: pathlib.Path) -> set[str]:
+    return {t.strip() for t in fm(path.read_text()).get("tags", "").strip().strip("[]").split(",")}
+
+
+def owned_by_pr_queue(path: pathlib.Path, tag: str) -> bool:
+    """The PR-queue sync titles its own brief `PR <ref>: ...`; a session's brief on the same PR copies the tag, not the title."""
+    return tag.startswith("pr:") and fm(path.read_text()).get("title", "").strip('"').startswith(f"PR {tag[3:]}: ")
 
 
 def bump(root: pathlib.Path, ref: str, importance: int, reason: str, now: datetime.datetime | None = None) -> str:
