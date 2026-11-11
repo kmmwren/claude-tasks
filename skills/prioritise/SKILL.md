@@ -33,6 +33,29 @@ The script resolves the queue via `$CLAUDE_TASKS_DIR` → nearest `.tasks/` → 
 - **"What's blocked?"** → run it and read the `⛔blocked(<unmet deps>)` flags; offer to
   action the blocker first (a brief that unblocks others is ranked higher for exactly this).
 
+## Ranking against her priorities (rank.py)
+
+`prioritise.py` filters: blocked briefs drop out and due, importance, effort and unlocks become
+facts. `rank.py` then orders the top candidates against the queue's taste profile
+(`profile/priorities.md`) with one reason each. Use it when a person will read the list. Automations
+keep the `prioritise.py` order unless they opt in.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/seed_profile.py" --north-stars org/repo:path/north-stars.md  # once: draft the profile
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rank.py" --scope all --top 10        # or tag:<t>, project:<slug>, session:<id>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rank.py" --scope project:lite --json
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/log_pick.py" skip <id>               # pick and bump are logged automatically
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/learn.py"                            # propose profile weight changes from picks
+```
+
+- The seeded profile is a DRAFT: it says so in its frontmatter and in every ranked list's header
+  until the owner edits it and sets `draft: false`.
+- When the profile is missing or unreadable, or the judge fails, the list falls back to filter order
+  and the header says why.
+- Report `(low confidence)` items as uncertain: the two judge passes disagreed about them.
+- `learn.py` only proposes changes by default. Apply one with `--apply <id>` and undo it with
+  `--revert <version>`.
+
 ## Flags in the output
 
 - `⛔blocked(...)` — not actionable; the listed dependencies aren't `done` yet.

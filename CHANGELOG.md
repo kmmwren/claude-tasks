@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- **`rank.py`: rank a scope's candidates against a taste profile, with a reason each.** It filters
+  through `prioritise.py`, then makes two setwise `claude -p` passes (forward and reversed, tools off,
+  schema-validated). Bradley-Terry merges the passes, and their agreement sets each item's confidence.
+  Results are cached by brief and profile hash. Any failure falls back to filter order and says why.
+  `--json` gives machine-readable output.
+- **`seed_profile.py` drafts `profile/priorities.md`** from goal files, a north-stars document
+  (`gh api`) and recent decision titles, marked `draft: true` until the owner edits it.
+- **Pick log and learning loop.** Shown lists and picks, bumps and skips go to a local JSONL log
+  outside the queue repo. `transition.py` to `in-progress` and `bump.py` record a choice;
+  `log_pick.py` records the rest. `learn.py` proposes capped goal-weight changes, validated on
+  held-out picks, applied and reverted by profile version. Auto-apply is off by default.
+
 ### Fixed
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
   outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to

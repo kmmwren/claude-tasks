@@ -97,6 +97,11 @@ is run with it, it exits with a message telling you which interpreters to use in
 
 ### Priorities and dependencies
 
+`rank.py --scope all|tag:<t>|project:<slug>|session:<id> --top K` reorders the unblocked
+candidates against your own taste profile (`profile/priorities.md`, drafted by `seed_profile.py`)
+with a one-line reason each. It learns from what you pick, bump and skip (`learn.py` proposes the
+weight changes). See [the design notes](docs/design.md#the-predictor-head-ranking-against-a-taste-profile).
+
 `prioritise` (the `/tasks-next` command) ranks `ready/` briefs by due urgency, importance,
 quick-win effort, lead time, and — crucially — how many other briefs each one **unblocks**.
 Dependencies are declared with `blockers: [other-id]` or a `depends:<id>` tag, and a brief
