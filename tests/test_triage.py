@@ -5,6 +5,7 @@ import json
 
 import pytest
 import triage
+from class_log import Correction
 from triage_enrich import Fill
 
 from tests.queue_helpers import inbox_text, make_inbox
@@ -151,7 +152,7 @@ def test_the_classifier_is_shown_earlier_corrections(tmp_path, synced):
     root = make_inbox(tmp_path, {"bare": QUEUE["bare"]})
     log = _log(root)
     log.append(triage.Verdict("old", BC.DROP, "stale", "Old one", "t0"))
-    log.append(triage.Correction("old", "t0", BC.DROP, BC.READY, "ready", "t1"))
+    log.append(Correction("old", "t0", BC.DROP, BC.READY, "ready", "t1"))
     seen = []
 
     def classify(briefs, examples):
