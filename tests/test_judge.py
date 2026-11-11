@@ -97,7 +97,8 @@ def run_returning(stdout="", returncode=0, stderr="", raises=None):
 
 def test_backend_command_disables_tools_and_constrains_output():
     cmd = ClaudeBackend(model="sonnet").command()
-    assert (cmd[:4], cmd[-2:], "--strict-mcp-config" in cmd) == (["claude", "-p", "--tools", ""], ["--model", "sonnet"], True)
+    assert (cmd[:4], cmd[-3:-1], "--strict-mcp-config" in cmd) == (["claude", "-p", "--tools", ""], ["--model", "sonnet"], True)
+    assert cmd[-1] == judge.TASK
     assert json.loads(cmd[cmd.index("--json-schema") + 1]) == judge.SCHEMA
     assert cmd[cmd.index("--setting-sources") + 1] == "project"
     assert "--model" not in ClaudeBackend().command()
@@ -108,6 +109,17 @@ def test_backend_sends_the_prompt_on_stdin_and_returns_the_structured_output(tmp
     assert ClaudeBackend(cwd=tmp_path, run=run)("P") == '{"ranking": []}'
     kwargs = calls[0][1]
     assert (kwargs["input"], kwargs["cwd"], kwargs["timeout"], kwargs["check"]) == ("P", tmp_path, 240.0, False)
+    assert kwargs["env"] is None
+
+
+def test_the_wrapper_declares_a_laptop_class_and_forwards_stdin(monkeypatch):
+    monkeypatch.setenv("KEEP", "1")
+    run, calls = run_returning(json.dumps({"structured_output": {"ranking": []}}))
+    ClaudeBackend(run=run, launch=judge.WrapperLaunch("/w/claude-any.sh", "read-only-research:judge"))("P")
+    argv, kwargs = calls[0]
+    assert (argv[:2], argv[-1]) == (["/w/claude-any.sh", "--tools"], judge.TASK)
+    env = kwargs["env"]
+    assert (env["CLAUDE_LOCAL_OK"], env["CLAUDE_ANY_STDIN"], env["KEEP"]) == ("read-only-research:judge", "1", "1")
 
 
 @pytest.mark.parametrize("stdout, expected", [

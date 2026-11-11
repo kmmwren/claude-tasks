@@ -4,7 +4,7 @@ import json
 import pytest
 import rank
 import taste
-from judge import ClaudeBackend
+from judge import ClaudeBackend, DirectLaunch, WrapperLaunch
 from picks import PickLog
 from rank import AllScope, ProjectScope, Ranker, SessionScope, TagScope
 
@@ -192,6 +192,18 @@ def test_backend_runs_claude_from_a_neutral_dir_with_the_configured_model(tmp_pa
     root = queue(tmp_path)
     built = rank.backend(root, {**rank.DEFAULTS, "model": "haiku"})
     assert (type(built), built.model, built.cwd.is_dir(), built.cwd.name) == (ClaudeBackend, "haiku", True, "judge")
+
+
+def test_the_judge_goes_through_the_wrapper_when_it_is_installed(tmp_path):
+    script = tmp_path / "claude-any.sh"
+    script.write_text("#!/bin/sh\n")
+    launch = rank.launcher({**rank.DEFAULTS, "launcher": str(script)})
+    assert launch == WrapperLaunch(str(script), rank.DEFAULTS["local_ok"])
+
+
+@pytest.mark.parametrize("configured", ["", "/nowhere/claude-any.sh"])
+def test_the_judge_calls_claude_directly_without_the_wrapper(configured):
+    assert rank.launcher({**rank.DEFAULTS, "launcher": configured}) == DirectLaunch()
 
 
 def test_main_prints_the_ranked_text_and_json(tmp_path, monkeypatch, capsys):

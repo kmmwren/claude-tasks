@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import pathlib
 import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 PredictFn = Callable[[str], str]
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -33,6 +34,7 @@ SCHEMA: dict[str, Any] = {
     }}},
     "required": ["ranking"],
 }
+TASK = "Rank the items in the input against the profile, as instructed."
 PRIOR = 0.5
 ITERATIONS = 200
 _JSON_SPAN = re.compile(r"\{.*\}", re.DOTALL)
@@ -156,25 +158,59 @@ class SetwiseJudge:
         return Verdict(order, reasons, per_item, sum(per_item.values()) / len(ids), raw)
 
 
+class Launch(Protocol):
+    def argv(self, args: Sequence[str]) -> list[str]: ...
+    def env(self) -> dict[str, str] | None: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class DirectLaunch:
+    """Plain `claude -p`, for a machine without the claude-any.sh wrapper."""
+
+    def argv(self, args: Sequence[str]) -> list[str]:
+        return ["claude", "-p", *args]
+
+    def env(self) -> dict[str, str] | None:
+        return None
+
+
+@dataclasses.dataclass(frozen=True)
+class WrapperLaunch:
+    """claude-any.sh with a declared laptop class: its cloud route is asynchronous and cannot return a ranking."""
+    script: str
+    local_ok: str
+
+    def argv(self, args: Sequence[str]) -> list[str]:
+        return [self.script, *args]
+
+    def env(self) -> dict[str, str] | None:
+        return {**os.environ, "CLAUDE_LOCAL_OK": self.local_ok, "CLAUDE_ANY_STDIN": "1"}
+
+
 @dataclasses.dataclass(frozen=True)
 class ClaudeBackend:
-    """`claude -p` on the subscription, tools off, outside any project, schema-validated output."""
+    """`claude -p` on the subscription, tools off, outside any project, schema-validated output.
+
+    The candidates go on stdin; the short task is the last argument because claude-any.sh routes on it.
+    """
     model: str = ""
     timeout: float = 240.0
     setting_sources: str = "project"
     cwd: pathlib.Path | None = None
     run: Runner = subprocess.run
+    launch: Launch = DirectLaunch()
 
     def command(self) -> list[str]:
-        cmd = ["claude", "-p", "--tools", "", "--output-format", "json", "--no-session-persistence",
-               "--strict-mcp-config", "--setting-sources", self.setting_sources,
-               "--system-prompt", SYSTEM_PROMPT, "--json-schema", json.dumps(SCHEMA)]
-        return cmd + (["--model", self.model] if self.model else [])
+        args = ["--tools", "", "--output-format", "json", "--no-session-persistence",
+                "--strict-mcp-config", "--setting-sources", self.setting_sources,
+                "--system-prompt", SYSTEM_PROMPT, "--json-schema", json.dumps(SCHEMA)]
+        return self.launch.argv(args + (["--model", self.model] if self.model else []) + [TASK])
 
     def __call__(self, text: str) -> str:
         try:
             proc = self.run(self.command(), input=text, capture_output=True, text=True,
-                            timeout=self.timeout, cwd=self.cwd, check=False)
+                            timeout=self.timeout, cwd=self.cwd, check=False,
+                            env=self.launch.env())
         except (OSError, subprocess.SubprocessError) as exc:
             raise JudgeError(f"claude -p did not run: {exc}") from exc
         if proc.returncode != 0:

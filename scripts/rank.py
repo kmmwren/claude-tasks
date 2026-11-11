@@ -33,16 +33,21 @@ from deps import fm, parse_list  # noqa: E402
 from judge import (  # noqa: E402
     Candidate,
     ClaudeBackend,
+    DirectLaunch,
     JudgeError,
+    Launch,
     PredictFn,
     SetwiseJudge,
     Verdict,
+    WrapperLaunch,
 )
 from picks import PickLog, Shown, ShownItem, state_dir  # noqa: E402
 from taste import Profile, ProfileError, load_profile  # noqa: E402
 
 DEFAULTS: dict[str, Any] = {
     "candidates": 15, "top": 10, "model": "", "timeout": 240, "setting_sources": "project",
+    "launcher": "~/.claude-switch/claude-any.sh",
+    "local_ok": "read-only-research:predictor head setwise judge, tools off, latency-sensitive",
     "excerpt_chars": 600, "low_confidence": 0.75,
 }
 SCRIPTS = pathlib.Path(__file__).parent
@@ -291,7 +296,14 @@ def shown_event(ranking: Ranking, profile: Profile | None, briefs: Mapping[str, 
 def backend(root: pathlib.Path, config: Mapping[str, Any]) -> ClaudeBackend:
     neutral = state_dir(root) / "judge"
     neutral.mkdir(parents=True, exist_ok=True)
-    return ClaudeBackend(str(config["model"]), float(config["timeout"]), str(config["setting_sources"]), neutral)
+    return ClaudeBackend(str(config["model"]), float(config["timeout"]), str(config["setting_sources"]), neutral,
+                         launch=launcher(config))
+
+
+def launcher(config: Mapping[str, Any]) -> Launch:
+    """The configured wrapper when it exists here, else plain claude so the ranker still works elsewhere."""
+    script = pathlib.Path(str(config["launcher"])).expanduser()
+    return WrapperLaunch(str(script), str(config["local_ok"])) if config["launcher"] and script.is_file() else DirectLaunch()
 
 
 def run(root: pathlib.Path, scope: Scope, top: int, log: PickLog | None, predict: PredictFn | None = None,

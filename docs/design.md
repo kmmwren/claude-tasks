@@ -115,6 +115,11 @@ commits through the same lock). New generic modules: `_paths.py` (root resolutio
   confidence. The backend is `claude -p` with tools disabled, brief text escaped and delimited as
   data, and output constrained by a JSON schema. Anything other than an exact, reasoned permutation
   is rejected.
+- **Launcher.** When `[rank] launcher` (default `~/.claude-switch/claude-any.sh`) exists, the
+  judge runs through it with `CLAUDE_LOCAL_OK` set to `[rank] local_ok` and stdin forwarded. The
+  wrapper's cloud route is asynchronous and cannot return a ranking, so the call declares a
+  laptop class. Without the wrapper the judge calls `claude -p` directly. A refused or failed
+  call falls back like any other judge error.
 - **Fallback.** A missing or unreadable profile, fewer than two candidates, or two invalid passes
   return filter order with the reason in the header.
 - **Cache and state.** Verdicts are cached by scope, profile version, brief content hashes and
