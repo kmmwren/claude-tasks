@@ -31,7 +31,7 @@ from _paths import require_queue, resolve_root
 from deps import EXTERNAL_PREFIX, Brief, awaits_release, fm, load_queue, unmet
 from git_sync import sync_commit
 from prioritise import index_queue, score
-from transition import _append_log, _set_field, drop_blocker_lines, find_brief, move_brief
+from transition import _append_log, set_field, drop_blocker_lines, find_brief, move_brief
 
 
 def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[Brief]:
@@ -101,7 +101,7 @@ def resolve_external(root: pathlib.Path, brief_id: str, reason: str,
             return frees
         header = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
         assert header is not None  # a brief with blocked_by always has frontmatter
-        block = _set_field(drop_blocker_lines(header.group(2), current.index(item) + 1), "blocked_by", remaining)
+        block = set_field(drop_blocker_lines(header.group(2), current.index(item) + 1), "blocked_by", remaining)
         text = text[: header.start(2)] + block + text[header.end(2):]
         atomic_write(path, _append_log(text, day, f"cleared {item}"))
     if not frees:
