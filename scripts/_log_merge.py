@@ -45,14 +45,6 @@ def _merge_head(base: str, ours: str, theirs: str) -> str | None:
     return None
 
 
-def _take(available: Counter[str], entry: str) -> bool:
-    """Consume one occurrence of `entry` from `available`; True if there was one."""
-    if available[entry] > 0:
-        available[entry] -= 1
-        return True
-    return False
-
-
 def _date_key(entry: str) -> str:
     return entry[:10] if _DATED.match(entry) else ""
 
@@ -61,8 +53,8 @@ def merge_log_appends(base: str, ours: str, theirs: str) -> str | None:
     """Merge `ours` and `theirs` onto `base`, or None when they differ by more than log appends.
 
     None means: the text outside the log changed differently on the two sides, a side did not keep
-    the base entries as the start of its log, or a log layout is not a plain run of dated lines. New entries are the union of both sides in date order,
-    `ours` first on a tie; base entries keep their order.
+    the base entries as the start of its log, or a log is not a plain run of dated lines.
+    New entries are the union of both sides in date order, `ours` first on a tie.
     """
     base_parts, ours_parts, theirs_parts = _split(base), _split(ours), _split(theirs)
     if base_parts is None or ours_parts is None or theirs_parts is None:
@@ -73,8 +65,13 @@ def merge_log_appends(base: str, ours: str, theirs: str) -> str | None:
     n = len(kept)
     if head is None or ours_all[:n] != kept or theirs_all[:n] != kept:
         return None
-    shared = Counter(ours_all[n:])
-    theirs_only = [entry for entry in theirs_all[n:] if not _take(shared, entry)]
+    already_added = Counter(ours_all[n:])
+    theirs_only: list[str] = []
+    for entry in theirs_all[n:]:
+        if already_added[entry] > 0:
+            already_added[entry] -= 1
+        else:
+            theirs_only.append(entry)
     added = sorted([*ours_all[n:], *theirs_only], key=_date_key)
     entries = [*kept, *added]
     return head + "".join(f"{entry}\n" for entry in entries)
