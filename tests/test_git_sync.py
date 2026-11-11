@@ -656,5 +656,30 @@ def test_detached_pusher_output_goes_to_the_push_log(tmp_path):
     assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is True
     assert git_sync.wait_for_push(repo)
 
-    assert "rebase conflict in ready/shared.md" in C.lock_path(repo, git_sync.PUSH_LOCK).with_name(
-        git_sync.PUSH_LOG).read_text()
+    assert "rebase conflict in ready/shared.md" in C.lock_path(repo, git_sync.PUSH_LOG).read_text()
+
+
+def test_the_next_write_shows_what_the_last_background_push_reported(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    C.lock_path(repo, git_sync.PUSH_LOG).write_text("  (push deferred: rebase conflict in ready/x.md)")
+    (repo / "inbox" / "mine.md").write_text("y")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
+
+    assert "previous background push reported:" in capsys.readouterr().out
+    assert C.lock_path(repo, git_sync.PUSH_LOG).read_text() == ""
+
+
+def test_a_pusher_that_fails_to_start_releases_the_push_lock(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+
+    def broken(*a, **k):
+        raise OSError("no python")
+
+    monkeypatch.setattr(git_sync.subprocess, "Popen", broken)
+    with pytest.raises(OSError):
+        git_sync.request_push(repo)
+
+    held = C.try_lock(C.lock_path(repo, git_sync.PUSH_LOCK))
+    assert held is not None
+    os.close(held)

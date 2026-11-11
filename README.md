@@ -195,7 +195,7 @@ serialise concurrent moves on a file lock, so two local processes cannot both mo
 brief, and the claim check happens under that same lock so two local sessions cannot both
 claim it. What it cannot do is coordinate *across* clones: pulling first narrows the race
 window, it does not close it, and two people who claim on separate machines within the same
-few seconds will still collide (the background push reports it in `.git/.tasks-push.log`, and
+few seconds will still collide (the background push logs it and your next queue write prints it, and
 you sort it out between you).
 Treat it as a coordination signal, not a mutex. Briefs without the field are simply
 unclaimed; the board shows a claimed brief with an assignee chip and matches it in search.

@@ -21,7 +21,7 @@ Usage (run from anywhere):
 which no scripted writer could name. A queue root that is not the top of its own git repo
 (a project's `.tasks/`) is never synced here; its repo ships it.
 
-Exit codes: 0 — committed+pushed or safely deferred; 1 — bad usage.
+Exit codes: 0 — committed (push in the background) or safely deferred; 1 — bad usage.
 """
 import os
 import pathlib
@@ -236,16 +236,28 @@ def _run_pusher(root: pathlib.Path, fd: int | None) -> None:
         fd = try_lock(lock_path(root, PUSH_LOCK)) if _is_dirty(root) else None
 
 
+def _report_last_push(root: pathlib.Path) -> None:
+    """Show the writer what the previous detached pusher reported, then clear it; the caller holds the push lock."""
+    log = lock_path(root, PUSH_LOG)
+    report = log.read_text().strip() if log.exists() else ""
+    if report:
+        print(f"  (previous background push reported:)\n{report}")
+        log.write_text("")
+
+
 def _spawn_pusher(root: pathlib.Path, fd: int) -> None:
     """Hand the held push lock to a detached pusher process, so the caller returns at once."""
-    with open(lock_path(root, PUSH_LOG), "w") as log:
-        subprocess.Popen(
-            [sys.executable, str(SCRIPTS_DIR / "git_sync.py"), "--push-pending", str(root),
-             "--lock-fd", str(fd)],
-            pass_fds=(fd,), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    _release(fd)
+    try:
+        _report_last_push(root)
+        with open(lock_path(root, PUSH_LOG), "a") as log:
+            subprocess.Popen(
+                [sys.executable, str(SCRIPTS_DIR / "git_sync.py"), "--push-pending", str(root),
+                 "--lock-fd", str(fd)],
+                pass_fds=(fd,), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+    finally:
+        _release(fd)
 
 
 def request_push(root: pathlib.Path) -> bool:
@@ -262,6 +274,7 @@ def push_now(root: pathlib.Path) -> bool:
         if not acquired:
             print("  (push deferred: another pusher still running; it will push these commits.)")
             return False
+        _report_last_push(root)
         _mark_dirty(root)
         pushed = _drain(root)
     if _is_dirty(root):  # a write that found the lock held just before it was released
@@ -270,7 +283,10 @@ def push_now(root: pathlib.Path) -> bool:
 
 
 def wait_for_push(root: pathlib.Path, timeout: float = 60.0, poll: float = 0.05) -> bool:
-    """Block until no pusher runs and no commit awaits a push; False if `timeout` passed first."""
+    """Block until no pusher runs and no commit awaits a push; False if `timeout` passed first.
+
+    For callers and tests that must observe origin after a detached push.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         fd = None if _is_dirty(root) else try_lock(lock_path(root, PUSH_LOCK))
