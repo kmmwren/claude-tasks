@@ -5,9 +5,12 @@ sync_commit stages only the briefs the caller names by id (moves and deletions i
 the pathspecs it passes explicitly; any other dirty file stays unstaged.
 """
 import contextlib
+import os
 import pathlib
 import shutil
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import git_sync
 import pytest
@@ -468,3 +471,248 @@ def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
 
     git(repo, "fetch", "-q", "origin")
     assert "inbox/cli.md" in committed_files(repo, "origin/main")
+
+
+# ── coalesced push: one detached pusher per clone, no fetch unless a push is rejected ──────────
+
+FAKE_GIT = """#!/bin/bash
+echo "$*" >> "$GIT_LAUNCH_LOG"
+if [ -n "$GIT_SLOW_FIRST_PUSH" ] && [[ " $* " == *" push "* ]] && [ ! -e "$GIT_SLOW_FIRST_PUSH" ]; then
+  touch "$GIT_SLOW_FIRST_PUSH"; sleep 1
+fi
+exec {real} "$@"
+"""
+
+
+@pytest.fixture
+def launches(tmp_path, monkeypatch):
+    """Put a counting `git` first on PATH (the detached pusher inherits it); returns the launch log."""
+    bin_dir, log = tmp_path / "bin", tmp_path / "launches.log"
+    bin_dir.mkdir()
+    fake = bin_dir / "git"
+    fake.write_text(FAKE_GIT.format(real=shutil.which("git")))
+    fake.chmod(0o755)
+    log.write_text("")
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("GIT_LAUNCH_LOG", str(log))
+    monkeypatch.setenv("CLAUDE_TASKS_PUSH_QUIET", "0.3")
+    monkeypatch.setenv("CLAUDE_TASKS_PUSH_HOLD", "10")
+    return log
+
+
+def count(log, subcommand):
+    """Launches of `git [-C dir] <subcommand>`."""
+    words = [line.split() for line in log.read_text().splitlines()]
+    return sum(1 for w in words if (w[2:3] if w[:1] == ["-C"] else w[:1]) == [subcommand])
+
+
+def wait_for_push(repo, timeout=30.0):
+    """Block until no pusher runs and no commit awaits a push."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        fd = None if git_sync._is_dirty(repo) else git_sync.try_lock(git_sync.lock_path(repo, git_sync.PUSH_LOCK))
+        if fd is not None:
+            os.close(fd)
+            if not git_sync._is_dirty(repo):
+                return
+        time.sleep(0.05)
+    raise AssertionError("pusher still running")
+
+
+def synced(repo):
+    return git(repo, "rev-parse", "HEAD").stdout == git(repo.parent / "remote", "rev-parse", "main").stdout
+
+
+def test_twenty_concurrent_writes_cost_at_most_two_pushes(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    launches.write_text("")
+
+    def write(i):
+        (repo / "inbox" / f"burst-{i}.md").write_text(f"brief {i}")
+        return git_sync.sync_commit(f"brief(burst-{i}): captured", root=repo, ids=[f"burst-{i}"])
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        assert all(pool.map(write, range(20)))
+    wait_for_push(repo)
+
+    assert git(repo, "rev-list", "--count", "HEAD").stdout.strip() == "21"
+    assert count(launches, "push") <= 2
+    assert synced(repo)
+
+
+def test_a_write_during_an_in_flight_push_is_still_pushed(tmp_path, launches, monkeypatch):
+    repo = make_repo(tmp_path)
+    marker = tmp_path / "slow-push-started"
+    monkeypatch.setenv("GIT_SLOW_FIRST_PUSH", str(marker))
+    (repo / "inbox" / "first.md").write_text("1")
+    git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"])
+    deadline = time.monotonic() + 20
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert marker.exists()  # the first push is now in flight and slow
+
+    (repo / "inbox" / "second.md").write_text("2")
+    git_sync.sync_commit("brief(second): captured", root=repo, ids=["second"])
+    wait_for_push(repo)
+
+    assert synced(repo)
+    assert "inbox/second.md" in committed_files(repo, "origin/main")
+
+
+def test_a_burst_fetches_origin_once_and_never_on_an_accepted_push(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    launches.write_text("")
+    for i in range(5):
+        (repo / "inbox" / f"seq-{i}.md").write_text("x")
+        git_sync.sync_commit(f"brief(seq-{i}): captured", root=repo, ids=[f"seq-{i}"])
+    wait_for_push(repo)
+
+    assert count(launches, "fetch") <= 1
+    assert synced(repo)
+
+
+def test_a_write_that_creates_no_file_neither_fetches_nor_diffs_origin(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "moves")
+    git_sync.sync_commit("seed", root=repo, ids=["moves"], wait=True)
+    launches.write_text("")
+    (repo / "ready" / "moves.md").write_text("edited")
+
+    git_sync.sync_commit("brief(moves): edited", root=repo, ids=["moves"], wait=True)
+
+    assert count(launches, "fetch") == 0
+    assert count(launches, "diff") == 1  # only the staged-credential check
+
+
+def test_a_fresh_fetch_is_reused_and_a_stale_one_repeated(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    git_sync._fetch_origin(repo)
+    launches.write_text("")
+    git_sync._fetch_origin(repo)
+    assert count(launches, "fetch") == 0
+    old = time.time() - git_sync.FETCH_FRESH - 1
+    os.utime(git_sync.lock_path(repo, "FETCH_HEAD"), (old, old))
+    git_sync._fetch_origin(repo)
+    assert count(launches, "fetch") == 1
+
+
+def test_a_push_is_skipped_when_origin_already_has_every_commit(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    launches.write_text("")
+    assert git_sync.push_now(repo) is True
+    assert count(launches, "push") == 0
+
+
+def test_a_rejected_push_fetches_and_rebases_then_pushes(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/theirs.md", "t")
+    (repo / "inbox" / "mine.md").write_text("m")
+    launches.write_text("")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=True) is True
+
+    assert count(launches, "fetch") >= 1
+    assert {"inbox/mine.md", "inbox/theirs.md"} <= committed_files(repo, "origin/main")
+
+
+def test_a_push_deferred_by_a_held_lock_is_reported(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/theirs.md", "t")
+    (repo / "inbox" / "mine.md").write_text("m")
+    git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"], wait=False)
+    wait_for_push(repo)
+    git(repo, "commit", "-q", "--allow-empty", "-m", "local only")
+    monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
+
+    assert git_sync.push_now(repo) is False
+    assert "push deferred: lock held" in capsys.readouterr().out
+
+
+def test_the_next_write_prints_what_the_background_push_reported(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    log = git_sync.lock_path(repo, git_sync.PUSH_LOG)
+    log.write_text("  (push deferred: rebase conflict in ready/x.md)\n")
+
+    git_sync._report_last_push(repo)
+
+    assert "previous background push reported" in capsys.readouterr().out
+    assert log.read_text() == ""
+    git_sync._report_last_push(repo)
+    assert capsys.readouterr().out == ""
+
+
+def test_dirty_mark_lifecycle(tmp_path):
+    repo = make_repo(tmp_path)
+    assert git_sync._since_last_write(repo) == float("inf")
+    assert git_sync._take_dirty(repo) is False
+    git_sync._mark_dirty(repo)
+    assert git_sync._is_dirty(repo) and git_sync._since_last_write(repo) < 5
+    assert git_sync._take_dirty(repo) is True and not git_sync._is_dirty(repo)
+
+
+def test_the_pusher_waits_for_the_burst_to_go_quiet(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_TASKS_PUSH_QUIET", "0.3")
+    git_sync._mark_dirty(repo)
+    started = time.monotonic()
+    git_sync._await_quiet(repo)
+    assert 0.2 < time.monotonic() - started < 5
+
+
+def test_the_pusher_never_holds_a_burst_past_the_hold_limit(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_TASKS_PUSH_QUIET", "60")
+    monkeypatch.setenv("CLAUDE_TASKS_PUSH_HOLD", "0.2")
+    git_sync._mark_dirty(repo)
+    started = time.monotonic()
+    git_sync._await_quiet(repo)
+    assert time.monotonic() - started < 5
+
+
+def test_a_second_writer_does_not_start_a_second_pusher(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    held = git_sync.try_lock(git_sync.lock_path(repo, git_sync.PUSH_LOCK))
+    assert held is not None
+    (repo / "inbox" / "one.md").write_text("1")
+    git_sync.sync_commit("brief(one): captured", root=repo, ids=["one"])
+    assert git_sync.try_lock(git_sync.lock_path(repo, git_sync.PUSH_LOCK)) is None
+    assert git_sync._is_dirty(repo)  # left for the running pusher
+    os.close(held)
+
+
+def test_the_pusher_takes_the_lock_again_when_a_write_slipped_in(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    runs = []
+
+    def drain(root):
+        runs.append(1)
+        if len(runs) == 1:
+            git_sync._mark_dirty(root)  # a write lands as the first drain ends
+        else:
+            git_sync._take_dirty(root)
+
+    monkeypatch.setattr(git_sync, "_drain", drain)
+    fd = git_sync.try_lock(git_sync.lock_path(repo, git_sync.PUSH_LOCK))
+
+    git_sync._run_pusher(repo, fd)
+
+    assert len(runs) == 2
+    assert git_sync.try_lock(git_sync.lock_path(repo, git_sync.PUSH_LOCK)) is not None
+
+
+def test_cli_push_pending_runs_the_pusher_on_the_inherited_lock(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    seen = []
+    monkeypatch.setattr(git_sync, "_run_pusher", lambda root, fd: seen.append((root, fd)))
+    git_sync.main(["--push-pending", str(repo), "--lock-fd", "7"])
+    assert seen == [(repo, 7)]
+
+
+def test_a_detached_pusher_pushes_a_queued_commit(tmp_path, launches):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "late.md").write_text("l")
+    assert git_sync.sync_commit("brief(late): captured", root=repo, ids=["late"]) is True
+    wait_for_push(repo)
+    assert "inbox/late.md" in committed_files(repo, "origin/main")

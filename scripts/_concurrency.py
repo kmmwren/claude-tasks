@@ -39,14 +39,15 @@ from collections.abc import Iterable, Iterator
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
-def lock_path(root: pathlib.Path) -> pathlib.Path:
-    """Where the sync lock lives. Inside .git so it is per-clone and never committed.
+def lock_path(root: pathlib.Path, name: str = ".tasks-sync.lock") -> pathlib.Path:
+    """Where the sync lock (or another per-clone state file `name`) lives.
 
-    Falls back to the repo root for worktrees (where .git is a file, not a dir) and
-    for non-git callers (tests), so the lock always has a real directory to live in.
+    Inside .git so it is per-clone and never committed. Falls back to the repo root for
+    worktrees (where .git is a file, not a dir) and for non-git callers (tests), so the
+    file always has a real directory to live in.
     """
     git = root / ".git"
-    return (git if git.is_dir() else root) / ".tasks-sync.lock"
+    return (git if git.is_dir() else root) / name
 
 
 @contextlib.contextmanager
@@ -79,6 +80,23 @@ def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> I
         if acquired:
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+def try_lock(path: pathlib.Path) -> int | None:
+    """Take an exclusive flock on `path` without waiting; the open fd holds it, None if busy.
+
+    The fd can be handed to a child process (`pass_fds`), which then owns the lock. Nobody
+    waits on it: a busy lock means another process is already doing the work.
+    """
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        os.close(fd)
+        if e.errno not in (errno.EAGAIN, errno.EACCES):
+            raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
+        return None
+    return fd
 
 
 @contextlib.contextmanager

@@ -68,7 +68,7 @@ def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
     local = _find(root, brief_id)
     if local is None or _committed(root, local):
         return
-    if not sync_commit(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
+    if not sync_commit(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id], wait=True):
         raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry")
     if not _committed(root, local):
         raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and git_sync could not commit it")

@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import _concurrency as C
+import git_sync
 import pytest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
@@ -90,6 +91,7 @@ def test_concurrent_adds_all_land_committed_and_pushed(queue):
     assert all(r.returncode == 0 for r in results), [r.stderr for r in results]
     # Every brief committed locally AND present on the remote — none silently dropped.
     assert len(briefs_on(queue, "HEAD")) == n
+    assert git_sync.push_now(queue)  # the writers queued one coalesced push; flush it
     git(queue, "fetch", "-q", "origin")
     assert len(briefs_on(queue, "origin/main")) == n
     # The repo is not wedged: no orphaned index.lock left behind.
@@ -260,3 +262,16 @@ def test_require_lock_raises_rather_than_running_unlocked(tmp_path):
         assert acquired
         with pytest.raises(TimeoutError), C.require_lock(tmp_path, timeout=0.05):
             pass  # pragma: no cover
+
+
+def test_try_lock_never_waits_and_reports_a_busy_lock(tmp_path):
+    path = tmp_path / "push.lock"
+    first = C.try_lock(path)
+    assert first is not None
+    started = time.monotonic()
+    assert C.try_lock(path) is None
+    assert time.monotonic() - started < 1
+    os.close(first)
+    again = C.try_lock(path)
+    assert again is not None
+    os.close(again)
