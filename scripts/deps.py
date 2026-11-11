@@ -13,6 +13,7 @@ A brief depends on other briefs through three frontmatter spellings, all of whic
 An `external:<reason>` entry is a blocker no brief can complete (a login, a decision, a
 vendor). It never resolves by itself; `unblock.py resolve` clears it explicitly.
 """
+
 import dataclasses
 import pathlib
 import re
@@ -44,7 +45,7 @@ def fm_repeated(text: str) -> dict[str, list[str]]:
     """Every frontmatter key with all its values, in order, for keys that repeat (`blocked_probe:`)."""
     m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
     out: dict[str, list[str]] = {}
-    for line in (m.group(1).splitlines() if m else []):
+    for line in m.group(1).splitlines() if m else []:
         if ":" in line:
             k, _, v = line.partition(":")
             out.setdefault(k.strip(), []).append(strip_comment(v))
@@ -65,9 +66,15 @@ def indexed(values: list[str]) -> dict[int, str]:
 
 def probe_gaps(blocked_by: list[str], repeated: dict[str, list[str]]) -> list[int]:
     """Numbers of the `external:` blockers with no probe, or a `human` probe nobody has confirmed."""
-    probes, confirmed = indexed(repeated.get(PROBE_KEY, [])), indexed(repeated.get(CONFIRMED_KEY, []))
-    return [i for i, b in enumerate(blocked_by, 1)
-            if is_external(b) and (i not in probes or (probes[i] == HUMAN_PROBE and i not in confirmed))]
+    probes, confirmed = (
+        indexed(repeated.get(PROBE_KEY, [])),
+        indexed(repeated.get(CONFIRMED_KEY, [])),
+    )
+    return [
+        i
+        for i, b in enumerate(blocked_by, 1)
+        if is_external(b) and (i not in probes or (probes[i] == HUMAN_PROBE and i not in confirmed))
+    ]
 
 
 def brief_id(fields: dict[str, str], stem: str) -> str:
@@ -95,6 +102,7 @@ def is_pr_hold(item: str) -> bool:
 @dataclasses.dataclass(frozen=True)
 class Brief:
     """One brief as the dependency tools see it: its folder (status) and parsed frontmatter."""
+
     id: str
     status: str
     fields: dict[str, str]
@@ -114,8 +122,11 @@ class Brief:
 
     @property
     def depends_tags(self) -> set[str]:
-        return {t[len("depends:"):] for t in parse_list(self.fields.get("tags", ""))
-                if t.startswith("depends:")}
+        return {
+            t[len("depends:") :]
+            for t in parse_list(self.fields.get("tags", ""))
+            if t.startswith("depends:")
+        }
 
     @property
     def external_blockers(self) -> list[str]:
@@ -124,7 +135,9 @@ class Brief:
     @property
     def declared_ids(self) -> set[str]:
         """Ids this brief names as dependencies in the strict forms (blocked_by, depends:)."""
-        return {b for b in self.blocked_by if not is_external(b) and not is_pr_hold(b)} | self.depends_tags
+        return {
+            b for b in self.blocked_by if not is_external(b) and not is_pr_hold(b)
+        } | self.depends_tags
 
     @property
     def legacy_tokens(self) -> set[str]:
