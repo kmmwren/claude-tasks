@@ -24,7 +24,12 @@ import sys
 from _concurrency import atomic_write, reserve_name
 from _paths import TASK_DIRS, require_queue, resolve_root
 from git_sync import sync_commit as _sync_commit
-from readiness import PLACEHOLDER_CONTEXT, missing_ready_fields, placeholder_criterion
+from readiness import (
+    PLACEHOLDER_CONTEXT,
+    missing_ready_fields,
+    placeholder_criterion,
+    placeholder_goal,
+)
 
 # The CLI flag that supplies each field a ready brief needs.
 FLAGS = {"goal": "--goal", "criteria": "--criteria/--success", "context": "--context"}
@@ -113,7 +118,7 @@ related: []
 
 ## Goal
 
-{a.goal or a.title}
+{a.goal or placeholder_goal(a.title)}
 
 ## Context
 

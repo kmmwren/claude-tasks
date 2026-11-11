@@ -4,9 +4,9 @@
 
 ### Fixed
 - **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
-  context.** Moving it to `ready` or `in-progress` runs the same check `add_task.py --ready` applies
-  (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming the
-  missing fields. `done`, `parked` and `blocked` are unconditional, so a folded brief can still be closed.
+  context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
+  applies (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming
+  the missing fields. `done` and `parked` are unconditional, so a folded brief can still be closed.
 - **`git_sync.py` commits only what the caller names.** It no longer runs `git add --ignore-removal .`,
   which swept another writer's uncommitted edit into an unrelated brief's commit. `ids` stage that
   brief's file at any depth (moves included); `paths` stage explicit pathspecs (`fold_session.py`

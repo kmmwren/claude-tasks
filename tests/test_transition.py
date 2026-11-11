@@ -163,7 +163,7 @@ def test_move_refuses_to_promote_inbox_brief_naming_missing_fields(root, target)
 
 def test_move_refuses_to_promote_an_add_task_placeholder_brief(root):
     (root / "inbox" / "filed-by-add-task.md").write_text(PLACEHOLDER_BRIEF)
-    with pytest.raises(ValueError, match="without criteria, context"):
+    with pytest.raises(ValueError, match="without goal, criteria, context"):
         transition.move_brief("filed-by-add-task", "ready", root)
 
 
@@ -175,10 +175,18 @@ def test_move_closes_an_unenriched_inbox_brief(root, target):
     assert transition.fm(newp.read_text())["status"] == target
 
 
-def test_move_blocks_an_unenriched_inbox_brief(root):
-    newp = transition.move_brief("raw-staging-thought", "blocked", root, blocked_by=["external:vendor"],
-                                 probes=["1: human"], confirmed=["1: 2026-06-02 me"])
-    assert newp == root / "blocked" / "raw-staging-thought.md"
+BLOCK_ARGS = {"blocked_by": ["external:vendor"], "probes": ["1: human"], "confirmed": ["1: 2026-06-02 me"]}
+
+
+def test_move_refuses_to_block_an_unenriched_inbox_brief(root):
+    with pytest.raises(ValueError, match="cannot move to blocked without criteria, context"):
+        transition.move_brief("raw-staging-thought", "blocked", root, **BLOCK_ARGS)
+    assert (root / "inbox" / "raw-staging-thought.md").exists()
+
+
+def test_move_blocks_an_enriched_inbox_brief(root):
+    newp = transition.move_brief("enriched-staging-thought", "blocked", root, **BLOCK_ARGS)
+    assert newp == root / "blocked" / "enriched-staging-thought.md"
 
 
 def test_move_prefers_brief_folder_over_inbox_duplicate(root):

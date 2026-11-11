@@ -11,17 +11,26 @@ Stdlib only.
 import re
 from collections.abc import Sequence
 
-from deps import fm
-
 READY_FIELDS = ("goal", "criteria", "context")
 # What add_task writes into a brief that was given no context.
 PLACEHOLDER_CONTEXT = "_none recorded_"
 _CRITERION = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s*(.+?)\s*$", re.MULTILINE)
 
 
+def placeholder_goal(title: str) -> str:
+    """The goal add_task writes into a brief that was given none."""
+    return title
+
+
 def placeholder_criterion(title: str) -> str:
     """The criterion add_task writes into a brief that was given none."""
     return f"{title} is done."
+
+
+def _raw_title(text: str) -> str:
+    """The `title:` line as add_task wrote it; fm() would cut a title like `Review PR #42` at the `#`."""
+    m = re.search(r"^title:[ \t]*(.*?)[ \t]*$", text, re.MULTILINE)
+    return m.group(1) if m else ""
 
 
 def section(body: str, name: str) -> str:
@@ -38,9 +47,11 @@ def missing_ready_fields(goal: str, criteria: Sequence[str], context: str) -> li
 
 def brief_missing_fields(text: str) -> list[str]:
     """READY_FIELDS a brief's text leaves empty or at add_task's placeholder."""
-    title = fm(text).get("title", "")
+    title = _raw_title(text)
     criteria = [c for c in _CRITERION.findall(section(text, "Success criteria"))
                 if c != placeholder_criterion(title)]
-    context = section(text, "Context")
+    goal, context = section(text, "Goal"), section(text, "Context")
     return missing_ready_fields(
-        section(text, "Goal"), criteria, "" if context == PLACEHOLDER_CONTEXT else context)
+        "" if goal == placeholder_goal(title) else goal,
+        criteria,
+        "" if context == PLACEHOLDER_CONTEXT else context)

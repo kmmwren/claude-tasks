@@ -55,7 +55,7 @@ VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 # find_brief still reaches them by exact id so they can be closed or, once enriched, promoted.
 BRIEF_DIRS = ("ready", "in-progress", "blocked", "parked", "done")
 # Targets that mean "work on this", so an inbox file must be enriched before it moves there.
-ENRICHED_STATUSES = ("ready", "in-progress")
+ENRICHED_STATUSES = ("ready", "in-progress", "blocked")
 # What "action a task" should consider: actionable, not raw and not already finished.
 RESOLVE_STATUSES = ("ready", "in-progress", "blocked", "parked")
 # Default execution-log line per target state when the caller gives none.
