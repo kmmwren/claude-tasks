@@ -24,6 +24,10 @@ This module fixes both with stdlib only:
   * reserve_name() — claim a unique filename with O_CREAT|O_EXCL, so two simultaneous
                      captures of the same title can't overwrite one another.
 """
+
+import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
+
+# isort: split
 import contextlib
 import errno
 import fcntl
@@ -75,6 +79,17 @@ def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> I
         if acquired:
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+@contextlib.contextmanager
+def require_lock(root: pathlib.Path, timeout: float = 30.0) -> Iterator[None]:
+    """repo_lock for a read-modify-write that must not run unlocked: a timeout raises instead."""
+    with repo_lock(root, timeout) as acquired:
+        if not acquired:
+            raise TimeoutError(
+                f"queue lock at {root} not acquired within {timeout}s; nothing written"
+            )
+        yield
 
 
 def atomic_write(path: pathlib.Path, text: str) -> None:

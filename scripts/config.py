@@ -7,6 +7,7 @@ title), the list of domains a brief's `domain:` can take, and a timezone for any
 logic. All optional — an absent or partial file just falls back to the defaults, so a
 vanilla queue works with no config at all.
 """
+
 import os
 import pathlib
 import tomllib
@@ -16,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "name": "tasks",
     "domains": [],
     "timezone": "UTC",
+    "fleet_blockers_dir": "",  # unset = fleet-blocker lane off
 }
 
 

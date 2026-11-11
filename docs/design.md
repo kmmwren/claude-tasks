@@ -69,7 +69,7 @@ personal queue, and project-scoped queues checked into a repo.
 YAML frontmatter (the queryable surface) + markdown body (the context). Required fields:
 `id`, `title`, `created`, `updated`, `status`, `type`, `importance`, `autonomy`. Optional:
 `estimated-effort`, `due`, `domain`, `tags`, `parent`, `assignee`, `source`, `blockers`,
-`related`, `requires-repo`, `requires-local`. `assignee` is who has claimed the brief
+`clears`, `related`, `requires-repo`, `requires-local`. `assignee` is who has claimed the brief
 (empty = unclaimed): advisory coordination for a shared queue, not a lock across clones.
 Body sections: Goal, Context, Success criteria,
 Constraints, Notes / open questions, Execution log. Full reference in `_template.md`.
@@ -98,6 +98,44 @@ Shared plumbing (untouched, pure-generic): `_concurrency.py` (flock + atomic wri
 making the queue safe for many concurrent Claude sessions) and `git_sync.py` (serialised
 commits through the same lock). New generic modules: `_paths.py` (root resolution) and
 `config.py` (`tasks.toml` loader).
+
+## The predictor head: ranking against a taste profile
+
+`prioritise.py` is the filter. `rank.py` is the ranker, and only human-facing lists use it.
+
+- **Profile.** `profile/priorities.md` holds typed sections in a file the owner edits: `Goals` (each
+  `name | weight w | match tag, tag | note`), `Values`, `Dislikes` and `Patterns`.
+  `seed_profile.py` drafts it from goal files, a north-stars document and recent decision titles,
+  and marks it `draft: true`.
+- **Retrieval, then judgement.** The scope's unblocked briefs in filter order are cut to
+  `[rank] candidates`. The judge ranks that set against the profile. Swapping retrieval for
+  embeddings later touches only `candidates()`.
+- **Judge.** One setwise call ranks all candidates, and a second call ranks them in reverse order.
+  A Bradley-Terry fit merges the two orderings, and agreement between the passes becomes each item's
+  confidence. The backend is `claude -p` with tools disabled, brief text escaped and delimited as
+  data, and output constrained by a JSON schema. Anything other than an exact, reasoned permutation
+  is rejected.
+- **Launcher.** When `[rank] launcher` (default `~/.claude-switch/claude-any.sh`) exists, the
+  judge runs through it with `CLAUDE_LOCAL_OK` set to `[rank] local_ok` and stdin forwarded. The
+  wrapper's cloud route is asynchronous and cannot return a ranking, so the call declares a
+  laptop class. Without the wrapper the judge calls `claude -p` directly. A refused or failed
+  call falls back like any other judge error.
+- **Fallback.** A missing or unreadable profile, fewer than two candidates, or two invalid passes
+  return filter order with the reason in the header.
+- **Cache and state.** Verdicts are cached by scope, profile version, brief content hashes and
+  model, so an unchanged list costs nothing. Cache, pick log, proposals and profile snapshots live
+  under `~/.claude-tasks/predictor/<queue hash>/` (`$CLAUDE_TASKS_STATE`), never in brief
+  frontmatter or the queue's git history.
+- **Pick log.** Each shown list is appended to `picks.jsonl` with the profile version, the filter
+  order, each item's matched goals and the raw judge output for replay. Moving a brief to
+  `in-progress` logs a pick, `bump.py` logs a bump, and `log_pick.py skip` logs a skip. Each choice
+  links to the latest list that showed that brief within a day.
+- **Learning.** `learn.py` turns choices into skip-above preference pairs: a pick beats the briefs
+  shown above it, and a skip loses to the next one. It nudges the most-preferred and most-avoided
+  goal weights, each by at most `max_change`, and replays the newest picks as a held-out set. A
+  reorder must replay better and a nudge no worse. Proposals are versioned diffs, applied only on
+  `--apply` after the old profile is snapshotted, and revertible. Auto-apply covers nudges only, and
+  only once `[learn] auto_apply = true` and `min_runs` lists have been shown.
 
 ## Explicitly deferred (optional add-ons, not v1)
 

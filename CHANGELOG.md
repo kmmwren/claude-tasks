@@ -2,7 +2,37 @@
 
 ## Unreleased
 
+### Added
+- **A brief can declare the fleet blocker it clears, and `prioritise.py` ranks it first.** A new optional
+  `clears: <blocker-id>` (or `[ids]`) names a blocker whose record sits in `fleet_blockers_dir` (a new
+  `tasks.toml` key, unset by default so the feature is off). While the record's `status` is `active` or
+  `unverified`, the brief takes a new `fleet-blocker` lane that sorts ahead of every other lane under both
+  scorers and is outside `expedite_cap`; `--json` gives `lane: fleet-blocker` and `why.fleet_blocker`
+  (the blocker id and summary). A cleared or missing record, or an unset directory, leaves the brief in its
+  normal lane. An unreadable directory or record warns once on stderr and is skipped. A blocked brief does
+  not take the lane. `rank.py` pins these briefs above the judged list and never sends them to the judge.
+- **`rank.py`: rank a scope's candidates against a taste profile, with a reason each.** It filters
+  through `prioritise.py`, then makes two setwise `claude -p` passes (forward and reversed, tools off,
+  schema-validated). Bradley-Terry merges the passes, and their agreement sets each item's confidence.
+  Results are cached by brief and profile hash. Any failure falls back to filter order and says why.
+  `--json` gives machine-readable output.
+- **`seed_profile.py` drafts `profile/priorities.md`** from goal files, a north-stars document
+  (`gh api`) and recent decision titles, marked `draft: true` until the owner edits it.
+- **Pick log and learning loop.** Shown lists and picks, bumps and skips go to a local JSONL log
+  outside the queue repo. `transition.py` to `in-progress` and `bump.py` record a choice;
+  `log_pick.py` records the rest. `learn.py` proposes capped goal-weight changes, validated on
+  held-out picks, applied and reverted by profile version. Auto-apply is off by default.
+- **`prioritise.py` gains an opt-in WSJF scorer.** Cost of delay (importance, due curve and lead
+  time, milestone, tag weights, chain leverage) over job size, plus aging; blockers inherit their
+  waiters' score; `cos:` lanes (expedite cap, fixed-date, chore share) and a `move` per brief.
+  Chosen by `[priority] scorer` (default `additive`, unchanged) or `--scorer`. `--json` adds both
+  scores and ranks, `lane`, `move`, `leverage`, `why` and `schema_version`; existing fields are
+  unchanged.
+
 ### Fixed
+- **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
+  outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
+  parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.
 - **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
   context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
   applies (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming
