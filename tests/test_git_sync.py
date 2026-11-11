@@ -19,6 +19,7 @@ class _FakeProc:
     def __init__(self, rc):
         self.returncode = rc
         self.stdout = ""
+        self.stderr = ""
 
 
 @contextlib.contextmanager
@@ -468,3 +469,230 @@ def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
 
     git(repo, "fetch", "-q", "origin")
     assert "inbox/cli.md" in committed_files(repo, "origin/main")
+
+
+# ── a rebase conflict confined to execution-log appends resolves as their union ──
+
+_BRIEF = "---\nid: b\nstatus: {status}\n---\n\n## Goal\n\n{goal}\n\n## Execution log\n\n{log}"
+
+
+def _brief(status="inbox", goal="g", log="2026-11-09: captured.\n"):
+    return _BRIEF.format(status=status, goal=goal, log=log)
+
+
+def _clone_of_origin(tmp_path):
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "remote"), str(other)],
+                   check=True)
+    for key, value in (("commit.gpgsign", "false"), ("user.email", "o@o.o"), ("user.name", "o")):
+        git(other, "config", key, value)
+    return other
+
+
+def _seed_pushed(repo, rel, text):
+    (repo / rel).write_text(text)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "push", "-q", "origin", "main")
+
+
+def _origin_appends(other, rel, line):
+    git(other, "pull", "-q", "origin", "main")
+    with (other / rel).open("a") as fh:
+        fh.write(line)
+    git(other, "commit", "-qam", "log line")
+    git(other, "push", "-q", "origin", "main")
+
+
+def _move_to_done_with_log(repo, line):
+    git(repo, "mv", "inbox/b.md", "done/b.md")
+    (repo / "done" / "b.md").write_text(
+        _brief(status="done", log="2026-11-09: captured.\n" + line))
+
+
+def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("GIT_EDITOR", "false")  # an interactive editor must never open
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-09: logged on origin.\n")
+    _move_to_done_with_log(repo, "2026-11-09: closed locally.\n")
+
+    assert git_sync.sync_commit("brief(b): done", root=repo, ids=["b"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert "status: done" in merged
+    assert merged.endswith("2026-11-09: captured.\n2026-11-09: logged on origin.\n"
+                           "2026-11-09: closed locally.\n")
+    assert "inbox/b.md" not in committed_files(repo, "origin/main")
+    assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
+    assert capsys.readouterr().err == ""
+
+
+def test_sync_unions_across_several_replayed_commits(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    _origin_appends(_clone_of_origin(tmp_path), "inbox/b.md", "2026-11-11: logged on origin.\n")
+    _move_to_done_with_log(repo, "2026-11-09: closed locally.\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "move and log")
+    with (repo / "done" / "b.md").open("a") as fh:
+        fh.write("2026-11-10: later local line.\n")
+    resolved = []
+    real = git_sync._resolve_log_conflict
+
+    def spy(root, path):
+        resolved.append(path)
+        return real(root, path)
+
+    monkeypatch.setattr(git_sync, "_resolve_log_conflict", spy)
+
+    assert git_sync.sync_commit("brief(b): log", root=repo, paths=["done"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert merged.endswith("2026-11-09: closed locally.\n2026-11-10: later local line.\n"
+                           "2026-11-11: logged on origin.\n")
+    assert resolved == ["done/b.md", "done/b.md"]
+
+
+def test_sync_defers_loudly_when_a_conflict_is_outside_the_log(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    _seed_pushed(repo, "inbox/b.md", _brief())
+    other = _clone_of_origin(tmp_path)
+    git(other, "pull", "-q", "origin", "main")
+    (other / "inbox" / "b.md").write_text(_brief(goal="origin rewrote the goal"))
+    git(other, "commit", "-qam", "edit goal")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "b.md").write_text(_brief(goal="local rewrote the goal"))
+
+    assert git_sync.sync_commit("brief(b): edit", root=repo, ids=["b"]) is False
+
+    captured = capsys.readouterr()
+    assert "inbox/b.md" in captured.err and "WARNING" in captured.err
+    assert "push deferred" in captured.out
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
+    assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
+
+
+def _scripted_rebase(monkeypatch, *, returncodes, in_progress=(True,), conflicted=(), resolves=True):
+    """Drive `_rebase_keeping_log_union` with a scripted git; returns the git calls it made."""
+    calls = []
+    codes = iter(returncodes)
+
+    def fake_git(_root, *args, **_kw):
+        calls.append(args)
+        return _FakeProc(next(codes))
+
+    progress = iter(in_progress)
+    monkeypatch.setattr(git_sync, "_git", fake_git)
+    monkeypatch.setattr(git_sync, "_rebase_in_progress", lambda _r: next(progress))
+    monkeypatch.setattr(git_sync, "_conflicted", lambda _r: list(conflicted))
+    monkeypatch.setattr(git_sync, "_resolve_log_conflict", lambda _r, _p: resolves)
+    return calls
+
+
+def test_a_clean_rebase_reports_nothing_stuck(tmp_path, monkeypatch):
+    _scripted_rebase(monkeypatch, returncodes=[0])
+
+    assert git_sync._rebase_keeping_log_union(tmp_path) is None
+
+
+def test_a_rebase_that_fails_without_stopping_names_nothing(tmp_path, monkeypatch):
+    _scripted_rebase(monkeypatch, returncodes=[1], in_progress=[False])
+
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
+
+
+def test_a_rebase_that_stops_without_a_conflicting_file_names_nothing(tmp_path, monkeypatch):
+    _scripted_rebase(monkeypatch, returncodes=[1], conflicted=[])
+
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
+
+
+def test_a_conflict_outside_the_log_is_returned_for_deferral(tmp_path, monkeypatch):
+    calls = _scripted_rebase(monkeypatch, returncodes=[1], conflicted=["done/b.md"], resolves=False)
+
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == ["done/b.md"]
+    assert not any("--continue" in call for call in calls)
+
+
+def test_resolved_conflicts_continue_the_rebase_until_it_finishes(tmp_path, monkeypatch):
+    calls = _scripted_rebase(monkeypatch, returncodes=[1, 0], conflicted=["done/b.md"])
+
+    assert git_sync._rebase_keeping_log_union(tmp_path) is None
+    assert calls[-1][-2:] == ("rebase", "--continue")
+
+
+def test_a_rebase_that_cannot_continue_is_deferred(tmp_path, monkeypatch):
+    _scripted_rebase(monkeypatch, returncodes=[1, 1], in_progress=[True, False],
+                     conflicted=["done/b.md"])
+
+    assert git_sync._rebase_keeping_log_union(tmp_path).paths == []
+
+
+def test_integrate_warns_when_git_names_no_conflicting_file(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    monkeypatch.setattr(git_sync, "_rebase_keeping_log_union", lambda _wt: git_sync._Stuck([], "fatal: no such ref"))
+
+    assert git_sync._integrate_remote(repo) is False
+
+    captured = capsys.readouterr()
+    assert "rebase failed: fatal: no such ref" in captured.err and "WARNING" in captured.err
+    assert "push deferred" in captured.out
+
+
+def test_rebase_in_progress_tracks_the_rebase_directory(tmp_path):
+    repo = make_repo(tmp_path)
+    assert git_sync._rebase_in_progress(repo) is False
+    (repo / ".git" / "rebase-merge").mkdir()
+    assert git_sync._rebase_in_progress(repo) is True
+
+
+@pytest.mark.parametrize("path", ["scripts/tool.py", "elsewhere/b.md"])
+def test_only_task_dir_briefs_are_auto_resolved(tmp_path, path):
+    assert git_sync._resolve_log_conflict(tmp_path, path) is False
+
+
+def test_unresolvable_when_a_merge_stage_is_missing(tmp_path):
+    repo = make_repo(tmp_path)
+    assert git_sync._resolve_log_conflict(repo, "inbox/never-conflicted.md") is False
+
+
+def test_a_failed_git_add_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    text = _brief()
+    (tmp_path / "done").mkdir()
+    monkeypatch.setattr(git_sync, "_stage_text", lambda _r, _s, _p: text)
+    monkeypatch.setattr(git_sync, "_toplevel", lambda _r: tmp_path)
+    monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: _FakeProc(1))
+
+    assert git_sync._resolve_log_conflict(tmp_path, "done/b.md") is False
+
+
+def test_a_missing_repo_top_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    text = _brief()
+    monkeypatch.setattr(git_sync, "_stage_text", lambda _r, _s, _p: text)
+    monkeypatch.setattr(git_sync, "_toplevel", lambda _r: None)
+
+    assert git_sync._resolve_log_conflict(tmp_path, "done/b.md") is False
+
+
+def test_conflicted_lists_unmerged_paths_split_on_nul(tmp_path, monkeypatch):
+    listing = _FakeProc(0)
+    listing.stdout = "done/b.md\0inbox/café.md\0"
+    monkeypatch.setattr(git_sync, "_git", lambda _r, *a, **_k: listing)
+
+    assert git_sync._conflicted(tmp_path) == ["done/b.md", "inbox/café.md"]
+
+
+def test_a_stuck_rebase_without_files_or_error_text_still_says_why():
+    assert git_sync._Stuck([], "").describe() == "rebase failed: git reported no conflicting file"
+
+
+def test_a_stage_that_is_not_utf8_leaves_the_conflict_unresolved(tmp_path, monkeypatch):
+    def undecodable(*_a, **_k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(git_sync, "_git", undecodable)
+
+    assert git_sync._stage_text(tmp_path, 2, "done/b.md") is None

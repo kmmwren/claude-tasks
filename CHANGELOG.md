@@ -45,6 +45,11 @@
   worktree and pushed; the checkout advances with `reset --keep`, so uncommitted edits are never
   stashed or dropped. A rebase conflict leaves the local commits in place and prints the conflicting
   paths plus the unpushed and unintegrated commits.
+- **Execution-log appends no longer wedge the sync.** When the scratch-worktree rebase of a diverged
+  push conflicts only because two writers each appended to a brief's Execution log (typically
+  `append_log.py` on origin against a local move to `done/`), each conflicted brief is resolved as
+  the union of both sides' entries in date order and the rebase continues. Any other conflict still
+  aborts the rebase and defers, now with a stderr warning naming the files.
 - **A closed brief is no longer re-created.** `git_sync.py` fetches `origin/main` and refuses to
   commit a new brief file whose id is already filed in another state dir (`done/` included), on
   disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
