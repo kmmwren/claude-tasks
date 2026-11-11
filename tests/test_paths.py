@@ -15,7 +15,7 @@ def test_public_constants_are_the_documented_contract():
     assert _paths.PROJECT_MARKER == ".tasks"
     assert _paths.DEFAULT_ROOT == "~/tasks"
     assert _paths.CONFIG_FILE == "tasks.toml"
-    assert _paths.TASK_DIRS == ("inbox", "ready", "in-progress", "done", "parked")
+    assert _paths.TASK_DIRS == ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
 def test_env_var_wins(tmp_path):
@@ -76,3 +76,107 @@ def test_require_queue_raises_with_guidance(tmp_path):
     assert msg.startswith("No task queue at")  # names the missing queue
     assert msg.rstrip().endswith("to create one.")  # points at the fix
     assert "/tasks-init" in msg
+
+
+# --------------------------------------------------------------------------- #
+# strip_comment — the shared frontmatter value cleaner
+# --------------------------------------------------------------------------- #
+def test_strip_comment_drops_a_trailing_comment():
+    assert _paths.strip_comment("ready # inbox | ready | done") == "ready"
+
+
+def test_strip_comment_treats_a_whole_comment_as_empty():
+    assert _paths.strip_comment("# OPTIONAL who has claimed this. Empty = unclaimed.") == ""
+
+
+def test_strip_comment_leaves_a_plain_value_untouched():
+    assert _paths.strip_comment("alice") == "alice"
+
+
+def test_strip_comment_keeps_a_hash_with_no_leading_space():
+    # a mid-word # is part of the value, not a comment marker
+    assert _paths.strip_comment("issue#42") == "issue#42"
+
+
+def test_strip_comment_keeps_a_hash_inside_a_tag_list():
+    assert _paths.strip_comment("[a#b, c#d]") == "[a#b, c#d]"
+
+
+def test_strip_comment_strips_only_at_the_first_spaced_hash():
+    assert _paths.strip_comment("a # b # c") == "a"
+
+
+def test_strip_comment_handles_a_tab_before_the_hash():
+    assert _paths.strip_comment("ready\t# a comment") == "ready"
+
+
+def test_strip_comment_strips_a_comment_after_a_hash_bearing_value():
+    # the value's own # survives; only the spaced-off comment goes
+    assert _paths.strip_comment("issue#42 # the tracking id") == "issue#42"
+
+
+def test_strip_comment_returns_empty_for_an_empty_value():
+    assert _paths.strip_comment("") == ""
+
+
+def test_strip_comment_strips_surrounding_whitespace():
+    assert _paths.strip_comment("  ready  ") == "ready"
+
+
+def test_strip_comment_drops_a_bare_trailing_hash():
+    # an empty comment is still a comment
+    assert _paths.strip_comment("ready #") == "ready"
+
+
+def test_strip_comment_reads_a_lone_hash_as_empty():
+    assert _paths.strip_comment("#") == ""
+
+
+def test_strip_comment_keeps_a_leading_hash_value_that_is_indented():
+    # a value that is nothing but a comment, however indented, is an empty value
+    assert _paths.strip_comment("   # just a comment") == ""
+
+
+# --------------------------------------------------------------------------- #
+# session bindings
+# --------------------------------------------------------------------------- #
+def test_session_constants_are_the_documented_contract():
+    assert _paths.SESSION_ENV == "CLAUDE_CODE_SESSION_ID"
+    assert _paths.SESSIONS_ENV == "CLAUDE_TASKS_SESSIONS"
+    assert _paths.DEFAULT_SESSIONS == "~/.claude-tasks/sessions"
+
+
+def _bound(tmp_path, root_line):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "s1.toml").write_text(root_line)
+    return {_paths.SESSIONS_ENV: str(sessions), _paths.SESSION_ENV: "s1"}
+
+
+def test_bound_session_queue_is_used(tmp_path):
+    queue = tmp_path / "q"
+    queue.mkdir()
+    (queue / _paths.CONFIG_FILE).write_text("")
+    env = _bound(tmp_path, f'root = "{queue}"\n')
+    assert _paths.resolve_root(env=env, cwd=tmp_path) == queue
+
+
+def test_env_override_beats_the_binding(tmp_path):
+    env = _bound(tmp_path, f'root = "{tmp_path}"\n')
+    assert _paths.resolve_root(env={**env, _paths.ENV_VAR: "/x"}, cwd=tmp_path) == _paths.pathlib.Path("/x")
+
+
+@pytest.mark.parametrize("root_line", ['root = "/no/such/queue"\n', "root = [\n", "root = 3\n"])
+def test_unusable_binding_falls_through(tmp_path, root_line):
+    env = _bound(tmp_path, root_line)
+    assert _paths.resolve_root(env=env, cwd=tmp_path) == _paths.pathlib.Path(_paths.DEFAULT_ROOT).expanduser()
+
+
+def test_invalid_session_id_is_ignored(tmp_path):
+    env = {_paths.SESSION_ENV: "../etc", _paths.SESSIONS_ENV: str(tmp_path)}
+    assert _paths.session_root(env) is None
+
+
+def test_binding_path_refuses_traversal():
+    with pytest.raises(ValueError, match=r"^invalid session id '\.\./x'$"):
+        _paths.binding_path("../x", {})

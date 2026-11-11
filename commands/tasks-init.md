@@ -1,6 +1,6 @@
 ---
 description: Scaffold a new claude-tasks queue (lifecycle folders, config, brief template)
-argument-hint: "[path] [--name <project-name>]"
+argument-hint: "[path] [--name <project-name>] [--session <id> --fold-to <queue>]"
 ---
 
 Create a new task queue.
@@ -16,11 +16,30 @@ This creates the lifecycle folders (`inbox/ ready/ in-progress/ done/ parked/`),
 `view/` directory, a `tasks.toml` config, a `_template.md` brief template, and a
 `.gitignore`. The presence of `tasks.toml` is what marks a directory as a queue.
 
+## Session-linked queue
+
+A long-running session that wants its own queue, folded back into a parent queue when the
+session ends, passes both flags together:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/init_queue.py" <path> \
+  --session "$CLAUDE_CODE_SESSION_ID" --fold-to <parent queue path>
+```
+
+This appends a `[session]` table to `tasks.toml` (`id`, `lifecycle = "session"`, `fold_to`)
+and writes the binding file `$CLAUDE_TASKS_SESSIONS/<id>.toml` (default
+`~/.claude-tasks/sessions`) holding `root = "<abs queue path>"`. The session id must match
+`[A-Za-z0-9_-]+`. When the session ends, a SessionEnd hook runs `scripts/fold_session.py <root>`:
+every brief outside `done/` moves to the same status folder in `fold_to`, a pointer stub with
+`moved_to: <new path>` stays behind, the lifecycle becomes `"folded"` and the binding file is
+deleted. Running it twice is safe, and it commits through `git_sync` when the queues are git repos.
+
 After it runs:
 
 1. Tell the user where the queue was created.
 2. Explain how the scripts will find it (resolution order): the `$CLAUDE_TASKS_DIR`
-   environment variable, else a `.tasks/` directory found by walking up from the working
+   environment variable, else the queue bound to `$CLAUDE_CODE_SESSION_ID` through its
+   binding file, else a `.tasks/` directory found by walking up from the working
    directory, else `~/tasks`. If they created it somewhere non-default, suggest they
    either set `CLAUDE_TASKS_DIR` or name the directory `.tasks` inside a project.
 3. Offer to `git init` the queue if it isn't already under version control — the whole

@@ -13,8 +13,12 @@ def _write(root, folder, name, text):
 
 
 def _brief(bid, *, title="T", status="ready", btype="todo", autonomy="full",
-           importance="2", parent="", domain="", effort="", criteria=None, goal="A goal."):
+           importance="2", parent="", domain="", effort="", criteria=None, goal="A goal.",
+           assignee=None):
     crit = "\n".join(criteria) if criteria else ""
+    # assignee is omitted entirely unless given, so the default brief doubles as the
+    # backwards-compatibility fixture for briefs written before the field existed.
+    claim = "" if assignee is None else f"\nassignee: {assignee}"
     return f"""---
 id: {bid}
 title: {title}
@@ -24,7 +28,7 @@ importance: {importance}
 autonomy: {autonomy}
 estimated-effort: {effort}
 domain: {domain}
-parent: {parent}
+parent: {parent}{claim}
 ---
 
 ## Goal
@@ -79,6 +83,77 @@ def test_load_briefs_synthesises_raw_inbox_item(tmp_path):
     assert briefs["raw-thought"]["goal"].startswith("# Raw thought")
 
 
+# ── assignee (advisory claim) ─────────────────────────────────────────────────
+
+def test_load_briefs_reads_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "in-progress", "claimed.md", _brief("claimed", assignee="alice"))
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["claimed"]["assignee"] == "alice"
+
+
+def test_load_briefs_defaults_assignee_to_empty_when_field_absent(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "legacy.md", _brief("legacy"))
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["legacy"]["assignee"] == ""
+
+
+def test_load_briefs_defaults_assignee_for_raw_inbox_item(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["raw"]["assignee"] == ""
+
+
+def test_search_text_joins_only_non_empty_parts():
+    b = {"title": "t", "domain": "", "goal": "", "assignee": "alice"}
+    assert build_board.search_text(b) == "t alice"
+
+
+def test_search_text_lowercases_and_orders_all_parts():
+    b = {"title": "Ttl", "domain": "Dom", "goal": "Goal", "assignee": "Alice"}
+    assert build_board.search_text(b) == "ttl dom goal alice"
+
+
+def test_search_text_of_unclaimed_brief_omits_assignee():
+    b = {"title": "t", "domain": "d", "goal": "g", "assignee": ""}
+    assert build_board.search_text(b) == "t d g"
+
+
+def test_card_renders_assignee_chip_when_claimed(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "in-progress", "claimed.md", _brief("claimed", assignee="agent-2"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="chip who">agent-2</span>' in page
+
+
+def test_card_omits_assignee_chip_when_unclaimed(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "free.md", _brief("free", title="Unclaimed"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert "chip who" not in page
+    assert "Unclaimed" in page  # the unclaimed card still renders
+
+
+def test_card_escapes_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "x.md", _brief("x", assignee="<script>"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="chip who">&lt;script&gt;</span>' in page
+
+
+def test_card_data_text_includes_assignee(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "x.md", _brief("x", title="Ttl", domain="", assignee="Alice"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert 'data-text="ttl a goal. alice"' in page
+
+
 # ── build(): the structural fixture ───────────────────────────────────────────
 
 def _rich_queue(tmp_path):
@@ -130,3 +205,68 @@ def test_main_uses_resolver_and_config(tmp_path, monkeypatch):
     page = (root / "view" / "board.html").read_text()
     assert "Resolved Name" in page
     assert "Just one" in page
+
+
+def test_parse_frontmatter_strips_an_inline_comment():
+    fm, _ = build_board.parse_frontmatter("---\nstatus: ready # ready | done\n---\nbody")
+    assert fm["status"] == "ready"
+
+
+def test_parse_frontmatter_reads_a_comment_only_value_as_empty():
+    fm, _ = build_board.parse_frontmatter("---\nassignee: # OPTIONAL who claimed it\n---\nb")
+    assert fm["assignee"] == ""
+
+
+def test_parse_frontmatter_keeps_a_hash_that_is_part_of_the_value():
+    fm, _ = build_board.parse_frontmatter("---\ntitle: fix issue#42\n---\nbody")
+    assert fm["title"] == "fix issue#42"
+
+
+def test_parse_frontmatter_handles_the_shipped_template():
+    fm, _ = build_board.parse_frontmatter(init_queue.QUEUE_TEMPLATE)
+    assert fm["assignee"] == ""
+    assert fm["status"] == "ready"
+    assert fm["importance"] == ""
+
+
+# ── blocked column, waiting-on chips, optional milestone progress ──────────────
+
+def test_blocked_briefs_get_their_own_column_with_the_reason(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "blocked", "w.md", _brief("w").replace("parent: \n", "parent: \nblocked_by: [dep, external:login]\n"))
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert "Blocked <span class=\"n\">1</span>" in page
+    assert "waiting on: dep, external:login" in page
+
+
+def test_queue_without_milestones_renders_no_milestone_strip(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "a.md", _brief("a"))
+    build_board.build(root, "demo")
+    assert 'class="ms-strip"' not in (root / "view" / "board.html").read_text()
+    assert build_board.milestone_strip(root) == ""
+
+
+def test_configured_milestones_render_progress_and_card_chip(tmp_path):
+    from tests.queue_helpers import MILESTONES, make_queue
+    root = make_queue(tmp_path, {"a": {"status": "done", "milestone": "M1"},
+                                 "b": {"milestone": "M1"}, "c": {"milestone": "M2"}},
+                      milestones=MILESTONES)
+    build_board.build(root, "demo")
+    page = (root / "view" / "board.html").read_text()
+    assert '<span class="pct">1/2</span>' in page and '<span class="pct">0/1</span>' in page
+    assert '<span class="chip ms">M1</span>' in page
+
+
+def test_unreadable_milestones_file_degrades_to_a_notice(tmp_path):
+    from tests.queue_helpers import make_queue
+    root = make_queue(tmp_path, {"a": {}}, milestones="x = [")
+    build_board.build(root, "demo")
+    assert "cannot read milestones file" in (root / "view" / "board.html").read_text()
+
+
+def test_milestone_with_no_briefs_shows_zero_percent(tmp_path):
+    from tests.queue_helpers import MILESTONES, make_queue
+    root = make_queue(tmp_path, {}, milestones=MILESTONES)
+    assert "width:0%" in build_board.milestone_strip(root)

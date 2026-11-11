@@ -32,9 +32,13 @@ import pathlib
 import time
 from collections.abc import Iterable, Iterator
 
+<<<<<<< HEAD
 import _compat  # noqa: F401  - version guard; must run before the annotations below evaluate
 
 TASK_DIRS = ("inbox", "ready", "in-progress", "done", "parked")
+=======
+TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
+>>>>>>> origin/main
 
 
 def lock_path(root: pathlib.Path) -> pathlib.Path:

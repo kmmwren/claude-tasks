@@ -26,6 +26,7 @@ flowchart TD
         ready["✅ ready/<br/>structured briefs"]
         inprog["🔨 in-progress/"]
         done["📚 done/<br/>the record"]
+        blocked["⛔ blocked/<br/>waiting on blocked_by"]
         parked["⏸️ parked/"]
     end
 
@@ -38,7 +39,8 @@ flowchart TD
     ready -->|prioritise, then action-task| inprog
     inprog --> done
     ready -.->|handoff to parked| parked
-    done -.->|unblocks dependents| ready
+    inprog -.->|waiting on something| blocked
+    blocked -->|every blocker done: unblock.py| ready
 ```
 
 A brief only moves forward when it's earned it: raw notes get **enriched** into briefs,
@@ -102,6 +104,104 @@ stays blocked until its dependency reaches `done/`, so the queue self-unblocks a
 lands. Define your own priority-tag weights (e.g. an `urgent`/`frog` convention) under
 `[priority]` in `tasks.toml`; the base ranking is otherwise purely mechanical.
 
+### Logging without writing the main checkout
+
+```
+python scripts/append_log.py <id> "what happened"
+```
+
+Appends a dated line to the brief's Execution log from a temporary worktree off `origin/main`,
+commits, pushes and removes the worktree. Use it where writes to the queue's main checkout are
+blocked (a subagent); `transition.py move --log` remains the way to log a state change.
+
+### Blocked state, dependency check, optional milestones
+
+A brief that cannot proceed moves to `blocked/` with what it waits for:
+
+```
+python scripts/transition.py move <id> blocked --blocked-by other-id,external:vendor reply
+```
+
+`blocked_by` lists brief ids and/or `external:<reason>` entries (a login, a decision, a
+vendor; reasons may not contain commas). When every id is `done` and no external entry
+remains, `unblock.py` returns the brief to `ready/` with `blocked_by` cleared, releasing
+several at once in priority order. It runs automatically after `transition.py move <id>
+done`, and can be run any time (`--dry-run` to preview). An external blocker is cleared by
+hand once true: `python scripts/unblock.py resolve <id> "vendor reply"` (`--dry-run` previews it without writing).
+A brief whose last external blocker is cleared while ids or `depends:` tags are still open stays in
+`blocked/` and is released automatically once they are done.
+
+Raise a brief's importance from any session with `bump.py`; it only raises, and records the
+reason and time in a `## Bump` section of the brief:
+
+```
+python scripts/bump.py <ref> --importance 1 --reason "why it matters now"
+```
+
+`<ref>` is a brief id, or `<repo>#<n>` for a brief tagged `pr:<repo>#<n>` (the PR queue). The PR
+queue also writes `blocked_by: [owner/repo#n, split]` on PR briefs; those entries are not brief
+ids, are re-evaluated on every sync, and clear when the PR they name merges.
+
+`python scripts/check_deps.py` lints the graph and exits 1 on: dependency **cycles**,
+**dangling** ids, **in-progress** briefs with unmet dependencies, blocked briefs with no
+reason, and blocked briefs that are already releasable. `blockers:` and `depends:<id>`
+keep working and take part in all of it.
+
+**Milestones are optional and owned by the project, not the queue.** Set
+`milestones = "docs/milestones.toml"` in `tasks.toml` (path relative to the directory
+holding the queue) and a brief's `milestone:` is validated against that file and the board
+shows progress per milestone. The only contract with the file is that the keys of its
+`[milestone]` table are the ids, in display order, each with an optional `title`; every
+other field is the project's. A queue without the setting behaves exactly as before.
+`python scripts/milestones.py progress --json` prints the counts.
+
+### Sharing a queue: claiming with `assignee`
+
+A queue can be shared by several people and agents. Because briefs are files in git, two
+of them can pick the same brief and neither sees the other's move until someone pushes.
+The optional `assignee:` field plus one convention keeps that cheap to avoid:
+
+```yaml
+assignee: alice        # a person, an agent name, a machine — free-form
+assignee:              # empty = unclaimed
+```
+
+**The claiming convention.** Before starting work on a brief:
+
+1. `git pull` — get everyone else's claims first.
+2. Claim it and move it, in one step:
+   ```
+   python3 scripts/transition.py move <id> in-progress --assignee alice --log "started"
+   ```
+3. That pushes **the claim alone**, immediately, before any of the actual work.
+
+The point of step 3 is that your claim becomes visible to everyone else in seconds rather
+than whenever your first real commit happens to land. Later transitions leave the claim
+alone unless you pass `--assignee` again.
+
+**Claiming will not silently steal someone else's claim.** If a brief is already claimed by
+someone other than the assignee you pass, the move is refused and nothing is written:
+
+```
+$ python3 scripts/transition.py move <id> in-progress --assignee bob
+error: '<id>' is already claimed by 'alice'; refusing to reassign it to 'bob'.
+       Coordinate with them, or release it first with --assignee "".
+```
+
+Re-claiming with the same assignee is fine (idempotent), and claiming an unclaimed brief is
+fine. To free a brief stuck under a stale claim, release it with `--assignee ""` — releasing
+is deliberately allowed regardless of who holds it. `--assignee` takes a single-line value;
+a newline in it is rejected rather than written into the frontmatter.
+
+`assignee` is **advisory, not a lock**. Within a single checkout, `transition.py` really does
+serialise concurrent moves on a file lock, so two local processes cannot both move the same
+brief, and the claim check happens under that same lock so two local sessions cannot both
+claim it. What it cannot do is coordinate *across* clones: pulling first narrows the race
+window, it does not close it, and two people who claim on separate machines within the same
+few seconds will still collide (git tells you on push, and you sort it out between you).
+Treat it as a coordination signal, not a mutex. Briefs without the field are simply
+unclaimed; the board shows a claimed brief with an assignee chip and matches it in search.
+
 ## A worked example
 
 Say you're mid-way through a code review and notice the public API has no rate limiting.
@@ -163,6 +263,7 @@ completion is what unblocked anything waiting on *it*.
 inbox/        raw, un-enriched captures (pre-briefs)
 ready/        enriched, executable briefs
 in-progress/  briefs being worked
+blocked/      briefs waiting on `blocked_by` (released by unblock.py)
 done/         completed briefs (kept — they are the record)
 parked/       suspended briefs
 view/         generated board.html (read-only; never hand-edited)
@@ -191,6 +292,7 @@ Everything user-specific is a *value*, not code. `tasks.toml` at the queue root:
 name = "My Queue"           # shown in the board title
 domains = ["work", "home"]  # the allowed set for a brief's `domain:`
 timezone = "UTC"
+# milestones = "docs/milestones.toml"   # optional, project-owned; see Blocked state above
 ```
 
 The engine (scripts, skills, board) is identical for everyone; only the config differs.

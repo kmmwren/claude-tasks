@@ -3,17 +3,19 @@
 add_task.py — let any Claude session add a well-formed brief to the queue.
 
 Fills out a brief from flags so Claude can self-capture follow-ups, discovered work, and
-improvements without hand-writing the file. Defaults to inbox/ (raw) unless given enough
-to be ready/. Stdlib only.
+improvements without hand-writing the file. Defaults to inbox/ (raw); a ready/ brief
+requires --goal, --criteria and --context so it never carries placeholder stubs. Stdlib only.
 
 Examples:
   python scripts/add_task.py --title "Rotate the leaked API key" \
      --goal "The leaked key is rotated and the app still works." \
+     --context "Key leaked in PR 123; rotate in the vault." --criteria "Old key rejected by the API" \
      --domain security --importance 1 --autonomy needs-input --due 2026-06-05 --ready --commit
 
   echo "idea: a hook that blocks committing secrets" | \
      python scripts/add_task.py --stdin --title "Pre-commit secret scanner"
 """
+
 import argparse
 import datetime
 import re
@@ -22,6 +24,15 @@ import sys
 from _concurrency import atomic_write, reserve_name
 from _paths import TASK_DIRS, require_queue, resolve_root
 from git_sync import sync_commit as _sync_commit
+from readiness import (
+    PLACEHOLDER_CONTEXT,
+    missing_ready_fields,
+    placeholder_criterion,
+    placeholder_goal,
+)
+
+# The CLI flag that supplies each field a ready brief needs.
+FLAGS = {"goal": "--goal", "criteria": "--criteria/--success", "context": "--context"}
 
 
 def slug(s: str, maxwords: int = 6) -> str:
@@ -32,10 +43,17 @@ def slug(s: str, maxwords: int = 6) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Add a brief to the tasks queue")
-    ap.add_argument("--title", required=True)
+    ap.add_argument("--title", required=True, type=str.strip)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
-    ap.add_argument("--criteria", action="append", default=[], help="repeatable success criterion")
+    ap.add_argument(
+        "--criteria",
+        "--success",
+        dest="criteria",
+        action="append",
+        default=[],
+        help="repeatable success criterion (alias --success)",
+    )
     ap.add_argument("--type", default="todo", choices=["todo", "project", "research", "decision"])
     ap.add_argument("--importance", default="3", choices=["1", "2", "3", "4"])
     ap.add_argument("--autonomy", default="needs-input", choices=["full", "needs-input", "blocked"])
@@ -45,26 +63,41 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--tags", default="")
     ap.add_argument("--parent", default="")
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
-    ap.add_argument("--status", choices=["inbox", "ready", "parked"], default=None,
-                    help="lifecycle state to file the brief in (default: inbox)")
+    ap.add_argument(
+        "--status",
+        choices=["inbox", "ready", "parked"],
+        default=None,
+        help="lifecycle state to file the brief in (default: inbox)",
+    )
     ap.add_argument("--ready", action="store_true", help="alias for --status ready")
     ap.add_argument("--stdin", action="store_true", help="append stdin to Context")
-    ap.add_argument("--commit", action="store_true", help="git add+commit+push the new brief")
+    ap.add_argument("--commit", action="store_true", help="accepted for old callers: committing is the default")
+    ap.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
     a = ap.parse_args(argv)
 
+    status = a.status or ("ready" if a.ready else "inbox")
+    a.criteria = [c.strip() for c in a.criteria if c.strip()]
+    context = a.context.strip()
+    if a.stdin and not sys.stdin.isatty():
+        context = (context + "\n\n" + sys.stdin.read().strip()).strip()
+    if status == "ready":
+        missing = [FLAGS[f] for f in missing_ready_fields(a.goal, a.criteria, context)]
+        if missing:
+            ap.error(
+                f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
+                "(omit --ready to file it in inbox/ instead)"
+            )
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()
-    status = a.status or ("ready" if a.ready else "inbox")
     # Atomically claim a unique filename BEFORE writing, so two sessions capturing the
     # same title at the same instant can't overwrite each other (O_CREAT|O_EXCL).
     nid = reserve_name(root / status, slug(a.title), [root / d for d in TASK_DIRS])
-    context = a.context
-    if a.stdin and not sys.stdin.isatty():
-        context = (context + "\n\n" + sys.stdin.read().strip()).strip()
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
 
-    crit = "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else "# TODO"
+    crit = (
+        "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {placeholder_criterion(a.title)}"
+    )
     fm = f"""---
 id: {nid}
 title: {a.title}
@@ -86,11 +119,11 @@ related: []
 
 ## Goal
 
-{a.goal or "# TODO"}
+{a.goal or placeholder_goal(a.title)}
 
 ## Context
 
-{context or "# TODO"}
+{context or PLACEHOLDER_CONTEXT}
 
 ## Success criteria
 
@@ -114,8 +147,8 @@ _none_
     atomic_write(path, fm)
     print(f"{status}/{nid}.md")
 
-    if a.commit:
-        _sync_commit(f"brief({nid}): captured ({a.source})", root)
+    if not a.no_sync:
+        _sync_commit(f"brief({nid}): captured ({a.source})", root, ids=[nid])
 
 
 if __name__ == "__main__":

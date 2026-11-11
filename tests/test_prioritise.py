@@ -278,3 +278,60 @@ def test_main_text_renders_all_flags(tmp_path, monkeypatch, capsys):
     assert "🙋" in out          # needs-you flag
     assert "⏱" in out          # lead-time flag
     assert "→1" in out          # blk unlocks one brief
+
+
+def test_fm_strips_an_inline_comment_from_a_populated_value():
+    assert prioritise.fm("---\nstatus: ready # ready | done\n---\n")["status"] == "ready"
+
+
+def test_fm_reads_a_comment_only_value_as_empty():
+    assert prioritise.fm("---\nautonomy: # full | blocked\n---\n")["autonomy"] == ""
+
+
+def test_fm_keeps_a_hash_that_is_part_of_the_value():
+    assert prioritise.fm("---\ntitle: fix issue#42\n---\n")["title"] == "fix issue#42"
+
+
+def test_fm_parses_the_shipped_template_without_comment_pollution():
+    import init_queue
+
+    parsed = prioritise.fm(init_queue.QUEUE_TEMPLATE)
+    assert parsed["assignee"] == ""
+    assert parsed["status"] == "ready"
+    assert parsed["importance"] == ""
+    assert parsed["autonomy"] == ""
+
+
+# ── blocked_by (first-class dependency form) ──────────────────────────────────
+
+def _blocked_by_brief(bid, blocked_by):
+    return _brief(bid).replace("related: []", f"blocked_by: {blocked_by}\nrelated: []")
+
+
+def test_parse_deps_includes_blocked_by_ids_but_not_externals():
+    b = {"blocked_by": "[task-a, external:login]"}
+    assert prioritise.parse_deps(b) == {"task-a"}
+
+
+def test_external_blocker_keeps_a_brief_blocked_forever():
+    blocked, unmet = prioritise.is_blocked({"autonomy": "full", "blocked_by": "[external:login]"},
+                                           done_ids={"external:login", "x"})
+    assert blocked is True and unmet == ["external:login"]
+
+
+def test_blocked_by_dependency_counts_as_unlock_and_is_met_when_done(tmp_path):
+    root = _queue(tmp_path, [
+        ("done", "dep.md", _brief("dep", status="done")),
+        ("ready", "w.md", _blocked_by_brief("w", "[dep]")),
+    ])
+    ranked = prioritise.rank(root, today=TODAY)
+    assert ranked[0]["_blocked"] is False
+
+
+def test_blocked_folder_briefs_are_indexed_for_unlock_counts(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "dep.md", _brief("dep")),
+        ("blocked", "w.md", _blocked_by_brief("w", "[dep]")),
+    ])
+    status, unlocks = prioritise.index_queue(root)
+    assert status["w"] == "blocked" and unlocks["dep"] == 1

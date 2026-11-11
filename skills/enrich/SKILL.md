@@ -42,11 +42,12 @@ context that's already discoverable.
 | `estimated-effort` | xs / s / m / l / xl |
 | `domain` | one of the domains in `tasks.toml` |
 | `tags` | free-form labels (e.g. `depends:<other-id>`) |
+| `assignee` | leave empty — enrichment doesn't claim work; `action-task` sets it |
 | `requires-local` | `true` if the brief needs local-machine files or creds |
 | `requires-repo` | repo slug if the brief needs a repo other than this queue |
 
 ### 4. Write to ready/
-Use `add_task.py --ready`, or write directly to `ready/` with `status: ready` and commit.
+Use `add_task.py --ready --goal "<end state>" --criteria "<checkable condition>" --context "<...>"` (all three are required with `--ready`), or write directly to `ready/` with `status: ready` and commit.
 
 ### 5. Archive the raw file
 ```bash
@@ -58,4 +59,5 @@ mv "$CLAUDE_TASKS_DIR/inbox/<file>.md" "$CLAUDE_TASKS_DIR/inbox/.processed/<file
 ## Inbox hygiene
 - `inbox/` items are **not briefs** — never present them as the actionable queue.
 - If inbox grows to 20+ items, flag it: "Inbox has N items — consider an enrich session."
-- After enrichment, commit all new `ready/` briefs and the `.processed/` archives together.
+- After enrichment, commit all new `ready/` briefs and the `.processed/` archives together, naming every brief id involved so their moves land whole:
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/git_sync.py" 'enrich: <n> briefs' <raw-file-id...> <new-brief-id...>`

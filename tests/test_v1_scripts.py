@@ -3,6 +3,7 @@
 The concurrency suite drives these as subprocesses (for real OS-level lock races), which
 in-process coverage can't see — so these cover the same code paths in-process for the gate.
 """
+
 import io
 
 import add_task
@@ -18,6 +19,7 @@ def queue(tmp_path):
 
 # ── add_task.slug ─────────────────────────────────────────────────────────────
 
+
 def test_slug_lowercases_and_hyphenates():
     assert add_task.slug("Hello World") == "hello-world"
 
@@ -32,10 +34,31 @@ def test_slug_fallback_when_all_specials():
 
 # ── add_task.main ─────────────────────────────────────────────────────────────
 
+
 def test_add_task_writes_ready_brief(queue, capsys):
-    add_task.main(["--title", "Build the thing", "--root", str(queue), "--ready",
-                   "--goal", "It exists.", "--criteria", "first", "--criteria", "second",
-                   "--domain", "work", "--importance", "2", "--autonomy", "full"])
+    add_task.main(
+        [
+            "--title",
+            "Build the thing",
+            "--root",
+            str(queue),
+            "--ready",
+            "--goal",
+            "It exists.",
+            "--context",
+            "why",
+            "--criteria",
+            "first",
+            "--criteria",
+            "second",
+            "--domain",
+            "work",
+            "--importance",
+            "2",
+            "--autonomy",
+            "full",
+        ]
+    )
     path = queue / "ready" / "build-the-thing.md"
     text = path.read_text()
     assert "status: ready" in text
@@ -49,6 +72,16 @@ def test_add_task_defaults_to_inbox(queue):
     assert (queue / "inbox" / "quick-idea.md").read_text().count("status: inbox") == 1
 
 
+def test_add_task_title_and_context_only_has_no_todo_placeholder(queue):
+    add_task.main(
+        ["--title", "Drop merged PRs", "--context", "Rollout notes.", "--root", str(queue)]
+    )
+    text = (queue / "inbox" / "drop-merged-prs.md").read_text()
+    assert "# TODO" not in text
+    assert "## Goal\n\nDrop merged PRs\n" in text
+    assert "- [ ] Drop merged PRs is done." in text
+
+
 def test_add_task_status_parked(queue):
     # directed handoff: file the brief straight into parked/
     add_task.main(["--title", "Pause this", "--status", "parked", "--root", str(queue)])
@@ -57,7 +90,22 @@ def test_add_task_status_parked(queue):
 
 
 def test_add_task_status_ready_matches_ready_flag(queue):
-    add_task.main(["--title", "Via status", "--status", "ready", "--root", str(queue)])
+    add_task.main(
+        [
+            "--title",
+            "Via status",
+            "--status",
+            "ready",
+            "--root",
+            str(queue),
+            "--goal",
+            "g",
+            "--criteria",
+            "c",
+            "--context",
+            "x",
+        ]
+    )
     assert (queue / "ready" / "via-status.md").is_file()
 
 
@@ -69,11 +117,28 @@ def test_add_task_appends_stdin_to_context(queue, monkeypatch):
 
 def test_add_task_commit_invokes_sync(queue, monkeypatch):
     calls = {}
-    monkeypatch.setattr(add_task, "_sync_commit",
-                        lambda msg, root: calls.update(msg=msg, root=root))
+    monkeypatch.setattr(
+        add_task, "_sync_commit", lambda msg, root, ids: calls.update(msg=msg, root=root, ids=ids)
+    )
     add_task.main(["--title", "Ship it", "--root", str(queue), "--commit"])
     assert "brief(ship-it)" in calls["msg"]
     assert calls["root"] == queue
+    assert calls["ids"] == ["ship-it"]
+
+
+def test_add_task_syncs_by_default_and_no_sync_opts_out(queue, monkeypatch):
+    calls = []
+    monkeypatch.setattr(add_task, "_sync_commit", lambda msg, root, ids: calls.append(ids))
+    add_task.main(["--title", "Default sync", "--root", str(queue)])
+    add_task.main(["--title", "Quiet one", "--root", str(queue), "--no-sync"])
+    assert calls == [["default-sync"]]
+
+
+def test_raw_capture_syncs_the_new_brief(queue, monkeypatch):
+    calls = []
+    monkeypatch.setattr(raw_capture, "sync_commit", lambda msg, root, ids: calls.append(ids))
+    raw_capture.main(["Quick thought", "--root", str(queue)])
+    assert len(calls) == 1 and calls[0][0].endswith("quick-thought")
 
 
 def test_add_task_refuses_uninitialised_dir(tmp_path):
@@ -89,6 +154,7 @@ def test_add_task_resolves_root_from_env(queue, monkeypatch):
 
 
 # ── raw_capture ───────────────────────────────────────────────────────────────
+
 
 def test_slugify_truncates_and_cleans():
     assert raw_capture.slugify("A Very, Very Long Title!") == "a-very-very-long-title"
@@ -111,3 +177,21 @@ def test_raw_capture_includes_body(queue):
 def test_raw_capture_refuses_uninitialised_dir(tmp_path):
     with pytest.raises(SystemExit, match="tasks-init"):
         raw_capture.main(["x", "--root", str(tmp_path / "nope")])
+
+
+def test_add_task_ready_without_goal_criteria_context_is_refused(queue, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        add_task.main(["--title", "Bare ready", "--root", str(queue), "--ready"])
+    assert exit_info.value.code == 2
+    assert "--goal, --criteria/--success, --context" in capsys.readouterr().err
+    assert not (queue / "ready").exists() or not list((queue / "ready").glob("bare-ready*"))
+
+
+@pytest.mark.parametrize("blank", [["--criteria", ""], ["--context", "   "]])
+def test_add_task_ready_rejects_blank_criteria_and_context(queue, blank):
+    full = ["--goal", "g", "--criteria", "c", "--context", "x"]
+    flag = blank[0]
+    argv = [a for i, a in enumerate(full) if not (full[i - (i % 2)] == flag)]
+    with pytest.raises(SystemExit) as exit_info:
+        add_task.main(["--title", "Blank", "--root", str(queue), "--ready", *argv, *blank])
+    assert exit_info.value.code == 2

@@ -2,7 +2,86 @@
 
 ## Unreleased
 
+### Fixed
+- **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
+  outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
+  parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.
+- **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
+  context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
+  applies (now `readiness.py`), treating add_task's placeholder stubs as missing, and refuses naming
+  the missing fields. `done` and `parked` are unconditional, so a folded brief can still be closed.
+- **`git_sync.py` commits only what the caller names.** It no longer runs `git add --ignore-removal .`,
+  which swept another writer's uncommitted edit into an unrelated brief's commit. `ids` stage that
+  brief's file at any depth (moves included); `paths` stage explicit pathspecs (`fold_session.py`
+  passes `.`). A lock-held deferral now says to re-run with the same ids.
+- **No autostash on a diverged push.** The local commits are rebased onto `origin/main` in a scratch
+  worktree and pushed; the checkout advances with `reset --keep`, so uncommitted edits are never
+  stashed or dropped. A rebase conflict leaves the local commits in place and prints the conflicting
+  paths plus the unpushed and unintegrated commits.
+- **A closed brief is no longer re-created.** `git_sync.py` fetches `origin/main` and refuses to
+  commit a new brief file whose id is already filed in another state dir (`done/` included), on
+  disk or on origin. The file stays untracked and a message names it, so a late note aimed at a
+  moved brief cannot leave the id in two states.
+- **`append_log.py` finds a brief that is uncommitted in the main checkout.** A brief filed on disk
+  but never committed (a peer-message brief, say) was invisible to the temporary worktree and
+  failed with "no brief with id". It is now committed through `git_sync` first, staging only that
+  brief, so the log line lands and the checkout's next pull is not blocked by an untracked copy.
+- **`append_log.py` no longer gives up while other writers keep pushing.** Local callers take turns
+  on the queue lock, and a push that loses a race retries from fresh `origin/main` with jittered
+  backoff (8 attempts). A push refused for any other reason fails at once with git's message, and
+  every failure prints the line that was not logged.
+
 ### Added
+- **`append_log.py`** appends a dated execution-log line to a brief from a temporary worktree
+  off `origin/main`, commits, pushes and removes the worktree, so a subagent refused writes in
+  the queue's main checkout can still log: `python scripts/append_log.py <id> "<line>"`.
+- **Slack handoffs can go to `parked/`.** `slack_links.py` flags each link `parked` when the
+  batch direction or that link's own note says park; `handoff` files flagged links with
+  `--status parked`, other directions still route through Directed handoff, and `queue-task`
+  sends pasted Slack links there. A Slack or artifact handoff captures only those links: the
+  session keeps its open work and carries on.
+- **Slack links as a handoff input.** Paste Slack permalinks, each optionally followed by a
+  note, and `handoff` files one brief per link; `slack_links.py` splits the batch, with text
+  before the first link as a shared direction.
+- **A first-class `blocked/` lifecycle state.** `transition.py move <id> blocked --blocked-by
+  <ids|external:reason>` records what a brief waits for; moving it anywhere else clears the
+  list. Unknown ids and self-blocks are refused.
+- **`unblock.py`** returns blocked briefs to `ready/` once every blocker is `done`, in priority
+  order, automatically after `move ... done` and on demand. `unblock.py resolve` clears an
+  `external:` blocker.
+- **`check_deps.py`** reports dependency cycles, dangling ids, in-progress briefs with unmet
+  dependencies, reasonless blocked briefs and releasable ones.
+- **Optional, project-owned milestones.** `milestones = "<path>"` in `tasks.toml` validates a
+  brief's `milestone:` against that file and groups board progress by it; unset, nothing
+  changes. The board also gains a Blocked column showing each brief's reasons.
+
+### Fixed
+- **Claiming no longer overwrites someone else's claim.** `move --assignee` now reads the
+  current `assignee` under the same move lock and refuses a *different* non-empty claimant
+  instead of replacing it, closing a race where two local sessions could both report success
+  and the first could commit the second's claim. Re-claiming with the same assignee and
+  claiming an unclaimed brief are unchanged; a plain `move` still preserves the claim
+  silently; and `--assignee ""` still releases whoever holds it, which stays the documented
+  way to free a stuck brief.
+- **`--assignee` is validated as a single-line value.** A newline or carriage return in it is
+  rejected with a clear error instead of being written into the frontmatter, where it could
+  have injected further keys. A whitespace-only value normalises to a release.
+- **Inline frontmatter comments are no longer parsed as values.** Every parser
+  (`transition.py`, `prioritise.py`, `build_board.py`) shared the same gap: `assignee: #
+  OPTIONAL who has claimed this…` read back as that whole comment, so a brief copied
+  straight from `_template.md` looked *claimed by a comment*, and even populated fields like
+  `status: ready # inbox | ready | …` carried their comment into the value. Cleaning is now
+  one shared `_paths.strip_comment`. A `#` that opens the value or is spaced off from it
+  starts a comment; a `#` inside a value (`issue#42`, `[a#b]`) is kept.
+
+### Added
+- **`assignee:` frontmatter field** — optional, free-form (person or agent), empty means
+  unclaimed. Lets several people/agents share one queue without silently picking the same
+  brief: pull, then `transition.py move <id> in-progress --assignee <who>`, which claims and
+  moves in one locked commit that lands before the work starts. Advisory coordination only,
+  **not** a lock across clones. Rendered as a chip on the board and included in its search.
+  Briefs without the field keep working unchanged, and transitions without `--assignee`
+  leave an existing claim untouched (`--assignee ""` releases it).
 - **Directed handoff** — `add_task.py` gains `--status {inbox,ready,parked}` (default
   inbox; `--ready` kept as an alias). The `handoff` skill can now route a session's items to
   a chosen lifecycle state per the user's direction (e.g. "hand off everything to parked"),
