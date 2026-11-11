@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- **`prioritise.py` gains an opt-in WSJF scorer.** Cost of delay (importance, due curve and lead
+  time, milestone, tag weights, chain leverage) over job size, plus aging; blockers inherit their
+  waiters' score; `cos:` lanes (expedite cap, fixed-date, chore share) and a `move` per brief.
+  Chosen by `[priority] scorer` (default `additive`, unchanged) or `--scorer`. `--json` adds both
+  scores and ranks, `lane`, `move`, `leverage`, `why` and `schema_version`; existing fields are
+  unchanged.
+
 ### Fixed
 - **`transition.py move` promotes an inbox file only once it carries a goal, success criteria and
   context.** Moving it to `ready`, `in-progress` or `blocked` runs the same check `add_task.py --ready`
