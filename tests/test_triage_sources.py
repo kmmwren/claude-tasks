@@ -44,6 +44,7 @@ def test_an_invented_reference_fails_even_beside_a_real_one():
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
     (tmp_path / ".claude/skills/enrich").mkdir(parents=True)
     (tmp_path / ".claude/CLAUDE.md").write_text("x")
