@@ -37,7 +37,13 @@ from typing import Any
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import clone_state_path, file_lock, repo_lock, try_lock  # noqa: E402
+from _concurrency import (  # noqa: E402
+    clone_state_path,
+    exclusive_lock,
+    repo_lock,
+    shared_lock,
+    try_lock,
+)
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
 
 
@@ -312,7 +318,7 @@ def _drain(root: pathlib.Path) -> bool:
     pushed = True
     while True:
         # Let writers already committing land first, so one push carries the whole burst.
-        with file_lock(clone_state_path(root, WRITERS_LOCK), timeout=SETTLE_MAX, poll=0.05):
+        with exclusive_lock(clone_state_path(root, WRITERS_LOCK), timeout=SETTLE_MAX, poll=0.05):
             pass
         if not _take_dirty(root):
             return pushed
@@ -375,7 +381,7 @@ def request_push(root: pathlib.Path) -> None:
 
 def push_now(root: pathlib.Path) -> bool:
     """Push synchronously, after any running pusher, for callers that need origin current."""
-    with file_lock(clone_state_path(root, PUSH_LOCK), timeout=PUSH_WAIT) as acquired:
+    with exclusive_lock(clone_state_path(root, PUSH_LOCK), timeout=PUSH_WAIT) as acquired:
         if not acquired:
             print("  (push deferred: another pusher still running; it will push these commits.)")
             return False
@@ -444,7 +450,7 @@ def _commit_for_push(
     if not owns_repo(root):
         return False  # a project queue lives inside another repo, which ships it
     # Shared while committing, so a pusher waiting for exclusive access waits for the whole burst.
-    with file_lock(clone_state_path(root, WRITERS_LOCK), shared=True):
+    with shared_lock(clone_state_path(root, WRITERS_LOCK)):
         if not _commit(message, root, ids, paths):
             return False
         _mark_dirty(root)

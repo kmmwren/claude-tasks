@@ -70,19 +70,30 @@ def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
 
 
 @contextlib.contextmanager
-def file_lock(
-    path: pathlib.Path, shared: bool = False, timeout: float = 30.0, poll: float = 0.1
-) -> Iterator[bool]:
-    """Hold an exclusive (or shared) flock on `path`; yields False if `timeout` passed first."""
+def _held_flock(path: pathlib.Path, op: int, timeout: float, poll: float) -> Iterator[bool]:
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     acquired = False
     try:
-        acquired = _flock_within(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX, timeout, poll)
+        acquired = _flock_within(fd, op, timeout, poll)
         yield acquired
     finally:
         if acquired:
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+def exclusive_lock(
+    path: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
+    """Hold an exclusive flock on `path`; yields False if `timeout` passed first."""
+    return _held_flock(path, fcntl.LOCK_EX, timeout, poll)
+
+
+def shared_lock(
+    path: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
+    """Hold a shared flock on `path`, alongside other sharers; yields False if `timeout` passed first."""
+    return _held_flock(path, fcntl.LOCK_SH, timeout, poll)
 
 
 def try_lock(path: pathlib.Path) -> int | None:
@@ -106,7 +117,7 @@ def repo_lock(
     "the brief is safe on disk; sync was deferred" rather than an error, because the
     file write already succeeded before the lock was ever requested.
     """
-    return file_lock(lock_path(root), timeout=timeout, poll=poll)
+    return exclusive_lock(lock_path(root), timeout=timeout, poll=poll)
 
 
 @contextlib.contextmanager
