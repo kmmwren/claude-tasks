@@ -154,7 +154,7 @@ def resolve_brief(query: str, root: pathlib.Path,
     return hits
 
 
-def _set_field(block: str, key: str, value: str) -> str:
+def set_field(block: str, key: str, value: str) -> str:
     """Set `key: value` in a frontmatter block, appending the line when the key is absent."""
     line = f"{key}: {value}".rstrip()
     block, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _: line, block, count=1)
@@ -177,9 +177,9 @@ def _update_frontmatter(text: str, new_status: str, today: str,
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
     if assignee is not None:
-        block = _set_field(block, "assignee", assignee)
+        block = set_field(block, "assignee", assignee)
     if blocked_by is not None:
-        block = _set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
+        block = set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
     return text[: m.start(2)] + block + text[m.end(2):]
 
 

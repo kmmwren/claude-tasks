@@ -80,6 +80,15 @@ def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> I
         os.close(fd)
 
 
+@contextlib.contextmanager
+def require_lock(root: pathlib.Path, timeout: float = 30.0) -> Iterator[None]:
+    """repo_lock for a read-modify-write that must not run unlocked: a timeout raises instead."""
+    with repo_lock(root, timeout) as acquired:
+        if not acquired:
+            raise TimeoutError(f"queue lock at {root} not acquired within {timeout}s; nothing written")
+        yield
+
+
 def atomic_write(path: pathlib.Path, text: str) -> None:
     """Write `text` to `path` so concurrent readers/writers never see a partial file.
 

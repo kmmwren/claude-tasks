@@ -61,3 +61,47 @@ owner = "someone"      # project-owned field, ignored by the plugin
 [milestone.M2]
 title = "Second"
 """
+
+
+def inbox_text(bid: str, *, title: str = "", goal: str = "# TODO", context: str = "_none recorded_",
+               criteria: tuple[str, ...] = (), tags: str = "[]", parent: str = "", importance: str = "3") -> str:
+    """An inbox brief as add_task files it: stub fields unless given."""
+    title = title or f"Title of {bid}"
+    checks = "\n".join(f"- [ ] {c}" for c in criteria) or f"- [ ] {title} is done."
+    return f"""---
+id: {bid}
+title: {title}
+status: inbox
+type: todo
+importance: {importance}
+autonomy: full
+domain: work
+tags: {tags}
+parent: {parent}
+source: claude
+---
+
+## Goal
+
+{goal}
+
+## Context
+
+{context}
+
+## Success criteria
+
+{checks}
+
+## Execution log
+
+2026-11-01: captured.
+"""
+
+
+def make_inbox(tmp_path: pathlib.Path, briefs: dict[str, str]) -> pathlib.Path:
+    """A queue whose inbox/ holds `briefs` (id -> full text)."""
+    root = init_queue.init_queue(tmp_path / "proj" / ".tasks", name="demo")
+    for bid, text in briefs.items():
+        (root / "inbox" / f"{bid}.md").write_text(text)
+    return root

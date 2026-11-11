@@ -62,3 +62,14 @@ def test_add_task_defaults_all_count_as_missing_whatever_the_title(tmp_path, tit
     add_task.main(["--title", title, "--root", str(queue)])
     (filed,) = (queue / "inbox").glob("*.md")
     assert readiness.brief_missing_fields(filed.read_text()) == ["goal", "criteria", "context"]
+
+
+@pytest.mark.parametrize("goal, context, criteria", [
+    ("# TODO", "Because.", "- [ ] Done."),
+    ("Ship.", "TBD", "- [ ] Done."),
+    ("Ship.", "Because.", "<!-- one checkable line per outcome -->"),
+    ("Ship.", "Because.", "- [ ] TODO"),
+])
+def test_stub_and_comment_only_fields_count_as_missing(goal, context, criteria):
+    text = f"## Goal\n\n{goal}\n\n## Context\n\n{context}\n\n## Success criteria\n\n{criteria}\n"
+    assert len(readiness.brief_missing_fields(text)) == 1
