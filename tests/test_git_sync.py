@@ -143,7 +143,7 @@ def test_sync_conflict_is_reported_and_local_commits_are_kept(tmp_path, capsys):
     assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is False
 
     out = capsys.readouterr().out
-    assert "rebase conflict in ready/shared.md" in out
+    assert "unresolved conflict in: ready/shared.md" in out
     assert "brief(shared): edited" in out and "other: ready/shared.md" in out
     assert git(repo, "log", "-1", "--format=%s").stdout.strip() == "brief(shared): edited"
     assert git(repo, "stash", "list").stdout == ""
