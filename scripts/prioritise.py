@@ -31,6 +31,7 @@ Usage:
   python scripts/prioritise.py --scorer wsjf   # rank by WSJF for this call
   python scripts/prioritise.py --context cloud # exclude briefs needing local/other-repo access
 """
+
 import argparse
 import dataclasses
 import datetime
@@ -105,13 +106,16 @@ def _merged(overrides: dict[str, Any]) -> dict[str, Any]:
     out = dict(PRIORITY_DEFAULTS)
     for key, value in overrides.items():
         base = out.get(key)
-        out[key] = {**base, **value} if isinstance(base, dict) and isinstance(value, dict) else value
+        out[key] = (
+            {**base, **value} if isinstance(base, dict) and isinstance(value, dict) else value
+        )
     return out
 
 
 @dataclasses.dataclass(frozen=True)
 class Weights:
     """The `[priority]` table of tasks.toml, typed."""
+
     scorer: Scorer
     importance: dict[int, float]
     job_size: dict[str, float]
@@ -135,9 +139,12 @@ class Weights:
             importance={int(k): float(v) for k, v in p["importance_values"].items()},
             job_size={str(k): float(v) for k, v in p["job_size"].items()},
             due_curve=tuple((int(d), float(v)) for d, v in p["due_curve"]),
-            lead_time=float(p["lead_time_weight"]), leverage=float(p["leverage_weight"]),
-            milestone=float(p["milestone_weight"]), aging_per_day=float(p["aging_per_day"]),
-            aging_cap=float(p["aging_cap"]), expedite_cap=int(p["expedite_cap"]),
+            lead_time=float(p["lead_time_weight"]),
+            leverage=float(p["leverage_weight"]),
+            milestone=float(p["milestone_weight"]),
+            aging_per_day=float(p["aging_per_day"]),
+            aging_cap=float(p["aging_cap"]),
+            expedite_cap=int(p["expedite_cap"]),
             chore_share=float(p["chore_share"]),
             fixed_date_horizon_days=int(p["fixed_date_horizon_days"]),
             human_tags=frozenset(p["human_tags"]),
@@ -151,8 +158,11 @@ class Weights:
         try:
             return cls.from_priority(table)
         except (ValueError, TypeError, AttributeError) as err:
-            print(f"prioritise: ignoring [priority] settings in tasks.toml ({err}); "
-                  "using defaults with tag_weights", file=sys.stderr)
+            print(
+                f"prioritise: ignoring [priority] settings in tasks.toml ({err}); "
+                "using defaults with tag_weights",
+                file=sys.stderr,
+            )
             return cls.from_priority({"tag_weights": table.get("tag_weights", {})})
 
     def importance_value(self, raw: str) -> float:
@@ -178,6 +188,7 @@ DEFAULT_WEIGHTS = Weights.from_priority({})
 @dataclasses.dataclass(frozen=True)
 class Factors:
     """One brief's WSJF score, factor by factor, so the ranking can always say why."""
+
     importance: float
     time_criticality: float
     goal: float
@@ -243,8 +254,13 @@ def lead_time_urgent(brief: dict[str, Any], today: datetime.date) -> bool:
     return days is not None and 0 <= days <= effort_days
 
 
-def score(brief: dict[str, Any], today: datetime.date, *, unlocks: int = 0,
-          tag_weights: dict[str, int] | None = None) -> int:
+def score(
+    brief: dict[str, Any],
+    today: datetime.date,
+    *,
+    unlocks: int = 0,
+    tag_weights: dict[str, int] | None = None,
+) -> int:
     """The additive score: the original ranking, unchanged."""
     due_score = 0
     if brief.get("due"):
@@ -262,11 +278,23 @@ def score(brief: dict[str, Any], today: datetime.date, *, unlocks: int = 0,
     lead_bonus = 300 if lead_time_urgent(brief, today) else 0
     tags = _parse_tags(brief)
     tag_score = sum(w for t, w in (tag_weights or {}).items() if t in tags)
-    return due_score + importance_score + effort_score + lead_bonus + tag_score + unlocks * UNLOCK_WEIGHT
+    return (
+        due_score
+        + importance_score
+        + effort_score
+        + lead_bonus
+        + tag_score
+        + unlocks * UNLOCK_WEIGHT
+    )
 
 
-def factors(brief: dict[str, Any], today: datetime.date, *, leverage: int = 0,
-            weights: Weights = DEFAULT_WEIGHTS) -> Factors:
+def factors(
+    brief: dict[str, Any],
+    today: datetime.date,
+    *,
+    leverage: int = 0,
+    weights: Weights = DEFAULT_WEIGHTS,
+) -> Factors:
     tags = _parse_tags(brief)
     lead = weights.lead_time if lead_time_urgent(brief, today) else 0.0
     return Factors(
@@ -280,8 +308,13 @@ def factors(brief: dict[str, Any], today: datetime.date, *, leverage: int = 0,
     )
 
 
-def wsjf_score(brief: dict[str, Any], today: datetime.date, *, leverage: int = 0,
-               weights: Weights = DEFAULT_WEIGHTS) -> float:
+def wsjf_score(
+    brief: dict[str, Any],
+    today: datetime.date,
+    *,
+    leverage: int = 0,
+    weights: Weights = DEFAULT_WEIGHTS,
+) -> float:
     return factors(brief, today, leverage=leverage, weights=weights).total
 
 
@@ -301,6 +334,7 @@ def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
 @dataclasses.dataclass(frozen=True)
 class WaitGraph:
     """Which live briefs wait on which: the edges leverage and priority inheritance walk."""
+
     waiters: dict[str, tuple[str, ...]]
 
     @classmethod
@@ -322,6 +356,7 @@ class WaitGraph:
                 kids = [value(w, seen) + step for w in self.waiters.get(node, ()) if w not in seen]
                 memo[node] = max([base(node), *kids])
             return memo[node]
+
         return value
 
     def depth(self) -> Callable[[str], float]:
@@ -341,7 +376,8 @@ def is_blocked(brief: dict[str, Any], done_ids: set[str]) -> tuple[bool, list[st
 
 def declared_lane(brief: dict[str, Any]) -> Lane:
     raw = (brief.get("cos", "") or "").strip() or next(
-        (t[4:] for t in sorted(_parse_tags(brief)) if t.startswith("cos:")), "")
+        (t[4:] for t in sorted(_parse_tags(brief)) if t.startswith("cos:")), ""
+    )
     return next((lane for lane in DECLARABLE_LANES if lane.value == raw), Lane.STANDARD)
 
 
@@ -367,6 +403,7 @@ def move_of(brief: dict[str, Any], blocked: bool, weights: Weights) -> Move:
 @dataclasses.dataclass(frozen=True)
 class _RankContext:
     """Everything one ranking pass reads once: the queue's graph, scores and settings."""
+
     today: datetime.date
     context: str
     weights: Weights
@@ -379,17 +416,34 @@ class _RankContext:
     fleet: FleetBlockers
 
     @classmethod
-    def load(cls, root: pathlib.Path, today: datetime.date, context: str, weights: Weights,
-             tag_weights: dict[str, int]) -> "_RankContext":
+    def load(
+        cls,
+        root: pathlib.Path,
+        today: datetime.date,
+        context: str,
+        weights: Weights,
+        tag_weights: dict[str, int],
+    ) -> "_RankContext":
         queue = load_queue(root)
         graph = WaitGraph.build(queue)
         depth = graph.depth()
-        scored = {b.id: factors(b.fields, today, leverage=int(depth(b.id)), weights=weights)
-                  for b in queue if b.status in LIVE_DIRS}
-        return cls(today, context, weights, tag_weights, index_queue(root)[1], depth, scored,
-                   {b.id for b in queue if b.status == "done"},
-                   graph.inherited({bid: f.total for bid, f in scored.items()}),
-                   FleetBlockers.for_queue(root))
+        scored = {
+            b.id: factors(b.fields, today, leverage=int(depth(b.id)), weights=weights)
+            for b in queue
+            if b.status in LIVE_DIRS
+        }
+        return cls(
+            today,
+            context,
+            weights,
+            tag_weights,
+            index_queue(root)[1],
+            depth,
+            scored,
+            {b.id for b in queue if b.status == "done"},
+            graph.inherited({bid: f.total for bid, f in scored.items()}),
+            FleetBlockers.for_queue(root),
+        )
 
     def wsjf(self, bid: str) -> tuple[Factors, float]:
         """The brief's own factors and its score after inheriting from its waiters."""
@@ -405,17 +459,26 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
     why: dict[str, Any] = {**own.why(), "inherited": round(wsjf - own.total, 1)}
     if blocker:
         why["fleet_blocker"] = blocker.label()
-    b.update({
-        "_score_additive": score(b, ctx.today, unlocks=ctx.unlocks.get(bid, 0),
-                                 tag_weights=ctx.tag_weights),
-        "_score_wsjf": wsjf, "_why": why,
-        "_unlocks": ctx.unlocks.get(bid, 0), "_leverage": int(ctx.depth(bid)),
-        "_lead_urgent": lead_time_urgent(b, ctx.today), "_blocked": blocked, "_unmet": pending,
-        "_file": f.name, "_lane": Lane.FLEET_BLOCKER if blocker else lane_of(b, ctx.today, ctx.weights),
-        "_move": move_of(b, blocked, ctx.weights),
-        "_actionable": b.get("autonomy") == "full" and not blocked
-        and is_runnable_in_context(b, ctx.context),
-    })
+    b.update(
+        {
+            "_score_additive": score(
+                b, ctx.today, unlocks=ctx.unlocks.get(bid, 0), tag_weights=ctx.tag_weights
+            ),
+            "_score_wsjf": wsjf,
+            "_why": why,
+            "_unlocks": ctx.unlocks.get(bid, 0),
+            "_leverage": int(ctx.depth(bid)),
+            "_lead_urgent": lead_time_urgent(b, ctx.today),
+            "_blocked": blocked,
+            "_unmet": pending,
+            "_file": f.name,
+            "_lane": Lane.FLEET_BLOCKER if blocker else lane_of(b, ctx.today, ctx.weights),
+            "_move": move_of(b, blocked, ctx.weights),
+            "_actionable": b.get("autonomy") == "full"
+            and not blocked
+            and is_runnable_in_context(b, ctx.context),
+        }
+    )
     return b
 
 
@@ -423,8 +486,9 @@ def _by(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(items, key=lambda b: (-b[key], b.get("estimated-effort", "z")))
 
 
-def _interleave(main: list[dict[str, Any]], chores: list[dict[str, Any]],
-                share: float) -> list[dict[str, Any]]:
+def _interleave(
+    main: list[dict[str, Any]], chores: list[dict[str, Any]], share: float
+) -> list[dict[str, Any]]:
     """`main` with one chore after every N items, so a `share` of slots stays reserved."""
     if share <= 0:
         return main + chores
@@ -445,34 +509,46 @@ def order_lanes(items: list[dict[str, Any]], weights: Weights) -> list[dict[str,
     """Fleet blockers (uncapped), then expedite (actionable, up to the cap), fixed-date, standard with chores."""
     ranked = _by("_score_wsjf", items)
     expedite = [b for b in ranked if b["_lane"] is Lane.EXPEDITE]
-    held = {id(b) for b in [b for b in expedite if b["_actionable"]][:weights.expedite_cap]}
+    held = {id(b) for b in [b for b in expedite if b["_actionable"]][: weights.expedite_cap]}
     for b in expedite:
         if id(b) not in held:
             b["_lane"] = Lane.STANDARD
     lane = {ln: [b for b in ranked if b["_lane"] is ln] for ln in Lane}
-    return (lane[Lane.FLEET_BLOCKER] + lane[Lane.EXPEDITE] + lane[Lane.FIXED_DATE]
-            + _interleave(lane[Lane.STANDARD], lane[Lane.CHORE], weights.chore_share))
+    return (
+        lane[Lane.FLEET_BLOCKER]
+        + lane[Lane.EXPEDITE]
+        + lane[Lane.FIXED_DATE]
+        + _interleave(lane[Lane.STANDARD], lane[Lane.CHORE], weights.chore_share)
+    )
 
 
 def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[dict[str, Any]]]:
     """Both orderings, each brief stamped with its rank under each."""
-    orders = {Scorer.ADDITIVE: _fleet_first(_by("_score_additive", items)),
-              Scorer.WSJF: order_lanes(items, weights)}
+    orders = {
+        Scorer.ADDITIVE: _fleet_first(_by("_score_additive", items)),
+        Scorer.WSJF: order_lanes(items, weights),
+    }
     for scorer, ordered in orders.items():
         for i, b in enumerate(ordered, 1):
             b[f"_rank_{scorer.value}"] = i
     return orders
 
 
-def rank(root: pathlib.Path, today: datetime.date | None = None, context: str = "",
-         tag_weights: dict[str, int] | None = None, weights: Weights | None = None,
-         scorer: Scorer | None = None) -> list[dict[str, Any]]:
+def rank(
+    root: pathlib.Path,
+    today: datetime.date | None = None,
+    context: str = "",
+    tag_weights: dict[str, int] | None = None,
+    weights: Weights | None = None,
+    scorer: Scorer | None = None,
+) -> list[dict[str, Any]]:
     """Every ready/ brief, scored both ways and annotated, in the chosen scorer's order."""
     weights = weights or Weights.for_queue(root)
     tags = weights.tags if tag_weights is None else tag_weights
     ctx = _RankContext.load(root, today or datetime.date.today(), context, weights, tags)
-    items = [_annotate(f, dict(fm(f.read_text())), ctx)
-             for f in sorted((root / "ready").glob("*.md"))]
+    items = [
+        _annotate(f, dict(fm(f.read_text())), ctx) for f in sorted((root / "ready").glob("*.md"))
+    ]
     chosen = scorer or weights.scorer
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]
@@ -505,10 +581,12 @@ def _why_text(why: dict[str, Any]) -> str:
 
 
 def _row(b: dict[str, Any]) -> str:
-    return (f"{b['_score']:>7g}  {b['_lane'].value:<13} {b['_move'].value:<8} "
-            f"{b.get('importance', '?'):<2} {b.get('due', '') or '-':<10} "
-            f"{b.get('estimated-effort', '') or '-':<3} {b.get('id', '?')}{_flags(b)}"
-            f"  [wsjf {_why_text(b['_why'])}]")
+    return (
+        f"{b['_score']:>7g}  {b['_lane'].value:<13} {b['_move'].value:<8} "
+        f"{b.get('importance', '?'):<2} {b.get('due', '') or '-':<10} "
+        f"{b.get('estimated-effort', '') or '-':<3} {b.get('id', '?')}{_flags(b)}"
+        f"  [wsjf {_why_text(b['_why'])}]"
+    )
 
 
 SCHEMA_VERSION = 2
@@ -517,15 +595,27 @@ SCHEMA_VERSION = 2
 def _json_row(b: dict[str, Any]) -> dict[str, Any]:
     """Pre-v2 keys keep their meaning; v2 keys are additive."""
     return {
-        "id": b.get("id"), "score": b["_score"], "title": b.get("title", ""),
-        "importance": b.get("importance"), "due": b.get("due", ""),
-        "effort": b.get("estimated-effort", ""), "file": b["_file"],
-        "blocked": b["_blocked"], "unmet": b["_unmet"], "unlocks": b["_unlocks"],
-        "lead_urgent": b["_lead_urgent"], "actionable": b["_actionable"],
-        "score_additive": b["_score_additive"], "score_wsjf": b["_score_wsjf"],
-        "rank_additive": b["_rank_additive"], "rank_wsjf": b["_rank_wsjf"],
-        "lane": b["_lane"].value, "move": b["_move"].value, "leverage": b["_leverage"],
-        "why": b["_why"], "schema_version": SCHEMA_VERSION,
+        "id": b.get("id"),
+        "score": b["_score"],
+        "title": b.get("title", ""),
+        "importance": b.get("importance"),
+        "due": b.get("due", ""),
+        "effort": b.get("estimated-effort", ""),
+        "file": b["_file"],
+        "blocked": b["_blocked"],
+        "unmet": b["_unmet"],
+        "unlocks": b["_unlocks"],
+        "lead_urgent": b["_lead_urgent"],
+        "actionable": b["_actionable"],
+        "score_additive": b["_score_additive"],
+        "score_wsjf": b["_score_wsjf"],
+        "rank_additive": b["_rank_additive"],
+        "rank_wsjf": b["_rank_wsjf"],
+        "lane": b["_lane"].value,
+        "move": b["_move"].value,
+        "leverage": b["_leverage"],
+        "why": b["_why"],
+        "schema_version": SCHEMA_VERSION,
     }
 
 
@@ -535,8 +625,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--actionable", action="store_true", help="only auto-actionable briefs")
     ap.add_argument("--context", default="", help="execution context, e.g. 'cloud'")
-    ap.add_argument("--scorer", choices=[s.value for s in Scorer],
-                    help="override tasks.toml [priority] scorer for this call")
+    ap.add_argument(
+        "--scorer",
+        choices=[s.value for s in Scorer],
+        help="override tasks.toml [priority] scorer for this call",
+    )
     a = ap.parse_args(argv)
 
     root = require_queue(resolve_root())

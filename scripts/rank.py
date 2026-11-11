@@ -12,6 +12,7 @@ due and unlock facts go to the judge as features. Briefs clearing an open fleet 
 profile/priorities.md; any failure (no profile, CLI error, invalid output) falls back to filter
 order and says why. This is for lists a person reads; automations keep using prioritise.py.
 """
+
 from __future__ import annotations
 
 import abc
@@ -46,10 +47,15 @@ from picks import PickLog, Shown, ShownItem, state_dir  # noqa: E402
 from taste import Profile, ProfileError, load_profile  # noqa: E402
 
 DEFAULTS: dict[str, Any] = {
-    "candidates": 15, "top": 10, "model": "", "timeout": 240, "setting_sources": "project",
+    "candidates": 15,
+    "top": 10,
+    "model": "",
+    "timeout": 240,
+    "setting_sources": "project",
     "launcher": "~/.claude-switch/claude-any.sh",
     "local_ok": "read-only-research:predictor head setwise judge, tools off, latency-sensitive",
-    "excerpt_chars": 600, "low_confidence": 0.75,
+    "excerpt_chars": 600,
+    "low_confidence": 0.75,
 }
 SCRIPTS = pathlib.Path(__file__).parent
 FLEET_BLOCKER_LANE = "fleet-blocker"
@@ -62,6 +68,7 @@ def settings(root: pathlib.Path) -> dict[str, Any]:
 @dataclasses.dataclass(frozen=True)
 class QueueBrief:
     """One filtered brief: prioritise.py's row plus what the scope and the judge read from its file."""
+
     id: str
     title: str
     facts: str
@@ -118,6 +125,7 @@ class ProjectScope(Scope):
 
 class SessionScope(AllScope):
     """Everything ready in the queue a session is bound to (its `sessions/<id>.toml`)."""
+
     name = "session"
 
     def root(self, default: pathlib.Path) -> pathlib.Path:
@@ -127,13 +135,17 @@ class SessionScope(AllScope):
         return bound
 
 
-SCOPES: dict[str, type[Scope]] = {cls.name: cls for cls in (AllScope, TagScope, ProjectScope, SessionScope)}
+SCOPES: dict[str, type[Scope]] = {
+    cls.name: cls for cls in (AllScope, TagScope, ProjectScope, SessionScope)
+}
 
 
 def parse_scope(text: str) -> Scope:
     name, _, value = text.partition(":")
     if name not in SCOPES or (name != "all" and not value):
-        raise SystemExit(f"--scope must be all, tag:<t>, project:<slug> or session:<id>, not {text!r}")
+        raise SystemExit(
+            f"--scope must be all, tag:<t>, project:<slug> or session:<id>, not {text!r}"
+        )
     return SCOPES[name](value)
 
 
@@ -142,20 +154,29 @@ FilterFn = Callable[[pathlib.Path], list[dict[str, Any]]]
 
 def prioritise_rows(root: pathlib.Path) -> list[dict[str, Any]]:
     """prioritise.py's --json order, through its CLI so its scorer stays its own business."""
-    proc = subprocess.run([sys.executable, str(SCRIPTS / "prioritise.py"), "--json"], capture_output=True,
-                          text=True, check=False, env={**os.environ, ENV_VAR: str(root)})
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "prioritise.py"), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, ENV_VAR: str(root)},
+    )
     try:
         rows: Any = json.loads(proc.stdout) if proc.returncode == 0 else None
     except ValueError:
         rows = None
     if not isinstance(rows, list):
-        raise SystemExit(f"prioritise.py --json failed (exit {proc.returncode}): {proc.stderr.strip()[-300:]}")
+        raise SystemExit(
+            f"prioritise.py --json failed (exit {proc.returncode}): {proc.stderr.strip()[-300:]}"
+        )
     return rows
 
 
 def facts(row: Mapping[str, Any]) -> str:
-    return (f"importance {row.get('importance') or '?'}; due {row.get('due') or 'none'}; "
-            f"effort {row.get('effort') or '?'}; unlocks {len(row.get('unlocks') or [])} briefs")
+    return (
+        f"importance {row.get('importance') or '?'}; due {row.get('due') or 'none'}; "
+        f"effort {row.get('effort') or '?'}; unlocks {len(row.get('unlocks') or [])} briefs"
+    )
 
 
 def pinned_blocker(row: Mapping[str, Any]) -> str:
@@ -172,12 +193,20 @@ def load_brief(root: pathlib.Path, row: Mapping[str, Any]) -> QueueBrief | None:
     except FileNotFoundError:
         return None
     meta = fm(text)
-    return QueueBrief(str(row["id"]), str(row.get("title") or ""), facts(row),
-                      frozenset(parse_list(meta.get("tags", ""))), meta.get("project", ""), text,
-                      pinned_blocker(row))
+    return QueueBrief(
+        str(row["id"]),
+        str(row.get("title") or ""),
+        facts(row),
+        frozenset(parse_list(meta.get("tags", ""))),
+        meta.get("project", ""),
+        text,
+        pinned_blocker(row),
+    )
 
 
-def candidates(root: pathlib.Path, scope: Scope, limit: int, filter_fn: FilterFn) -> list[QueueBrief]:
+def candidates(
+    root: pathlib.Path, scope: Scope, limit: int, filter_fn: FilterFn
+) -> list[QueueBrief]:
     briefs = (load_brief(root, row) for row in filter_fn(root) if not row.get("blocked"))
     return [b for b in briefs if b is not None and scope.admits(b)][:limit]
 
@@ -206,21 +235,38 @@ class Ranking:
     def how(self) -> str:
         if self.source != "judge":
             return f"filter order: {self.fallback_reason}"
-        return f"judge, agreement {self.agreement:.2f}" if self.agreement is not None else "judge, one pass"
+        return (
+            f"judge, agreement {self.agreement:.2f}"
+            if self.agreement is not None
+            else "judge, one pass"
+        )
 
     def text(self, low_confidence: float) -> str:
-        head = (f"Top {len(self.items)} of {self.total} ({self.scope}; profile {self.profile_version}"
-                f"{' DRAFT' if self.draft else ''}; {self.how()})")
-        return "\n".join([head] + [line for n, item in enumerate(self.items, 1)
-                                   for line in _item_lines(n, item, low_confidence)])
+        head = (
+            f"Top {len(self.items)} of {self.total} ({self.scope}; profile {self.profile_version}"
+            f"{' DRAFT' if self.draft else ''}; {self.how()})"
+        )
+        return "\n".join(
+            [head]
+            + [
+                line
+                for n, item in enumerate(self.items, 1)
+                for line in _item_lines(n, item, low_confidence)
+            ]
+        )
 
     def json(self) -> str:
-        return json.dumps({k: v for k, v in dataclasses.asdict(self).items() if k != "raw"}, indent=2)
+        return json.dumps(
+            {k: v for k, v in dataclasses.asdict(self).items() if k != "raw"}, indent=2
+        )
 
 
 def _item_lines(n: int, item: RankedItem, low_confidence: float) -> list[str]:
     shaky = item.confidence is not None and item.confidence < low_confidence
-    return [f"{n:>2}. {item.id}  {item.title}", f"    {item.reason}{'  (low confidence)' if shaky else ''}"]
+    return [
+        f"{n:>2}. {item.id}  {item.title}",
+        f"    {item.reason}{'  (low confidence)' if shaky else ''}",
+    ]
 
 
 class VerdictCache:
@@ -239,7 +285,9 @@ class VerdictCache:
         if not path.is_file():
             return None
         d = json.loads(path.read_text())
-        return Verdict(tuple(d["order"]), d["reasons"], d["confidence"], d["agreement"], tuple(d["raw"]))
+        return Verdict(
+            tuple(d["order"]), d["reasons"], d["confidence"], d["agreement"], tuple(d["raw"])
+        )
 
     def put(self, key: str, verdict: Verdict) -> None:
         atomic_write(self.dir / f"{key}.json", json.dumps(dataclasses.asdict(verdict)))
@@ -247,17 +295,24 @@ class VerdictCache:
 
 def judged(briefs: Sequence[QueueBrief], verdict: Verdict, top: int) -> tuple[RankedItem, ...]:
     by_id = {b.id: (n, b) for n, b in enumerate(briefs)}
-    return tuple(RankedItem(i, by_id[i][1].title, verdict.reasons[i], verdict.confidence[i], by_id[i][0] + 1)
-                 for i in verdict.order[:top])
+    return tuple(
+        RankedItem(i, by_id[i][1].title, verdict.reasons[i], verdict.confidence[i], by_id[i][0] + 1)
+        for i in verdict.order[:top]
+    )
 
 
 def filtered(briefs: Sequence[QueueBrief], top: int) -> tuple[RankedItem, ...]:
-    return tuple(RankedItem(b.id, b.title, b.facts, None, n + 1) for n, b in enumerate(briefs[:top]))
+    return tuple(
+        RankedItem(b.id, b.title, b.facts, None, n + 1) for n, b in enumerate(briefs[:top])
+    )
 
 
 def pinned(briefs: Sequence[QueueBrief]) -> tuple[RankedItem, ...]:
-    return tuple(RankedItem(b.id, b.title, f"clears fleet blocker {b.fleet_blocker}; {b.facts}", None, n)
-                 for n, b in enumerate(briefs, 1) if b.fleet_blocker)
+    return tuple(
+        RankedItem(b.id, b.title, f"clears fleet blocker {b.fleet_blocker}; {b.facts}", None, n)
+        for n, b in enumerate(briefs, 1)
+        if b.fleet_blocker
+    )
 
 
 @dataclasses.dataclass
@@ -277,21 +332,33 @@ class Ranker:
 
     def _judge(self, scope: Scope, briefs: Sequence[QueueBrief], top: int) -> Ranking:
         if top == 0 and briefs:
-            return self._fallback(scope, briefs, 0, readable_profile(self.root), "fleet blockers fill the list")
+            return self._fallback(
+                scope, briefs, 0, readable_profile(self.root), "fleet blockers fill the list"
+            )
         try:
             profile = load_profile(self.root)
         except ProfileError as exc:
             return self._fallback(scope, briefs, top, None, f"profile unreadable: {exc}")
         if profile is None:
-            return self._fallback(scope, briefs, top, None, "no profile/priorities.md (run seed_profile.py)")
+            return self._fallback(
+                scope, briefs, top, None, "no profile/priorities.md (run seed_profile.py)"
+            )
         if len(briefs) < 2:
             return self._fallback(scope, briefs, top, profile, "fewer than two candidates")
         try:
             verdict = self._verdict(scope, profile, briefs)
         except JudgeError as exc:
             return self._fallback(scope, briefs, top, profile, str(exc))
-        return Ranking(scope.key, "judge", profile.version, profile.draft, verdict.agreement,
-                       judged(briefs, verdict, top), len(briefs), raw=verdict.raw)
+        return Ranking(
+            scope.key,
+            "judge",
+            profile.version,
+            profile.draft,
+            verdict.agreement,
+            judged(briefs, verdict, top),
+            len(briefs),
+            raw=verdict.raw,
+        )
 
     def _verdict(self, scope: Scope, profile: Profile, briefs: Sequence[QueueBrief]) -> Verdict:
         cache = VerdictCache(self.root)
@@ -300,46 +367,82 @@ class Ranker:
         if hit is not None:
             return hit
         excerpt = int(self.config["excerpt_chars"])
-        verdict = SetwiseJudge(self.predict).judge(profile.rubric(), [b.candidate(excerpt) for b in briefs])
+        verdict = SetwiseJudge(self.predict).judge(
+            profile.rubric(), [b.candidate(excerpt) for b in briefs]
+        )
         cache.put(key, verdict)
         return verdict
 
     @staticmethod
-    def _fallback(scope: Scope, briefs: Sequence[QueueBrief], top: int, profile: Profile | None,
-                  reason: str) -> Ranking:
+    def _fallback(
+        scope: Scope, briefs: Sequence[QueueBrief], top: int, profile: Profile | None, reason: str
+    ) -> Ranking:
         version, draft = (profile.version, profile.draft) if profile else ("none", False)
-        return Ranking(scope.key, "filter", version, draft, None, filtered(briefs, top), len(briefs), reason)
+        return Ranking(
+            scope.key, "filter", version, draft, None, filtered(briefs, top), len(briefs), reason
+        )
 
 
-def shown_event(ranking: Ranking, profile: Profile | None, briefs: Mapping[str, QueueBrief],
-                filter_order: Sequence[str]) -> Shown:
+def shown_event(
+    ranking: Ranking,
+    profile: Profile | None,
+    briefs: Mapping[str, QueueBrief],
+    filter_order: Sequence[str],
+) -> Shown:
     def goals(brief_id: str) -> tuple[str, ...]:
         brief = briefs[brief_id]
         return profile.matched_goals(brief.tags, brief.text) if profile else ()
+
     items = tuple(ShownItem(item.id, goals(item.id)) for item in ranking.items)
-    return Shown(ranking.scope, ranking.profile_version, ranking.source, items, tuple(filter_order), ranking.raw)
+    return Shown(
+        ranking.scope,
+        ranking.profile_version,
+        ranking.source,
+        items,
+        tuple(filter_order),
+        ranking.raw,
+    )
 
 
 def backend(root: pathlib.Path, config: Mapping[str, Any]) -> ClaudeBackend:
     neutral = state_dir(root) / "judge"
     neutral.mkdir(parents=True, exist_ok=True)
-    return ClaudeBackend(str(config["model"]), float(config["timeout"]), str(config["setting_sources"]), neutral,
-                         launch=launcher(config))
+    return ClaudeBackend(
+        str(config["model"]),
+        float(config["timeout"]),
+        str(config["setting_sources"]),
+        neutral,
+        launch=launcher(config),
+    )
 
 
 def launcher(config: Mapping[str, Any]) -> Launch:
     """The configured wrapper when it exists here, else plain claude so the ranker still works elsewhere."""
     script = pathlib.Path(str(config["launcher"])).expanduser()
-    return WrapperLaunch(str(script), str(config["local_ok"])) if config["launcher"] and script.is_file() else DirectLaunch()
+    return (
+        WrapperLaunch(str(script), str(config["local_ok"]))
+        if config["launcher"] and script.is_file()
+        else DirectLaunch()
+    )
 
 
-def run(root: pathlib.Path, scope: Scope, top: int, log: PickLog | None, predict: PredictFn | None = None,
-        filter_fn: FilterFn = prioritise_rows) -> Ranking:
+def run(
+    root: pathlib.Path,
+    scope: Scope,
+    top: int,
+    log: PickLog | None,
+    predict: PredictFn | None = None,
+    filter_fn: FilterFn = prioritise_rows,
+) -> Ranking:
     config = settings(root)
     briefs = candidates(root, scope, int(config["candidates"]), filter_fn)
     ranking = Ranker(root, predict or backend(root, config), config).rank(scope, briefs, top)
     if log is not None:
-        log.append(shown_event(ranking, readable_profile(root), {b.id: b for b in briefs}, [b.id for b in briefs]))
+        log.append(
+            shown_event(
+                ranking, readable_profile(root), {b.id: b for b in briefs}, [b.id for b in briefs]
+            )
+        )
     return ranking
 
 
@@ -351,7 +454,9 @@ def readable_profile(root: pathlib.Path) -> Profile | None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Rank a scope's ready briefs against the taste profile.")
+    ap = argparse.ArgumentParser(
+        description="Rank a scope's ready briefs against the taste profile."
+    )
     ap.add_argument("--scope", default="all", help="all | tag:<t> | project:<slug> | session:<id>")
     ap.add_argument("--top", type=int, default=None)
     ap.add_argument("--root", default=None)

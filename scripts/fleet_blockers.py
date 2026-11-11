@@ -12,6 +12,7 @@ A brief declares `clears: <id>` (or a list of ids). While the record is active o
 prioritise.py puts the brief in the fleet-blocker lane. An unset directory turns the feature off,
 and an unreadable directory or record warns once and is skipped, so ranking never fails on it.
 """
+
 import dataclasses
 import enum
 import json
@@ -47,8 +48,11 @@ class FleetBlocker:
         """Raises ValueError for anything that is not a record with a known status."""
         if not isinstance(raw, dict):
             raise ValueError("not a JSON object")
-        return cls(str(raw.get("id") or stem), str(raw.get("summary") or ""),
-                   BlockerStatus(raw.get("status")))
+        return cls(
+            str(raw.get("id") or stem),
+            str(raw.get("summary") or ""),
+            BlockerStatus(raw.get("status")),
+        )
 
     def label(self) -> str:
         return f"{self.id}: {self.summary}" if self.summary else self.id
@@ -57,6 +61,7 @@ class FleetBlocker:
 @dataclasses.dataclass(frozen=True)
 class FleetBlockers:
     """The open blockers by id; empty when the feature is off or its records are unreadable."""
+
     open: dict[str, FleetBlocker]
 
     @classmethod
@@ -70,7 +75,9 @@ class FleetBlockers:
     @classmethod
     def read(cls, directory: pathlib.Path) -> "FleetBlockers":
         if not directory.is_dir():
-            cls._warn(f"{CONFIG_KEY} {directory} is not a readable directory; using no fleet blockers")
+            cls._warn(
+                f"{CONFIG_KEY} {directory} is not a readable directory; using no fleet blockers"
+            )
             return cls({})
         parsed, skipped = [], []
         for f in sorted(directory.glob("*.json")):
@@ -88,4 +95,6 @@ class FleetBlockers:
 
     def clearing(self, brief: Mapping[str, Any]) -> FleetBlocker | None:
         """The first open blocker the brief's `clears:` names, if any."""
-        return next((self.open[i] for i in parse_list(brief.get("clears", "")) if i in self.open), None)
+        return next(
+            (self.open[i] for i in parse_list(brief.get("clears", "")) if i in self.open), None
+        )

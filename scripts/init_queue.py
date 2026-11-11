@@ -15,6 +15,7 @@ Usage:
   python scripts/init_queue.py ./.tasks --name my-repo --force
   python scripts/init_queue.py ~/q/s1 --session "$CLAUDE_CODE_SESSION_ID" --fold-to ~/tasks
 """
+
 import argparse
 import json
 import os
@@ -113,7 +114,9 @@ class SessionLink:
 
     def toml(self) -> str:
         fold_to = json.dumps(str(self.fold_to))
-        return f'\n[session]\nid = {json.dumps(self.id)}\nlifecycle = "session"\nfold_to = {fold_to}\n'
+        return (
+            f'\n[session]\nid = {json.dumps(self.id)}\nlifecycle = "session"\nfold_to = {fold_to}\n'
+        )
 
     def bind(self, root: pathlib.Path, env: Mapping[str, str] | None = None) -> pathlib.Path:
         path = binding_path(self.id, env)
@@ -131,7 +134,9 @@ def init_queue(
     """Scaffold a queue at `root`. Refuses an existing queue unless `force`."""
     root = pathlib.Path(root).expanduser()
     if is_queue(root) and not force:
-        raise SystemExit(f"{root} is already a task queue (has {CONFIG_FILE}). Use --force to reinitialise.")
+        raise SystemExit(
+            f"{root} is already a task queue (has {CONFIG_FILE}). Use --force to reinitialise."
+        )
     if session is not None:
         require_queue(session.fold_to)
     for d in (*TASK_DIRS, "view"):
@@ -159,11 +164,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--name", default=None, help="project name (default: the directory name)")
     ap.add_argument("--force", action="store_true", help="reinitialise even if a queue exists")
     ap.add_argument("--session", default=None, help="Claude Code session id that owns this queue")
-    ap.add_argument("--fold-to", default=None, help="queue the open briefs fold into at session end")
+    ap.add_argument(
+        "--fold-to", default=None, help="queue the open briefs fold into at session end"
+    )
     a = ap.parse_args(argv)
     if bool(a.session) != bool(a.fold_to):
         ap.error("--session and --fold-to go together")
-    session = SessionLink(a.session, pathlib.Path(a.fold_to).expanduser().resolve()) if a.session else None
+    session = (
+        SessionLink(a.session, pathlib.Path(a.fold_to).expanduser().resolve())
+        if a.session
+        else None
+    )
     root = init_queue(a.root, name=a.name, force=a.force, session=session)
     print(f"Initialised task queue at {root}")
 
