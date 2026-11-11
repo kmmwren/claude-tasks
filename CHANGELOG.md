@@ -14,6 +14,12 @@
   outside the queue repo. `transition.py` to `in-progress` and `bump.py` record a choice;
   `log_pick.py` records the rest. `learn.py` proposes capped goal-weight changes, validated on
   held-out picks, applied and reverted by profile version. Auto-apply is off by default.
+- **`prioritise.py` gains an opt-in WSJF scorer.** Cost of delay (importance, due curve and lead
+  time, milestone, tag weights, chain leverage) over job size, plus aging; blockers inherit their
+  waiters' score; `cos:` lanes (expedite cap, fixed-date, chore share) and a `move` per brief.
+  Chosen by `[priority] scorer` (default `additive`, unchanged) or `--scorer`. `--json` adds both
+  scores and ranks, `lane`, `move`, `leverage`, `why` and `schema_version`; existing fields are
+  unchanged.
 
 ### Fixed
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder

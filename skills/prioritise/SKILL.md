@@ -74,3 +74,32 @@ tag_weights = { urgent = 500, frog = 400 }
 
 Briefs carrying those tags get the weight added to their score. Empty by default — the
 base ranking stays purely mechanical (due / importance / effort / unlocks).
+
+## WSJF scorer (opt-in)
+
+`additive` (above) is the default and what every consumer reads. A second scorer, `wsjf`,
+ranks by cost of delay divided by job size, plus an aging term:
+
+- **cost of delay** = importance value + time criticality (due curve, plus lead time) +
+  milestone weight + tag weights + leverage (longest chain of live briefs waiting on it).
+- **job size** = `estimated-effort` points (xs 1, s 2, m 3, l 5, xl 8, blank 3).
+- **inheritance**: a blocker scores at least as high as the highest brief waiting on it.
+- **lanes** from a `cos:` field or tag: `expedite` (capped), `fixed-date` (joins near its
+  due date), `standard` (default), `chore` (a reserved share of slots).
+- **move**: `execute`, `de-fang` (make it safe to run), `ask`, or `blocked`.
+
+Pick it per call with `--scorer wsjf`, or per queue in `tasks.toml`:
+
+```toml
+[priority]
+scorer = "wsjf"            # default "additive"
+expedite_cap = 2
+chore_share = 0.2
+importance_values = { "1" = 2500, "2" = 1000, "3" = 300, "4" = 100, "5" = 30 }
+```
+
+Every weight has a default in `PRIORITY_DEFAULTS`; a partial table merges over it. `--json`
+always carries both scorers (`score_additive`, `score_wsjf`, `rank_additive`, `rank_wsjf`)
+plus `lane`, `move`, `leverage`, a per-factor `why` and `schema_version`. The pre-v2 fields
+keep their meaning, and `score` follows the chosen scorer. In text output the trailing
+`[wsjf cod/size +age N +inh N]` is the compact why.

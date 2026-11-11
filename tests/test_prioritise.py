@@ -335,3 +335,208 @@ def test_blocked_folder_briefs_are_indexed_for_unlock_counts(tmp_path):
     ])
     status, unlocks = prioritise.index_queue(root)
     assert status["w"] == "blocked" and unlocks["dep"] == 1
+
+
+# ── wsjf: weights ─────────────────────────────────────────────────────────────
+
+W = prioritise.DEFAULT_WEIGHTS
+
+
+def test_weights_default_to_the_additive_scorer():
+    assert W.scorer is prioritise.Scorer.ADDITIVE
+
+
+def test_weights_merge_a_partial_table_over_the_defaults():
+    w = prioritise.Weights.from_priority({"scorer": "wsjf", "importance_values": {"1": 9000}})
+    assert w.scorer is prioritise.Scorer.WSJF
+    assert w.importance[1] == 9000 and w.importance[3] == 300
+
+
+def test_importance_value_falls_back_to_level_3_for_bad_or_unknown_levels():
+    assert W.importance_value("oops") == W.importance_value("") == W.importance_value("9") == 300
+    assert W.importance_value("1") == 2500
+
+
+def test_size_of_an_unknown_effort_is_the_blank_default():
+    assert W.size("huge") == W.size("") == 3 and W.size("xs") == 1
+
+
+def test_due_value_follows_the_curve_and_ignores_no_date():
+    assert [W.due_value(d) for d in (None, -2, 0, 5, 30)] == [0, 1000, 500, 200, 50]
+    assert W.due_value(10**6) == 0
+
+
+# ── wsjf: dates ───────────────────────────────────────────────────────────────
+
+def test_age_reads_created_then_the_id_date_prefix():
+    assert prioritise.age_days({"created": "2026-05-23"}, TODAY) == 10
+    assert prioritise.age_days({"id": "2026-05-30-thing"}, TODAY) == 3
+    assert prioritise.age_days({"id": "no-date"}, TODAY) == 0
+    assert prioritise.age_days({"created": "2026-07-01"}, TODAY) == 0
+
+
+def test_days_until_due_is_none_for_a_bad_date():
+    assert prioritise.days_until_due({"due": "soon"}, TODAY) is None
+
+
+# ── wsjf: factors and score ───────────────────────────────────────────────────
+
+def test_factors_divide_cost_of_delay_by_job_size_and_add_age():
+    f = prioritise.factors({"importance": "2", "estimated-effort": "s", "milestone": "m1",
+                            "created": "2026-05-31"}, TODAY, leverage=1)
+    assert f.cost_of_delay == 1000 + 200 + 150
+    assert f.total == round(1350 / 2 + 4, 1)
+    assert f.why()["cost_of_delay"] == 1350 and f.why()["size"] == 2
+
+
+def test_wsjf_keeps_the_pr_tier_order_and_lets_a_bump_jump_it():
+    w = prioritise.Weights.from_priority({"tag_weights": {"tier:quick": 100, "tier:smoke": 50}})
+    pr = {"importance": "3"}
+    quick = prioritise.wsjf_score({**pr, "estimated-effort": "xs", "tags": "[tier:quick]"}, TODAY, weights=w)
+    smoke = prioritise.wsjf_score({**pr, "estimated-effort": "m", "tags": "[tier:smoke]"}, TODAY, weights=w)
+    human = prioritise.wsjf_score({**pr, "estimated-effort": "l", "tags": "[tier:human]"}, TODAY, weights=w)
+    bumped = prioritise.wsjf_score({"importance": "1", "estimated-effort": "l"}, TODAY, weights=w)
+    assert quick > smoke > human and bumped > quick
+
+
+def test_wsjf_spreads_what_additive_ties():
+    a = {"importance": "3", "estimated-effort": "s"}
+    b = {"importance": "3", "estimated-effort": "s", "created": "2026-05-01"}
+    assert prioritise.score(a, TODAY) == prioritise.score(b, TODAY)
+    assert prioritise.wsjf_score(a, TODAY) != prioritise.wsjf_score(b, TODAY)
+
+
+def test_lead_time_counts_as_time_criticality():
+    f = prioritise.factors({"due": "2026-06-02", "estimated-effort": "xs"}, TODAY)
+    assert f.time_criticality == 500 + 300
+
+
+# ── wsjf: wait graph ──────────────────────────────────────────────────────────
+
+def _graph(edges):
+    return prioritise.WaitGraph({k: tuple(v) for k, v in edges.items()})
+
+
+def test_depth_is_the_longest_downstream_chain():
+    depth = _graph({"a": ["b", "x"], "b": ["c"]}).depth()
+    assert (depth("a"), depth("b"), depth("c")) == (2, 1, 0)
+
+
+def test_depth_survives_a_cycle():
+    assert _graph({"a": ["b"], "b": ["a"]}).depth()("a") == 1
+
+
+def test_inheritance_takes_the_highest_waiter():
+    value = _graph({"a": ["b"], "b": ["c"]}).inherited({"a": 10, "b": 5, "c": 90})
+    assert value("a") == 90 and value("b") == 90 and value("zz") == 0
+
+
+def test_graph_counts_only_live_waiters(tmp_path):
+    from deps import load_queue
+    root = _queue(tmp_path, [
+        ("ready", "dep.md", _brief("dep")),
+        ("blocked", "w.md", _blocked_by_brief("w", "[dep]")),
+        ("parked", "p.md", _blocked_by_brief("p", "[dep]")),
+    ])
+    assert prioritise.WaitGraph.build(load_queue(root)).waiters == {"dep": ("w",)}
+
+
+# ── wsjf: lanes and moves ─────────────────────────────────────────────────────
+
+def test_lane_comes_from_the_cos_field_or_tag():
+    assert prioritise.declared_lane({"cos": "expedite"}) is prioritise.Lane.EXPEDITE
+    assert prioritise.declared_lane({"tags": "[cos:chore]"}) is prioritise.Lane.CHORE
+    assert prioritise.declared_lane({"cos": "whenever"}) is prioritise.Lane.STANDARD
+
+
+def test_fixed_date_lane_waits_until_the_due_date_is_near():
+    near = {"cos": "fixed-date", "due": "2026-06-05"}
+    far = {"cos": "fixed-date", "due": "2026-08-01"}
+    assert prioritise.lane_of(near, TODAY, W) is prioritise.Lane.FIXED_DATE
+    assert prioritise.lane_of(far, TODAY, W) is prioritise.Lane.STANDARD
+
+
+def test_move_names_what_to_do_with_the_brief():
+    M = prioritise.Move
+    assert prioritise.move_of({"autonomy": "full"}, True, W) is M.BLOCKED
+    assert prioritise.move_of({"autonomy": "needs-input"}, False, W) is M.ASK
+    assert prioritise.move_of({"autonomy": "full", "tags": "[tier:human]"}, False, W) is M.DEFANG
+    assert prioritise.move_of({"autonomy": "autonomous"}, False, W) is M.DEFANG
+    assert prioritise.move_of({"autonomy": "full"}, False, W) is M.EXECUTE
+
+
+def test_interleave_reserves_a_share_of_slots_for_chores():
+    main, chores = list("abcdefgh"), ["x", "y", "z"]
+    assert prioritise._interleave(main, chores, 0.2) == list("abcdxefghy") + ["z"]
+    assert prioritise._interleave(main, chores, 0) == main + chores
+
+
+def test_expedite_over_the_cap_drops_to_standard():
+    E, S = prioritise.Lane.EXPEDITE, prioritise.Lane.STANDARD
+    items = [{"id": i, "_score_wsjf": s, "_lane": E} for i, s in (("a", 3), ("b", 2), ("c", 1))]
+    items.append({"id": "d", "_score_wsjf": 9, "_lane": S})
+    w = prioritise.Weights.from_priority({"expedite_cap": 2})
+    assert [b["id"] for b in prioritise.order_lanes(items, w)] == ["a", "b", "d", "c"]
+
+
+# ── wsjf: rank ────────────────────────────────────────────────────────────────
+
+def test_rank_emits_both_scores_and_ranks_and_orders_by_the_chosen_scorer(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "big.md", _brief("big", importance="2", effort="xl")),
+        ("ready", "quick.md", _brief("quick", importance="3", effort="xs")),
+    ])
+    additive = prioritise.rank(root, today=TODAY)
+    wsjf = prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+    assert [b["id"] for b in additive] == ["big", "quick"]
+    assert [b["id"] for b in wsjf] == ["quick", "big"]
+    assert wsjf[0]["_rank_wsjf"] == 1 and wsjf[0]["_rank_additive"] == 2
+    assert wsjf[0]["_score"] == wsjf[0]["_score_wsjf"]
+
+
+def test_config_scorer_key_switches_the_default(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "big.md", _brief("big", importance="2", effort="xl")),
+        ("ready", "quick.md", _brief("quick", importance="3", effort="xs")),
+    ])
+    (root / "tasks.toml").write_text('name = "demo"\n[priority]\nscorer = "wsjf"\n')
+    assert prioritise.rank(root, today=TODAY)[0]["id"] == "quick"
+
+
+def test_a_blocker_inherits_the_score_of_what_waits_on_it(tmp_path):
+    root = _queue(tmp_path, [
+        ("ready", "chore.md", _brief("chore", importance="4", effort="l")),
+        ("ready", "other.md", _brief("other", importance="3", effort="m")),
+        ("blocked", "vip.md", _blocked_by_brief("vip", "[chore]").replace("importance: 3", "importance: 1")),
+    ])
+    ranked = prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+    chore = next(b for b in ranked if b["id"] == "chore")
+    assert ranked[0]["id"] == "chore" and chore["_why"]["inherited"] > 0
+    assert chore["_leverage"] == 1
+
+
+# ── CLI: scorer ───────────────────────────────────────────────────────────────
+
+def test_main_scorer_flag_and_json_fields(tmp_path, monkeypatch, capsys):
+    import json
+    root = _queue(tmp_path, [
+        ("ready", "a.md", _brief("a", importance="1")),
+        ("ready", "b.md", _blocked_by_brief("b", "[a]")),
+    ])
+    monkeypatch.setenv("CLAUDE_TASKS_DIR", str(root))
+    prioritise.main(["--json", "--scorer", "wsjf"])
+    row = json.loads(capsys.readouterr().out)[0]
+    assert {"score_additive", "score_wsjf", "rank_additive", "rank_wsjf", "why", "lane",
+            "move", "leverage", "schema_version"} <= row.keys()
+    assert row["score"] == row["score_wsjf"]
+
+
+def test_main_text_shows_age_and_inheritance(tmp_path, monkeypatch, capsys):
+    root = _queue(tmp_path, [
+        ("ready", "old.md", _brief("2020-01-01-old", importance="4")),
+        ("blocked", "vip.md", _blocked_by_brief("vip", "[2020-01-01-old]").replace("importance: 3", "importance: 1")),
+    ])
+    monkeypatch.setenv("CLAUDE_TASKS_DIR", str(root))
+    prioritise.main(["--scorer", "wsjf"])
+    out = capsys.readouterr().out
+    assert "+age" in out and "+inh" in out
