@@ -235,3 +235,10 @@ def test_git_sync_usage_error_exits_1(queue):
     )
     assert result.returncode == 1
     assert "Usage:" in result.stderr
+
+
+def test_require_lock_raises_rather_than_running_unlocked(tmp_path):
+    with C.repo_lock(tmp_path) as acquired:
+        assert acquired
+        with pytest.raises(TimeoutError), C.require_lock(tmp_path, timeout=0.05):
+            pass  # pragma: no cover
