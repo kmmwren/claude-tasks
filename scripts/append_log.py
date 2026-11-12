@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import repo_lock  # noqa: E402
 from _paths import resolve_root  # noqa: E402
-from git_sync import _git, sync_commit_and_push  # noqa: E402
+from git_sync import NETWORK_TIMEOUT, _git, sync_commit_and_push  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
 PUSH_ATTEMPTS = 8
@@ -47,8 +47,18 @@ LOST_RACE = re.compile(
 )
 
 
-def _run(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
-    return _git(repo, *args, capture_output=True, text=True)
+def _run(
+    repo: pathlib.Path, *args: str, timeout: float | None = None
+) -> "subprocess.CompletedProcess[str]":
+    return _git(repo, *args, capture_output=True, text=True, timeout=timeout)
+
+
+def _network(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
+    """Run a git call that talks to origin; a hung remote fails the append instead of hanging it."""
+    try:
+        return _run(repo, *args, timeout=NETWORK_TIMEOUT)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"git {args[0]} timed out after {NETWORK_TIMEOUT:.0f}s") from e
 
 
 def _repo_top(root: pathlib.Path) -> pathlib.Path:
@@ -101,7 +111,7 @@ def _try_push(
     commit = _run(wt, *IDENTITY, "commit", "-m", f"brief({brief_id}): log line")
     if commit.returncode != 0:
         raise RuntimeError(f"commit failed: {commit.stdout.strip()} {commit.stderr.strip()}")
-    push = _run(wt, "push", "origin", "HEAD:main")
+    push = _network(wt, "push", "origin", "HEAD:main")
     if push.returncode == 0:
         return _run(wt, "rev-parse", "HEAD").stdout.strip()
     if LOST_RACE.search(push.stderr):
@@ -119,7 +129,7 @@ def _push_from_fresh_origin(root: pathlib.Path, brief_id: str, line: str, today:
     with tempfile.TemporaryDirectory(prefix="append-log-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         for attempt in range(PUSH_ATTEMPTS):
-            if _run(root, "fetch", "origin", "main").returncode != 0:
+            if _network(root, "fetch", "origin", "main").returncode != 0:
                 raise RuntimeError("git fetch origin main failed")
             added = _run(root, "worktree", "add", "--detach", str(wt), "origin/main")
             if added.returncode != 0:
