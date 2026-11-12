@@ -4,8 +4,9 @@ append_log.py: append a dated execution-log line to a brief without touching the
 
 Subagents are refused writes in the queue's main checkout (block-main-checkout-writes), and
 `transition.py move --log` only logs as part of a state change. This fetches origin/main into a
-temporary worktree, appends the line there, commits, pushes and removes the worktree, so the
-main checkout's files are never written. A brief that exists only uncommitted in the main checkout
+temporary worktree, appends the line there, commits, pushes and removes the worktree, so no tool
+writes the main checkout's files. Git then fast-forwards that checkout's main to the pushed commit
+when it can, so its next `pull --rebase` has no landed commit to replay. A brief that exists only uncommitted in the main checkout
 is first committed there through git_sync, so origin carries it and that checkout can still sync.
 Local callers take turns on the queue lock; a push that loses a race to origin retries from fresh
 origin/main with jittered backoff, and any failure names the line that was not logged.
@@ -134,6 +135,19 @@ def _push_from_fresh_origin(root: pathlib.Path, brief_id: str, line: str, today:
         raise RuntimeError(f"push to origin/main still rejected after {PUSH_ATTEMPTS} attempts")
 
 
+def _fast_forward_main(root: pathlib.Path, sha: str) -> None:
+    """Advance the checkout's main to `sha` when that is a pure fast-forward; otherwise say why not."""
+    if _run(root, "symbolic-ref", "-q", "HEAD").stdout.strip() != "refs/heads/main":
+        why = "the checkout is not on main"
+    elif _run(root, "merge-base", "--is-ancestor", "HEAD", sha).returncode != 0:
+        why = "main has commits origin lacks"
+    elif _run(root, "merge", "--ff-only", "-q", sha).returncode != 0:
+        why = "uncommitted edits overlap the incoming change"
+    else:
+        return
+    print(f"  (checkout not advanced: {why}; the next queue sync integrates it.)", file=sys.stderr)
+
+
 def append_log(brief_id: str, line: str, root: pathlib.Path, today: str | None = None) -> str:
     """Append `line` to the brief's Execution log on origin/main; return the pushed commit sha."""
     today = today or datetime.date.today().isoformat()
@@ -145,7 +159,9 @@ def append_log(brief_id: str, line: str, root: pathlib.Path, today: str | None =
                     f"  (queue lock busy after {LOCK_WAIT:.0f}s; pushing without it)",
                     file=sys.stderr,
                 )
-            return _push_from_fresh_origin(root, brief_id, line, today)
+            sha = _push_from_fresh_origin(root, brief_id, line, today)
+            _fast_forward_main(root, sha)
+            return sha
     except RuntimeError as e:
         raise RuntimeError(f"{e}; line not logged to {brief_id}: {today}: {line}") from e
 

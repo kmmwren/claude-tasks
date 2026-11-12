@@ -52,14 +52,54 @@ def test_succeeds_while_main_checkout_writes_are_blocked(repos, monkeypatch):
     assert "2026-11-06: did a thing" in git(origin, "show", f"{sha}:ready/{ID}.md")
 
 
-def test_main_checkout_untouched_and_worktree_removed(repos):
+def test_main_checkout_clean_and_worktree_removed(repos):
     origin, main = repos
-    before = (main / "ready" / f"{ID}.md").read_text()
     sha = append_log.append_log(ID, "did a thing", root=main, today="2026-11-06")
-    assert (main / "ready" / f"{ID}.md").read_text() == before
     assert git(main, "status", "--porcelain") == ""
     assert git(main, "worktree", "list").count("\n") == 1
     assert git(origin, "show", f"{sha}:ready/{ID}.md").endswith("2026-11-06: did a thing\n")
+
+
+def test_main_checkout_is_fast_forwarded_to_the_pushed_line(repos):
+    origin, main = repos
+    sha = append_log.append_log(ID, "did a thing", root=main, today="2026-11-06")
+    assert git(main, "rev-parse", "HEAD").strip() == sha
+    assert git(origin, "rev-parse", "main").strip() == sha
+    assert (main / "ready" / f"{ID}.md").read_text().endswith("2026-11-06: did a thing\n")
+    # The next pull --rebase in the checkout has nothing of ours left to replay.
+    assert git(main, "rev-list", "--count", "origin/main..HEAD").strip() == "0"
+
+
+def test_a_diverged_main_is_left_alone_and_says_why(repos, capsys):
+    origin, main = repos
+    (main / "local.txt").write_text("x")
+    git(main, "add", "local.txt")
+    git(main, "commit", "-qm", "local only")
+    local = git(main, "rev-parse", "HEAD").strip()
+    sha = append_log.append_log(ID, "did a thing", root=main, today="2026-11-06")
+    assert git(main, "rev-parse", "HEAD").strip() == local
+    assert git(origin, "rev-parse", "main").strip() == sha
+    assert "main has commits origin lacks" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("checkout", [("checkout", "-qb", "side"), ("checkout", "-q", "--detach")])
+def test_a_checkout_off_main_is_left_alone(repos, capsys, checkout):
+    origin, main = repos
+    git(main, *checkout)
+    before = git(main, "rev-parse", "HEAD").strip()
+    append_log.append_log(ID, "did a thing", root=main, today="2026-11-06")
+    assert git(main, "rev-parse", "HEAD").strip() == before
+    assert "not on main" in capsys.readouterr().err
+
+
+def test_overlapping_uncommitted_edits_block_the_fast_forward(repos, capsys):
+    origin, main = repos
+    (main / "ready" / f"{ID}.md").write_text("local edit\n")
+    before = git(main, "rev-parse", "HEAD").strip()
+    append_log.append_log(ID, "did a thing", root=main, today="2026-11-06")
+    assert git(main, "rev-parse", "HEAD").strip() == before
+    assert (main / "ready" / f"{ID}.md").read_text() == "local edit\n"
+    assert "uncommitted edits overlap" in capsys.readouterr().err
 
 
 def test_unknown_id_exits_1(repos):
