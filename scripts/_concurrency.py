@@ -73,7 +73,7 @@ def lock_path(root: pathlib.Path) -> pathlib.Path:
 
 def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
     """Take flock `op` on `fd`, polling until `timeout` seconds pass; True once held."""
-    deadline = time.monotonic() + timeout
+    deadline = Deadline.in_(timeout)
     while True:
         try:
             fcntl.flock(fd, op | fcntl.LOCK_NB)
@@ -81,7 +81,7 @@ def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
         except OSError as e:
             if e.errno not in (errno.EAGAIN, errno.EACCES):
                 raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
-            if time.monotonic() >= deadline:
+            if deadline.expired():
                 return False
             time.sleep(poll)
 
@@ -152,9 +152,20 @@ class Deadline:
     def in_(cls, seconds: float) -> "Deadline":
         return cls(time.monotonic() + seconds)
 
+    def remaining(self) -> float:
+        """Seconds left before the deadline, never negative."""
+        return max(0.0, self.at - time.monotonic())
+
+    def expired(self) -> bool:
+        return time.monotonic() >= self.at
+
     def cap(self, seconds: float) -> float:
         """`seconds`, or what is left of the deadline if that is less."""
-        return min(seconds, max(0.0, self.at - time.monotonic()))
+        return min(seconds, self.remaining())
+
+    def reserving(self, seconds: float) -> "Deadline":
+        """The same deadline moved `seconds` earlier, for work that must finish before it."""
+        return Deadline(self.at - seconds)
 
 
 def repo_lock(

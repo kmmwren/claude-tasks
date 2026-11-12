@@ -93,10 +93,10 @@ def test_cli_exit_codes(repos, capsys):
 def _failing(real, fragment):
     """Wrap append_log._run so any git call whose args contain `fragment` fails."""
 
-    def run(repo, *args):
+    def run(repo, *args, **kw):
         if fragment in args:
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
-        return real(repo, *args)
+        return real(repo, *args, **kw)
 
     return run
 
@@ -129,10 +129,10 @@ def test_push_that_always_loses_the_race_gives_up_naming_the_line(repos, capsys,
 
 
 def _push_fails_with(real, stderr):
-    def run(repo, *args):
+    def run(repo, *args, **kw):
         if args[:1] == ("push",):
             return subprocess.CompletedProcess(args, 1, stdout="", stderr=stderr)
-        return real(repo, *args)
+        return real(repo, *args, **kw)
 
     return run
 
@@ -168,6 +168,45 @@ def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch, stderr):
     monkeypatch.setattr(append_log, "_backoff", lambda attempt: pytest.fail("retried"))
     with pytest.raises(RuntimeError, match=r"(?s)push refused: .*hook declined"):
         append_log.append_log(ID, "x", root=main)
+
+
+def _hang_on(monkeypatch, verb):
+    real = append_log._git
+
+    def hung(root, *args, **kw):
+        if args[:1] == (verb,):
+            raise subprocess.TimeoutExpired(["git", *args], kw["timeout"])
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(append_log, "_git", hung)
+
+
+@pytest.mark.parametrize("verb", ["fetch", "push"])
+def test_a_hung_network_call_fails_the_append_naming_the_line(repos, capsys, monkeypatch, verb):
+    _, main = repos
+    _hang_on(monkeypatch, verb)
+
+    assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
+
+    err = capsys.readouterr().err
+    assert f"git {verb} timed out after {append_log.NETWORK_TIMEOUT:.0f}s" in err
+    assert "keep me" in err
+    assert git(main, "worktree", "list").count("\n") == 1
+
+
+def test_every_network_call_carries_the_network_timeout(repos, monkeypatch):
+    _, main = repos
+    real, timeouts = append_log._git, []
+
+    def recording(root, *args, **kw):
+        if args[:1] in (("push",), ("fetch",)):
+            timeouts.append(kw["timeout"])
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(append_log, "_git", recording)
+    append_log.append_log(ID, "timed", root=main, today="2026-11-12")
+
+    assert timeouts == [append_log.NETWORK_TIMEOUT] * 2
 
 
 PEER = "peer-memory-abc12345"
@@ -287,11 +326,11 @@ def test_push_that_keeps_losing_races_still_lands_the_line(repos, tmp_path, monk
     origin, main = repos
     real, raced = append_log._run, []
 
-    def racing(repo, *args):
+    def racing(repo, *args, **kw):
         if args[:1] == ("push",) and len(raced) < 5:
             _push_from_peer(origin, tmp_path, len(raced))
             raced.append(1)
-        return real(repo, *args)
+        return real(repo, *args, **kw)
 
     monkeypatch.setattr(append_log, "_run", racing)
     monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
@@ -310,7 +349,7 @@ def test_push_declined_for_another_reason_fails_at_once_with_the_line(repos, cap
     monkeypatch.setattr(
         append_log,
         "_run",
-        lambda repo, *a: (a[:1] == ("push",) and pushes.append(1), real(repo, *a))[1],
+        lambda repo, *a, **kw: (a[:1] == ("push",) and pushes.append(1), real(repo, *a, **kw))[1],
     )
     assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
     err = capsys.readouterr().err

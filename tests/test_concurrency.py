@@ -304,3 +304,19 @@ def test_require_lock_raises_rather_than_running_unlocked(tmp_path):
         assert acquired
         with pytest.raises(TimeoutError), C.require_lock(tmp_path, timeout=0.05):
             pass  # pragma: no cover
+
+
+def test_a_deadline_counts_down_and_never_goes_negative():
+    deadline = C.Deadline.in_(60.0)
+    assert 59.0 < deadline.remaining() <= 60.0
+    assert not deadline.expired()
+    assert C.Deadline.in_(-1.0).remaining() == 0.0
+    assert C.Deadline.in_(-1.0).expired()
+
+
+def test_a_deadline_caps_a_wait_and_reserves_time_at_its_end():
+    deadline = C.Deadline.in_(60.0)
+    assert deadline.cap(5.0) == 5.0
+    assert deadline.cap(500.0) <= 60.0
+    assert deadline.reserving(40.0).cap(500.0) <= 20.0
+    assert deadline.reserving(100.0).cap(500.0) == 0.0

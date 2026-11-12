@@ -653,12 +653,11 @@ def test_push_now_hands_a_write_that_raced_its_release_to_a_new_pusher(tmp_path,
     assert len(spawned) == 1
 
 
-def test_push_now_defers_when_a_pusher_never_finishes(tmp_path, monkeypatch, capsys):
+def test_push_now_defers_when_a_pusher_never_finishes(tmp_path, capsys):
     repo = make_repo(tmp_path)
     held = PushState(repo).try_lock_pusher()
-    monkeypatch.setattr(git_sync, "PUSH_WAIT", 0.1)
 
-    assert git_sync.push_now(repo) is False
+    assert git_sync.push_now(repo, wait=0.1) is False
     assert "another pusher still running" in capsys.readouterr().out
     held.release()
 

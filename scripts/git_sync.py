@@ -499,7 +499,7 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     True means nothing is left to push; False means deferred or the push failed.
     """
     root = resolve_root() if root is None else root
-    deadline = time.monotonic() + SWEEP_BUDGET
+    deadline = Deadline.in_(SWEEP_BUDGET)
     if owns_repo(root):
         _fetch_if_stale(root)
     if not _commit_for_push("queue: sync uncommitted briefs", root, (), (".",)):
@@ -508,7 +508,7 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     if not _ahead_of_origin(root):
         return True
     # Time the fetch and commit locks spent comes off the wait, so dispatch never kills a push.
-    return push_now(root, wait=min(PUSH_WAIT, max(0.0, deadline - time.monotonic() - PUSH_RESERVE)))
+    return push_now(root, wait=deadline.reserving(PUSH_RESERVE).cap(PUSH_WAIT))
 
 
 def main(argv: list[str] | None = None) -> None:
