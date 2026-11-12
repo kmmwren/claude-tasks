@@ -126,7 +126,7 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
     return [path for path in out.split("\0") if path]
 
 
-FETCH_MAX_AGE = 60.0  # seconds a sweep reuses its last fetch of origin/main
+FETCH_MAX_AGE = 45.0  # under the 60 s sweep interval, so every timed sweep fetches
 
 
 def _fetch_head(root: pathlib.Path) -> pathlib.Path:
@@ -405,9 +405,9 @@ def push_now(root: pathlib.Path) -> bool:
 
 
 def wait_for_push(root: pathlib.Path, timeout: float = 60.0, poll: float = 0.05) -> bool:
-    """Block until no pusher runs and no commit awaits a push; False if `timeout` passed first.
+    """Block until no pusher runs and none is pending; False if `timeout` passed first.
 
-    For callers and tests that must observe origin after a detached push.
+    True does not mean origin carries HEAD: a failed push leaves its commits for the next sweep.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
