@@ -36,6 +36,9 @@ from transition import BRIEF_DIRS, _append_log  # noqa: E402
 PUSH_ATTEMPTS = 8
 LOCK_WAIT = 120.0
 IDENTITY = ("-c", "user.name=claude-tasks", "-c", "user.email=noreply@anthropic.com")
+# Push outcomes that mean another writer won the race to update main, so a fresh retry can land.
+# A server-side ref-lock clash reports "[remote rejected] ... (failed)" rather than "[rejected]".
+LOST_RACE = ("[rejected]", "(failed)", "cannot lock ref", "incorrect old value")
 
 
 def _run(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
@@ -95,7 +98,7 @@ def _try_push(
     push = _run(wt, "push", "origin", "HEAD:main")
     if push.returncode == 0:
         return _run(wt, "rev-parse", "HEAD").stdout.strip()
-    if "[rejected]" in push.stderr:
+    if any(sign in push.stderr for sign in LOST_RACE):
         return None
     raise RuntimeError(f"push refused: {push.stderr.strip()}")
 

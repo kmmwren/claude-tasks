@@ -128,6 +128,41 @@ def test_push_that_always_loses_the_race_gives_up_naming_the_line(repos, capsys,
     assert git(main, "worktree", "list").count("\n") == 1
 
 
+def _push_fails_with(real, stderr):
+    def run(repo, *args):
+        if args[:1] == ("push",):
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr=stderr)
+        return real(repo, *args)
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        " ! [rejected]        HEAD -> main (fetch first)",
+        " ! [remote rejected] HEAD -> main (failed)",
+        " ! [remote rejected] HEAD -> main (cannot lock ref 'refs/heads/main')",
+        " ! [remote rejected] HEAD -> main (incorrect old value provided)",
+    ],
+)
+def test_a_push_that_lost_the_race_is_retried(repos, monkeypatch, stderr):
+    _, main = repos
+    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
+    monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
+    with pytest.raises(RuntimeError, match=f"still rejected after {append_log.PUSH_ATTEMPTS}"):
+        append_log.append_log(ID, "x", root=main)
+
+
+def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch):
+    _, main = repos
+    stderr = " ! [remote rejected] HEAD -> main (pre-receive hook declined)"
+    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
+    monkeypatch.setattr(append_log, "_backoff", lambda attempt: pytest.fail("retried"))
+    with pytest.raises(RuntimeError, match="push refused: .*hook declined"):
+        append_log.append_log(ID, "x", root=main)
+
+
 PEER = "peer-memory-abc12345"
 
 

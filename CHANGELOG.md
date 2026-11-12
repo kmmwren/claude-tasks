@@ -30,6 +30,10 @@
   unchanged.
 
 ### Fixed
+- **`append_log.py` retries a push GitHub refused because another writer was updating main.** A
+  server-side ref-lock clash reports `[remote rejected] HEAD -> main (failed)` (or `cannot lock ref`,
+  `incorrect old value`), which the retry loop did not count as a lost race, so the line was dropped.
+  These now retry from fresh origin/main like `[rejected]`; a declined hook still fails at once.
 - **Queue writes no longer fork a `git push` each.** `git_sync.sync_commit` still commits
   synchronously, then marks the clone dirty and returns; one detached pusher per clone (a flock on
   `.git/.tasks-push.lock`) waits for in-flight writers, pushes once, and pushes again only if a write
