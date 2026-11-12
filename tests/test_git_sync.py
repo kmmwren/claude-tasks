@@ -856,3 +856,28 @@ def test_fetch_head_is_none_when_git_cannot_name_it(tmp_path, monkeypatch):
     not_a_repo.mkdir()
 
     assert git_sync._fetch_head(not_a_repo) is None
+
+
+def test_a_sweep_waits_for_a_push_that_took_its_dirty_mark(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    _, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
+    slow.touch()
+    (repo / "inbox" / "first.md").write_text("1")
+    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    deadline = time.monotonic() + 10
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    slow.unlink()
+    commit = git_sync._commit_for_push
+
+    def commit_then_lose_the_mark(*args):
+        landed = commit(*args)
+        git_sync._take_dirty(repo)  # the running pusher's next drain takes it first
+        return landed
+
+    monkeypatch.setattr(git_sync, "_commit_for_push", commit_then_lose_the_mark)
+    (repo / "inbox" / "fresh.md").write_text("2")
+
+    assert git_sync.sweep(repo) is True
+
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout

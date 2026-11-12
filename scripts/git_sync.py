@@ -284,7 +284,7 @@ WRITERS_LOCK = ".tasks-writers.lock"  # shared by every writer between commit st
 DIRTY = ".tasks-push.dirty"  # main is ahead of origin and no push has started from it yet
 PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
-PUSH_WAIT = 120.0  # longest sync_commit_and_push waits for a running pusher
+PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher; under dispatch's 120 s flush timeout
 
 
 def _ahead_of_origin(root: pathlib.Path) -> bool:
@@ -510,7 +510,8 @@ def sweep(root: pathlib.Path | None = None) -> bool:
         _fetch_if_stale(root)
     if not _commit_for_push("queue: sync uncommitted briefs", root, (), (".",)):
         return False
-    return push_now(root) if _is_dirty(root) else True
+    # Ahead, not dirty: a running pusher may already have taken the mark and still be pushing.
+    return push_now(root) if _ahead_of_origin(root) else True
 
 
 def main(argv: list[str] | None = None) -> None:
