@@ -176,6 +176,43 @@ def test_lock_path_prefers_git_dir(tmp_path):
     assert C.lock_path(tmp_path) == tmp_path / ".git" / ".tasks-sync.lock"
 
 
+def test_clone_state_of_a_worktree_lives_in_the_clones_common_git_dir(tmp_path):
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "-q", str(main)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(main),
+            "-c",
+            "user.email=t@t.t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "seed",
+        ],
+        check=True,
+    )
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True
+    )
+
+    assert C.clone_state_path(wt, "x") == (main / ".git" / "x").resolve()
+
+
+def test_clone_state_of_a_git_file_without_commondir_lives_in_its_gitdir(tmp_path):
+    (tmp_path / "modules" / "sub").mkdir(parents=True)
+    root = tmp_path / "sub"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: ../modules/sub\n")
+
+    assert C.clone_state_path(root, "x") == (tmp_path / "modules" / "sub" / "x").resolve()
+
+
 def test_atomic_write_replaces_and_leaves_no_temp(tmp_path):
     target = tmp_path / "sub" / "out.md"
     C.atomic_write(target, "first")

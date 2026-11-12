@@ -42,11 +42,27 @@ TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 def clone_state_path(root: pathlib.Path, name: str) -> pathlib.Path:
     """Where per-clone state file `name` (a lock, a mark, a log) lives.
 
-    Inside .git so it is per-clone and never committed. Falls back to the repo root for
-    worktrees (where .git is a file, not a dir) and for non-git callers (tests).
+    Inside the clone's common git dir, so it is never committed and every worktree of the
+    clone shares it. Falls back to the queue root for non-git callers (tests).
     """
+    git = _common_git_dir(root)
+    return (git if git is not None else root) / name
+
+
+def _common_git_dir(root: pathlib.Path) -> pathlib.Path | None:
+    """The git dir shared by all worktrees of `root`'s clone, read from disk without spawning git."""
     git = root / ".git"
-    return (git if git.is_dir() else root) / name
+    if git.is_dir():
+        return git
+    try:
+        gitdir = git.read_text().removeprefix("gitdir:").strip()
+    except OSError:
+        return None
+    worktree_dir = (root / gitdir).resolve()
+    try:
+        return (worktree_dir / (worktree_dir / "commondir").read_text().strip()).resolve()
+    except OSError:
+        return worktree_dir
 
 
 def lock_path(root: pathlib.Path) -> pathlib.Path:

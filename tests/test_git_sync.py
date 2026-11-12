@@ -732,6 +732,23 @@ def test_a_stale_fetch_is_refreshed_and_a_fresh_one_reused(tmp_path, monkeypatch
     assert _push_count(fetches) == 2
 
 
+def test_a_write_from_a_worktree_commits_no_pusher_state(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = tmp_path / "wt"
+    git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
+    (wt / "inbox" / "mine.md").write_text("x")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=wt, ids=["mine"]) is True
+    assert git_sync.wait_for_push(wt)
+    assert git_sync.sweep(wt) is True
+    assert git_sync.wait_for_push(wt)
+
+    assert not [p for p in committed_files(wt) if p.startswith(".tasks-")]
+    assert C.clone_state_path(wt, git_sync.PUSH_LOCK) == C.clone_state_path(
+        repo, git_sync.PUSH_LOCK
+    )
+
+
 def test_fetch_freshness_reads_a_worktree_fetch_head(tmp_path):
     repo = make_repo(tmp_path)
     wt = tmp_path / "wt"
