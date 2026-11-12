@@ -353,8 +353,8 @@ def test_sync_refuses_to_recreate_a_done_brief_in_inbox(tmp_path, capsys):
     assert "merge-queue" in capsys.readouterr().out
 
 
-def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
-    """A stale checkout cannot see a brief another session closed; the fetched origin can."""
+def test_sweep_refuses_id_that_is_done_only_on_origin(tmp_path):
+    """A stale checkout cannot see a brief another session closed; the sweep's fetch can."""
     repo = make_repo(tmp_path)
     other = tmp_path / "other"
     subprocess.run(
@@ -369,7 +369,7 @@ def test_sync_refuses_id_that_is_done_only_on_origin(tmp_path):
     git(other, "push", "-q", "origin", "main")
     (repo / "inbox" / "moved.md").write_text("\nlate note\n")
 
-    git_sync.sync_commit("test: stale capture", root=repo)
+    git_sync.sweep(repo)
     assert git_sync.wait_for_push(repo)
 
     assert "inbox/moved.md" not in committed_files(repo)
@@ -555,7 +555,7 @@ def test_twenty_concurrent_writes_commit_twenty_times_and_push_at_most_twice(tmp
 
     assert int(git(repo, "rev-list", "--count", "HEAD").stdout) == base + 20
     assert _push_count(log) <= 2
-    assert _push_count(log.with_name("pushes.log.fetch")) <= 1
+    assert _push_count(log.with_name("pushes.log.fetch")) == 0
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
 
 
@@ -715,6 +715,30 @@ def test_a_stale_fetch_is_refreshed_and_a_fresh_one_reused(tmp_path, monkeypatch
     os.utime(repo / ".git" / "FETCH_HEAD", (stale, stale))
     git_sync._fetch_if_stale(repo)
     assert _push_count(fetches) == 2
+
+
+def test_a_write_fetches_nothing_and_a_sweep_fetches_once_a_minute(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+    fetches = log.with_name("pushes.log.fetch")
+    (repo / "inbox" / "quiet.md").write_text("q")
+
+    assert git_sync.sync_commit("brief(quiet): captured", root=repo, ids=["quiet"]) is True
+    assert git_sync.wait_for_push(repo)
+    assert _push_count(fetches) == 0
+
+    assert git_sync.sweep(repo) is True
+    assert git_sync.sweep(repo) is True
+    assert _push_count(fetches) == 1
+
+
+def test_a_sweep_of_a_project_queue_fetches_nothing(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+    (repo / "project").mkdir()
+
+    assert git_sync.sweep(repo / "project") is False
+    assert _push_count(log.with_name("pushes.log.fetch")) == 0
 
 
 def test_a_write_from_a_worktree_commits_no_pusher_state(tmp_path):

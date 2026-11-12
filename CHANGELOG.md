@@ -36,9 +36,9 @@
   landed meanwhile. Twenty concurrent writes cost at most two pushes. Its output, including any
   divergence report, goes to `.git/.tasks-push.log`, which the next write prints and clears.
   `sync_commit_and_push` pushes before returning, which `append_log.py` uses because it reads the
-  brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. The shadow check reuses `origin/main` while `FETCH_HEAD` is under
-  60 s old, so a burst of writes runs one `git fetch`, not one per write; a rejected push still fetches
-  and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed. A sweep with
+  brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. A write never runs `git fetch`: the shadow
+  check reads `origin/main` as the last sweep, push or rejected-push fetch left it. The sweep fetches
+  unless `FETCH_HEAD` is under 60 s old, and a rejected push still fetches and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed. A sweep with
   nothing ahead of `origin/main` starts no push. The queue's sync lock also moved to the clone's
   common git dir, so every worktree of one clone shares it.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder

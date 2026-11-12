@@ -126,7 +126,7 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
     return [path for path in out.split("\0") if path]
 
 
-FETCH_MAX_AGE = 60.0  # seconds a fetched origin/main stays fresh enough for the shadow check
+FETCH_MAX_AGE = 60.0  # seconds a sweep reuses its last fetch of origin/main
 
 
 def _fetch_head(root: pathlib.Path) -> pathlib.Path:
@@ -146,7 +146,7 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path:
 
 
 def _fetch_if_stale(root: pathlib.Path) -> None:
-    """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old, so a burst fetches once."""
+    """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old."""
     try:
         if time.time() - _fetch_head(root).stat().st_mtime < FETCH_MAX_AGE:
             return
@@ -159,10 +159,10 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     """New brief files whose id is already filed in another state dir, here or on origin/main.
 
     A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
-    re-create the id in its old folder, leaving it in two states at once. The origin/main view
-    may be up to FETCH_MAX_AGE old: a rival pushed inside that window is not seen.
+    re-create the id in its old folder, leaving it in two states at once. A write never fetches:
+    origin/main is as fresh as the last sweep, push or rejected-push fetch, so a rival pushed
+    since then is not seen until the next sweep.
     """
-    _fetch_if_stale(root)
     # Only briefs origin gained since our history diverged are rivals; an older origin path
     # we already moved away locally (committed but unpushed) is not.
     remote = _git(
@@ -498,7 +498,13 @@ def sync_commit_and_push(
 
 
 def sweep(root: pathlib.Path | None = None) -> bool:
-    """Commit and push every uncommitted change in the queue: the net under writers that never call sync_commit."""
+    """Commit and push every uncommitted change in the queue: the net under writers that never call sync_commit.
+
+    The sweep is the one caller that refreshes origin/main, so writes stay free of network calls.
+    """
+    root = resolve_root() if root is None else root
+    if owns_repo(root):
+        _fetch_if_stale(root)
     return sync_commit("queue: sync uncommitted briefs", root, paths=(".",))
 
 
