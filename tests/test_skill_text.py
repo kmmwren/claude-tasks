@@ -4,10 +4,12 @@ A skill step that names no tool, or the wrong one, is followed by improvisation:
 dedup step once said only "sharpen the file", and re-filing through add_task.py created
 duplicate briefs because its merge needs a matching title and cited sources.
 """
+
 import pathlib
 import re
 
 import pytest
+from append_log import SEARCHED_FOLDERS
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILL_TEXTS = sorted([*(ROOT / "skills").glob("*/SKILL.md"), *(ROOT / "commands").glob("*.md")])
@@ -31,10 +33,12 @@ def test_every_plugin_script_a_skill_names_exists(doc):
 def test_handoff_dedup_sharpens_through_append_log():
     dedup = section(HANDOFF.read_text(), "Step 3")
     assert "scripts/append_log.py" in dedup
-    assert "title and cited sources" in dedup, "Step 3 must say why add_task.py merge is not a sharpen tool"
+    assert "title and cited sources" in dedup, (
+        "Step 3 must say why add_task.py merge is not a sharpen tool"
+    )
 
 
 def test_handoff_dedup_greps_every_folder_append_log_searches():
-    dedup = section(HANDOFF.read_text(), "Step 3")
-    for folder in ("inbox", "ready", "in-progress", "blocked", "parked", "done"):
-        assert folder in dedup.split("```bash", 1)[1].split("```", 1)[0], f"Step 3 grep skips {folder}/"
+    grep = section(HANDOFF.read_text(), "Step 3").split("```bash", 1)[1].split("```", 1)[0]
+    skipped = [folder for folder in SEARCHED_FOLDERS if folder not in grep]
+    assert not skipped, f"Step 3 grep skips folders append_log.py searches: {skipped}"
