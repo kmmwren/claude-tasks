@@ -8,8 +8,12 @@ ID = "demo-brief"
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
-                          capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 
 
 @pytest.fixture
@@ -19,7 +23,9 @@ def repos(tmp_path):
     main = tmp_path / "main"
     subprocess.run(["git", "clone", "-q", str(origin), str(main)], check=True)
     (main / "ready").mkdir()
-    (main / "ready" / f"{ID}.md").write_text(f"---\nid: {ID}\n---\n\n## Execution log\n\n2026-01-01: captured.\n")
+    (main / "ready" / f"{ID}.md").write_text(
+        f"---\nid: {ID}\n---\n\n## Execution log\n\n2026-01-01: captured.\n"
+    )
     git(main, "add", "-A")
     git(main, "commit", "-qm", "base")
     git(main, "push", "-q", "origin", "HEAD:main")
@@ -62,6 +68,13 @@ def test_unknown_id_exits_1(repos):
         append_log.append_log("nope", "x", root=main)
 
 
+@pytest.mark.parametrize("path_like", [f"../ready/{ID}", f"ready/{ID}", f"/tmp/{ID}"])
+def test_id_naming_a_path_is_an_unknown_brief(repos, path_like):
+    _, main = repos
+    with pytest.raises(ValueError):
+        append_log.append_log(path_like, "x", root=main)
+
+
 def test_queue_in_repo_subdirectory(tmp_path):
     origin = tmp_path / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
@@ -86,10 +99,12 @@ def test_cli_exit_codes(repos, capsys):
 
 def _failing(real, fragment):
     """Wrap append_log._run so any git call whose args contain `fragment` fails."""
+
     def run(repo, *args):
         if fragment in args:
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
         return real(repo, *args)
+
     return run
 
 
@@ -125,7 +140,9 @@ PEER = "peer-memory-abc12345"
 
 def _file_uncommitted_peer_brief(main):
     (main / "inbox").mkdir(exist_ok=True)
-    (main / "inbox" / f"{PEER}.md").write_text(f"---\nid: {PEER}\n---\n\n## Execution log\n\n2026-01-01: filed.\n")
+    (main / "inbox" / f"{PEER}.md").write_text(
+        f"---\nid: {PEER}\n---\n\n## Execution log\n\n2026-01-01: filed.\n"
+    )
 
 
 def test_brief_uncommitted_in_main_checkout_is_logged_and_leaves_sync_working(repos):
@@ -195,7 +212,9 @@ def test_backoff_sleeps_at_most_the_capped_doubling(monkeypatch, attempt, cap):
 def _push_from_peer(origin, tmp_path, n):
     peer = tmp_path / f"peer-clone-{n}"
     if not peer.exists():
-        subprocess.run(["git", "clone", "-q", str(origin), str(peer)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(origin), str(peer)], check=True, capture_output=True
+        )
     git(peer, "pull", "-q", "--rebase", "origin", "main")
     (peer / f"racer-{n}.txt").write_text("x")
     git(peer, "add", "-A")
@@ -239,7 +258,11 @@ def test_push_declined_for_another_reason_fails_at_once_with_the_line(repos, cap
     hook.chmod(0o755)
     pushes = []
     real = append_log._run
-    monkeypatch.setattr(append_log, "_run", lambda repo, *a: (a[:1] == ("push",) and pushes.append(1), real(repo, *a))[1])
+    monkeypatch.setattr(
+        append_log,
+        "_run",
+        lambda repo, *a: (a[:1] == ("push",) and pushes.append(1), real(repo, *a))[1],
+    )
     assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
     err = capsys.readouterr().err
     assert "policy says no" in err and "keep me" in err

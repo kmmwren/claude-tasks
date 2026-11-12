@@ -28,7 +28,7 @@ import time
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import repo_lock  # noqa: E402
+from _concurrency import atomic_write, repo_lock  # noqa: E402
 from _paths import resolve_root  # noqa: E402
 from git_sync import _git, sync_commit  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
@@ -53,11 +53,10 @@ def _queue_prefix(root: pathlib.Path) -> pathlib.Path:
 
 
 def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
-    for d in SEARCHED_FOLDERS:
-        path = queue / d / f"{brief_id}.md"
-        if path.exists():
-            return path
-    return None
+    """The brief file listed in a queue folder whose name is the id, so an id can never name a path."""
+    folders = (queue / d for d in SEARCHED_FOLDERS if (queue / d).is_dir())
+    listed = (path for folder in folders for path in sorted(folder.glob("*.md")))
+    return next((path for path in listed if path.stem == brief_id), None)
 
 
 def _committed(root: pathlib.Path, path: pathlib.Path) -> bool:
@@ -87,7 +86,7 @@ def _try_push(
     path = _find(queue, brief_id)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
-    path.write_text(_append_log(path.read_text(), today, line))
+    atomic_write(path, _append_log(path.read_text(), today, line))
     _run(wt, "add", str(path.relative_to(wt)))
     commit = _run(wt, *IDENTITY, "commit", "-m", f"brief({brief_id}): log line")
     if commit.returncode != 0:
