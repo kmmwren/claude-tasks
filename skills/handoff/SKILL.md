@@ -24,8 +24,9 @@ First run `python3 ~/.claude/hooks/lib/long_running.py check`. Exit 0 means this
 shortlist in `~/.claude/long-running-sessions.json`. For a long-running session a handoff is a capture
 check, not an ending: do Steps 1 to 3 so every open item has a queue brief, but **never close a ledger
 item** (record the brief path in its `metadata.brief` instead), and **keep working** the items
-afterwards; the "never work an item" rule above does not apply. The Step 4 report names how many
-briefs were filed or sharpened and that the session carries on.
+afterwards; the "never work an item" rule above does not apply. A re-run finds the briefs the last
+capture filed, so it sharpens them through `append_log.py` (Step 3) rather than filing again. The
+Step 4 report names how many briefs were filed or sharpened and that the session carries on.
 
 Add a session to the shortlist with `long_running.py add <session-id> "<name>"`. There are only a few.
 
@@ -100,7 +101,7 @@ its digest at <path>`), the digest is the input in place of the session:
   summaries` and `## Recent assistant text` in place of the conversation.
 - **Provenance:** each brief's `--context` opens with
   `From session <sid> (<name>) via external handoff; re-check before acting.`
-- **Closing:** close each source item with
+- **Closing:** close each source item, with the sharpened brief's path when Step 3 found one, using
   `python3 ~/.claude/scripts/handoff_external.py close <sid> <id> <brief path>` instead of
   `TaskUpdate`, which edits the current session's ledger, not the source's.
 - **Customer data:** briefs never carry customer security data copied from the digest;
@@ -164,12 +165,22 @@ Be generous (over-capture); leave them all in `inbox/` (no `--ready`) for `enric
 
 Before each capture, check for an existing brief and sharpen it instead of duplicating:
 ```bash
-grep -rl "<keyword>" "$CLAUDE_TASKS_DIR"/{inbox,ready,in-progress,done} 2>/dev/null
+grep -rl "<keyword>" "$CLAUDE_TASKS_DIR"/{inbox,ready,in-progress,blocked,parked,done} 2>/dev/null
 ```
 
-Sharpen the file the grep found, in the folder it is in now. Never append to a remembered
-`inbox/<id>.md` path: if the brief moved meanwhile, the append re-creates it. `git_sync.py`
-refuses to commit such a re-created id.
+Sharpen a found brief by adding the new context to its Execution log, addressed by id (the file
+name without `.md`):
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/append_log.py" <brief-id> "<new context, one line>"
+```
+
+It finds the brief in whichever folder it is in now, appends from a temporary worktree, commits and
+pushes, so the queue's main checkout (which `block-main-checkout-writes` guards) is never written.
+Never edit the brief's file directly. `add_task.py --on-duplicate merge` fires only when both the
+title and cited sources match an existing brief, so it is not a sharpen tool: re-filing a title
+with new context files a `-2` duplicate.
+
+A sharpened brief's path is the brief path Step 1 records for its ledger item.
 
 ## Directed handoff (steer where the items go)
 
