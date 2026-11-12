@@ -70,8 +70,9 @@ def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
     if local is None or _committed(root, local):
         return
     if not sync_commit_and_push(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
+        step = "pushing" if _committed(root, local) else "committing"
         raise RuntimeError(
-            f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry"
+            f"brief {brief_id!r} was uncommitted in {root} and {step} it was deferred; retry"
         )
     if not _committed(root, local):
         raise RuntimeError(

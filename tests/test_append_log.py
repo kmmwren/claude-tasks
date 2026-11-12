@@ -152,7 +152,21 @@ def test_deferred_filing_of_uncommitted_brief_is_a_runtime_error(repos, monkeypa
     _, main = repos
     _file_uncommitted_peer_brief(main)
     monkeypatch.setattr(append_log, "sync_commit_and_push", lambda *a, **k: False)
-    with pytest.raises(RuntimeError, match="uncommitted"):
+    with pytest.raises(RuntimeError, match="committing it was deferred"):
+        append_log.append_log(PEER, "x", root=main)
+
+
+def test_a_committed_brief_whose_push_was_deferred_says_so(repos, monkeypatch):
+    _, main = repos
+    _file_uncommitted_peer_brief(main)
+
+    def commit_without_pushing(message, root, ids=()):
+        git(root, "add", f"inbox/{PEER}.md")
+        git(root, "commit", "-q", "-m", message)
+        return False
+
+    monkeypatch.setattr(append_log, "sync_commit_and_push", commit_without_pushing)
+    with pytest.raises(RuntimeError, match="pushing it was deferred"):
         append_log.append_log(PEER, "x", root=main)
 
 
