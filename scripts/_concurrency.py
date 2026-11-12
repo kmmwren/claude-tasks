@@ -29,6 +29,7 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 
 # isort: split
 import contextlib
+import dataclasses
 import errno
 import fcntl
 import os
@@ -112,16 +113,48 @@ def shared_lock(
     return _held_flock(path, fcntl.LOCK_SH, timeout, poll)
 
 
-def try_lock(path: pathlib.Path) -> int | None:
-    """Take an exclusive flock on `path` without waiting; the open fd holds it, None if busy.
+class HeldLock:
+    """An exclusive flock owned through its open file descriptor, which a child process can inherit."""
 
-    The fd can be handed to a child process (`pass_fds`), which then owns the lock.
-    """
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self._held = True
+
+    def release(self) -> None:
+        """Close the descriptor, freeing the flock once no child holds a copy; idempotent."""
+        if self._held:
+            self._held = False
+            os.close(self.fd)
+
+    def __enter__(self) -> "HeldLock":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+def try_lock(path: pathlib.Path) -> HeldLock | None:
+    """Take an exclusive flock on `path` without waiting; None if another process holds it."""
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     if _flock_within(fd, fcntl.LOCK_EX, 0.0, 0.0):
-        return fd
+        return HeldLock(fd)
     os.close(fd)
     return None
+
+
+@dataclasses.dataclass(frozen=True)
+class Deadline:
+    """A point in monotonic time that a run of waits and subprocesses must finish before."""
+
+    at: float
+
+    @classmethod
+    def in_(cls, seconds: float) -> "Deadline":
+        return cls(time.monotonic() + seconds)
+
+    def cap(self, seconds: float) -> float:
+        """`seconds`, or what is left of the deadline if that is less."""
+        return min(seconds, max(0.0, self.at - time.monotonic()))
 
 
 def repo_lock(

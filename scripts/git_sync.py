@@ -2,49 +2,26 @@
 """
 git_sync.py — commit the queue under the cross-process lock, then push it coalesced.
 
-Shared commit helper for every writer that touches the queue working tree (add_task.py
-for new briefs, transition.py for status changes). Routing all commits through here means
-concurrent writers take turns on the git index via the same mutex, instead of colliding
-on .git/index.lock and silently dropping commits. Each writer commits only the briefs it names.
-
-The commit is synchronous; the push is not. A writer marks the clone dirty and returns. At
-most one detached pusher runs per clone: it waits for in-flight writers to land, pushes once,
-and pushes again only if a write marked the clone dirty meanwhile. A burst of writes from
-concurrent sessions therefore costs one or two `git push` processes, not one per write.
-
-Usage (run from anywhere):
-  python scripts/git_sync.py "brief(my-id): completed" my-id
-  python scripts/git_sync.py --sweep [queue-root]   # commit+push everything dirty (timer job)
-  python scripts/git_sync.py --push-pending ROOT --lock-fd N   # the detached pusher (internal)
-
-`--sweep` is the same helper over the whole tree: it catches files a session edited by hand,
-which no scripted writer could name. A queue root that is not the top of its own git repo
-(a project's `.tasks/`) is never synced here; its repo ships it.
-
-Exit codes: 0 — committed (push in the background) or safely deferred; 1 — bad usage.
+Writers commit synchronously and mark the clone dirty; one detached pusher per clone pushes once
+for the whole burst. `--sweep` is the timer's net: it commits what no writer named and pushes before it exits.
 """
 
-import os
+import contextlib
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import (  # noqa: E402
-    clone_state_path,
-    exclusive_lock,
-    repo_lock,
-    shared_lock,
-    try_lock,
-)
+from _concurrency import Deadline, HeldLock, repo_lock  # noqa: E402
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
+from _push_state import PushState  # noqa: E402
 
 
 def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProcess[Any]":
@@ -127,7 +104,7 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
 
 
 FETCH_MAX_AGE = 45.0  # under the 60 s sweep interval, so every timed sweep fetches
-FETCH_TIMEOUT = 20.0  # a hung fetch must not spend the sweep's whole budget
+NETWORK_TIMEOUT = 20.0  # a hung remote must not spend the sweep's whole budget
 
 
 def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
@@ -156,18 +133,18 @@ def _fetch_if_stale(root: pathlib.Path) -> None:
     except OSError:
         pass  # never fetched
     try:
-        _git(root, "fetch", "-q", "origin", "main", capture_output=True, timeout=FETCH_TIMEOUT)
+        _git(root, "fetch", "-q", "origin", "main", capture_output=True, timeout=NETWORK_TIMEOUT)
     except subprocess.TimeoutExpired:
-        print(f"  (fetch timed out after {FETCH_TIMEOUT:.0f}s; using origin/main as last fetched.)")
+        print(
+            f"  (fetch timed out after {NETWORK_TIMEOUT:.0f}s; using origin/main as last fetched.)"
+        )
 
 
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     """New brief files whose id is already filed in another state dir, here or on origin/main.
 
-    A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
-    re-create the id in its old folder, leaving it in two states at once. A write never fetches:
-    origin/main is as fresh as the last sweep, push or rejected-push fetch, so a rival pushed
-    since then is not seen until the next sweep.
+    A writer with a stale view would re-create a moved or closed id; a write never fetches, so a rival
+    pushed since the last sweep is seen only by the next one.
     """
     # Only briefs origin gained since our history diverged are rivals; an older origin path
     # we already moved away locally (committed but unpushed) is not.
@@ -235,13 +212,21 @@ def _report_divergence(root: pathlib.Path, why: str) -> None:
     )
 
 
-def _integrate_remote(root: pathlib.Path) -> bool:
-    """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
+def _fetch_origin(root: pathlib.Path, deadline: Deadline) -> None:
+    _git(
+        root,
+        "fetch",
+        "-q",
+        "origin",
+        "main",
+        capture_output=True,
+        text=True,
+        timeout=deadline.cap(NETWORK_TIMEOUT),
+    )
 
-    Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
-    refuses to move when an edit overlaps an incoming change.
-    """
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+
+@contextlib.contextmanager
+def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
     with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         _git(
@@ -256,41 +241,69 @@ def _integrate_remote(root: pathlib.Path) -> bool:
             text=True,
         )
         try:
-            if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
-                conflicts = _git(
-                    wt, "diff", "--name-only", "--diff-filter=U", capture_output=True, text=True
-                ).stdout.split()
-                _git(wt, "rebase", "--abort", capture_output=True, text=True)
-                _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
-                return False
-            if (
-                _git(
-                    wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True
-                ).returncode
-                != 0
-            ):
-                _report_divergence(root, "origin moved again while rebasing")
-                return False
+            yield wt
         finally:
             _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+
+
+def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -> bool:
+    if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
+        conflicts = _git(
+            wt, "diff", "--name-only", "--diff-filter=U", capture_output=True, text=True
+        ).stdout.split()
+        _git(wt, "rebase", "--abort", capture_output=True, text=True)
+        _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
+        return False
+    pushed = _git(
+        wt,
+        "push",
+        "-q",
+        "origin",
+        "HEAD:main",
+        capture_output=True,
+        text=True,
+        timeout=deadline.cap(NETWORK_TIMEOUT),
+    )
+    if pushed.returncode != 0:
+        _report_divergence(root, "origin moved again while rebasing")
+    return pushed.returncode == 0
+
+
+def _advance_checkout(root: pathlib.Path, deadline: Deadline) -> None:
+    try:
+        _fetch_origin(root, deadline)
+    except subprocess.TimeoutExpired:
+        print(
+            "  (pushed, but the checkout was not advanced: the fetch timed out; "
+            "run: git fetch origin main && git reset --keep origin/main)"
+        )
+        return
     if _git(root, "reset", "--keep", "origin/main", capture_output=True, text=True).returncode != 0:
         print(
             "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
             "commit or move them, then run: git reset --keep origin/main)"
         )
+
+
+def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
+    """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
+
+    Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
+    refuses to move when an edit overlaps an incoming change.
+    """
+    _fetch_origin(root, deadline)
+    with _scratch_worktree(root) as wt:
+        if not _rebase_and_push(root, wt, deadline):
+            return False
+    _advance_checkout(root, deadline)
     return True
 
 
-# Per-clone state of the coalesced pusher, all beside the sync lock inside .git.
-PUSH_LOCK = ".tasks-push.lock"  # held by the one running pusher
-WRITERS_LOCK = ".tasks-writers.lock"  # shared by every writer between commit start and dirty mark
-DIRTY = ".tasks-push.dirty"  # main is ahead of origin and no push has started from it yet
-PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
 PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher
 SWEEP_BUDGET = 110.0  # a sweep's whole run, under dispatch's 120 s flush timeout
-PUSH_RESERVE = 40.0  # of that budget, kept for the settle wait and the push itself
+PUSH_RESERVE = 40.0  # of that budget, the most one drain may spend settling, fetching and pushing
+REBASE_LOCK_WAIT = 30.0  # longest a rejected push waits for the queue lock before deferring
 
 
 def _ahead_of_origin(root: pathlib.Path) -> bool:
@@ -299,103 +312,91 @@ def _ahead_of_origin(root: pathlib.Path) -> bool:
     return ahead.returncode != 0 or ahead.stdout.strip() != "0"
 
 
-def _mark_dirty(root: pathlib.Path) -> None:
-    clone_state_path(root, DIRTY).touch()
-
-
-def _is_dirty(root: pathlib.Path) -> bool:
-    return clone_state_path(root, DIRTY).exists()
-
-
-def _take_dirty(root: pathlib.Path) -> bool:
-    """Clear the dirty mark; True if it was set. Cleared before pushing, so a later mark means a later commit."""
-    try:
-        clone_state_path(root, DIRTY).unlink()
-    except FileNotFoundError:
-        return False
-    return True
-
-
-def _push(root: pathlib.Path) -> bool:
-    """Push main; on rejection rebase onto origin under the queue lock and push again."""
-    if _git(root, "push", "-q", "origin", "main").returncode == 0:
+def _push_main(root: pathlib.Path, deadline: Deadline) -> bool:
+    pushed = _git(root, "push", "-q", "origin", "main", timeout=deadline.cap(NETWORK_TIMEOUT))
+    if pushed.returncode == 0:
         return True
-    with repo_lock(root) as acquired:
+    with repo_lock(root, timeout=deadline.cap(REBASE_LOCK_WAIT)) as acquired:
         if not acquired:
             print("  (push deferred: lock held; the next write or sweep pushes these commits.)")
             return False
-        return _integrate_remote(root)
+        return _integrate_remote(root, deadline)
+
+
+def _push(root: pathlib.Path, deadline: Deadline) -> bool:
+    """Push main, rebasing onto origin under the queue lock if it is rejected.
+
+    A timeout is a failed push that restores the dirty mark, so the next sweep pushes again.
+    """
+    try:
+        return _push_main(root, deadline)
+    except subprocess.TimeoutExpired as e:
+        PushState(root).mark_dirty()
+        print(f"  (push timed out after {e.timeout:.0f}s; the next sweep pushes these commits.)")
+        return False
 
 
 def _drain(root: pathlib.Path) -> bool:
-    """Push until no commit is waiting; the caller holds the push lock. Returns the last push's result."""
-    pushed = True
+    """Push until no commit is waiting, within PUSH_RESERVE; the caller holds the push lock. False once a push fails."""
+    state, deadline = PushState(root), Deadline.in_(PUSH_RESERVE)
     while True:
         # Let writers already committing land first, so one push carries the whole burst.
-        with exclusive_lock(clone_state_path(root, WRITERS_LOCK), timeout=SETTLE_MAX, poll=0.05):
-            pass
-        if not _take_dirty(root):
-            return pushed
-        pushed = _push(root)
+        state.settle_writers(deadline.cap(SETTLE_MAX))
+        if not state.take_dirty():
+            return True
+        if not _push(root, deadline):
+            return False
 
 
-def _release(fd: int) -> None:
-    os.close(fd)  # closing the last fd on the lock's open file releases the flock
+def _run_pusher(root: pathlib.Path, lock: HeldLock | None) -> None:
+    """Drain while holding the push lock; re-take it if a write slipped in as it was released."""
+    state = PushState(root)
+    while lock is not None:
+        with lock:
+            drained = _drain(root)
+        lock = state.try_lock_pusher() if drained and state.is_dirty() else None
 
 
-def _run_pusher(root: pathlib.Path, fd: int | None) -> None:
-    """Drain while holding the push lock `fd`; re-take it if a write slipped in as it was released."""
-    while fd is not None:
-        try:
-            _drain(root)
-        finally:
-            _release(fd)
-        fd = try_lock(clone_state_path(root, PUSH_LOCK)) if _is_dirty(root) else None
-
-
-def _report_last_push(root: pathlib.Path) -> None:
-    """Show the writer what the previous detached pusher reported, then clear it; the caller holds the push lock."""
-    log = clone_state_path(root, PUSH_LOG)
-    report = log.read_text(errors="replace").strip() if log.exists() else ""
+def _report_last_push(state: PushState) -> None:
+    """Show the writer what the previous detached pusher reported; the caller holds the push lock."""
+    report = state.take_report()
     if report:
         print(f"  (previous background push reported:)\n{report}")
-        log.write_text("")
 
 
-def _spawn_pusher(root: pathlib.Path, fd: int) -> None:
+def _spawn_pusher(state: PushState, lock: HeldLock) -> None:
     """Hand the held push lock to a detached pusher process, so the caller returns at once."""
-    try:
-        _report_last_push(root)
-        with open(clone_state_path(root, PUSH_LOG), "a") as log:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(SCRIPTS_DIR / "git_sync.py"),
-                    "--push-pending",
-                    str(root),
-                    "--lock-fd",
-                    str(fd),
-                ],
-                pass_fds=(fd,),
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-    finally:
-        _release(fd)
+    _report_last_push(state)
+    with open(state.log_path, "a") as log:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "git_sync.py"),
+                "--push-pending",
+                str(state.root),
+                "--lock-fd",
+                str(lock.fd),
+            ],
+            pass_fds=(lock.fd,),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
 
 def request_push(root: pathlib.Path) -> None:
     """Start a detached pusher unless one is running; a running one picks up the dirty mark."""
-    fd = try_lock(clone_state_path(root, PUSH_LOCK))
-    if fd is None:
+    state = PushState(root)
+    lock = state.try_lock_pusher()
+    if lock is None:
         return
-    try:
-        _spawn_pusher(root, fd)
-    except OSError as e:
-        # The commit has landed and stays dirty, so the next write or sweep pushes it.
-        print(f"  (push deferred: could not start the background pusher: {e})")
+    with lock:
+        try:
+            _spawn_pusher(state, lock)
+        except OSError as e:
+            # The commit has landed and stays dirty, so the next write or sweep pushes it.
+            print(f"  (push deferred: could not start the background pusher: {e})")
 
 
 def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
@@ -403,32 +404,17 @@ def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
 
     `wait` bounds the wait for a running pusher; past it the push is left to that pusher.
     """
-    with exclusive_lock(clone_state_path(root, PUSH_LOCK), timeout=wait) as acquired:
+    state = PushState(root)
+    with state.pusher_lock(wait) as acquired:
         if not acquired:
             print("  (push deferred: another pusher still running; it will push these commits.)")
             return False
-        _report_last_push(root)
-        _mark_dirty(root)
+        _report_last_push(state)
+        state.mark_dirty()
         pushed = _drain(root)
-    if _is_dirty(root):  # a write that found the lock held just before it was released
+    if pushed and state.is_dirty():  # a write that found the lock held just before it was released
         request_push(root)
     return pushed
-
-
-def wait_for_push(root: pathlib.Path, timeout: float = 60.0, poll: float = 0.05) -> bool:
-    """Block until no pusher runs and none is pending; False if `timeout` passed first.
-
-    True does not mean origin carries HEAD: a failed push leaves its commits for the next sweep.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        fd = None if _is_dirty(root) else try_lock(clone_state_path(root, PUSH_LOCK))
-        if fd is not None:
-            _release(fd)
-            if not _is_dirty(root):
-                return True
-        time.sleep(poll)
-    return False
 
 
 def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]) -> bool:
@@ -471,13 +457,13 @@ def _commit_for_push(
     """Commit and mark the clone dirty; False if deferred or the queue belongs to another repo."""
     if not owns_repo(root):
         return False  # a project queue lives inside another repo, which ships it
-    # Shared while committing, so a pusher waiting for exclusive access waits for the whole burst.
-    with shared_lock(clone_state_path(root, WRITERS_LOCK)):
+    state = PushState(root)
+    with state.writing():
         if not _commit(message, root, ids, paths):
             return False
         # An idle sweep, or a commit a running pusher already carried, needs no push.
         if _ahead_of_origin(root):
-            _mark_dirty(root)
+            state.mark_dirty()
     return True
 
 
@@ -487,16 +473,14 @@ def sync_commit(
     ids: Sequence[str] = (),
     paths: Sequence[str] = (),
 ) -> bool:
-    """Commit only what the caller names under the cross-process lock; the push runs detached.
+    """Commit only the briefs `ids` and pathspecs `paths` name, under the lock; the push runs detached.
 
-    `ids` stage every file `<id>.md` at any depth, deletions and moves included; `paths` stage
-    explicit pathspecs (`.` when the caller owns the whole tree); nothing else is staged.
-    True means committed; False means deferred, and the caller re-runs with the same args.
+    False means deferred, and the caller re-runs with the same args.
     """
     root = resolve_root() if root is None else root
     if not _commit_for_push(message, root, ids, paths):
         return False
-    if _is_dirty(root):
+    if PushState(root).is_dirty():
         request_push(root)
     return True
 
@@ -533,7 +517,7 @@ def main(argv: list[str] | None = None) -> None:
         sweep(pathlib.Path(argv[1]).expanduser() if len(argv) > 1 else None)
         return
     if argv[:1] == ["--push-pending"] and argv[2:3] == ["--lock-fd"]:
-        _run_pusher(pathlib.Path(argv[1]), int(argv[3]))
+        _run_pusher(pathlib.Path(argv[1]), HeldLock(int(argv[3])))
         return
     # A flag in the message slot would otherwise be committed and pushed as the message.
     if not argv or argv[0].startswith("-"):

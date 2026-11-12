@@ -2,8 +2,9 @@
 
 import subprocess
 
-import git_sync
 import transition
+
+from tests.queue_helpers import wait_for_pusher_idle
 
 ID = "rotate-the-api-key"
 
@@ -45,7 +46,7 @@ def test_move_commits_only_the_moved_briefs_paths(tmp_path):
         "---\nid: peer-unrelated-1234abcd\n---\n"
     )
     transition.main(["move", ID, "in-progress", "--root", str(main)])
-    assert git_sync.wait_for_push(main)
+    assert wait_for_pusher_idle(main)
     changed = git(origin, "show", "--no-renames", "--name-status", "--format=", "main").split("\n")
     assert sorted(filter(None, changed)) == [f"A\tin-progress/{ID}.md", f"D\tready/{ID}.md"]
     status = git(main, "status", "--porcelain", "--untracked-files=all")

@@ -1,8 +1,10 @@
 """Shared builders for the dependency, unblock, milestone and board tests."""
 
 import pathlib
+import time
 
 import init_queue
+from _push_state import PushState
 
 
 def brief_text(
@@ -128,3 +130,17 @@ def make_inbox(tmp_path: pathlib.Path, briefs: dict[str, str]) -> pathlib.Path:
     for bid, text in briefs.items():
         (root / "inbox" / f"{bid}.md").write_text(text)
     return root
+
+
+def wait_for_pusher_idle(root: pathlib.Path, timeout: float = 60.0, poll: float = 0.05) -> bool:
+    """Block until no detached pusher runs and none is pending; False if `timeout` passed first."""
+    state = PushState(root)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        lock = None if state.is_dirty() else state.try_lock_pusher()
+        if lock is not None:
+            with lock:
+                if not state.is_dirty():
+                    return True
+        time.sleep(poll)
+    return False
