@@ -375,8 +375,13 @@ def _spawn_pusher(root: pathlib.Path, fd: int) -> None:
 def request_push(root: pathlib.Path) -> None:
     """Start a detached pusher unless one is running; a running one picks up the dirty mark."""
     fd = try_lock(clone_state_path(root, PUSH_LOCK))
-    if fd is not None:
+    if fd is None:
+        return
+    try:
         _spawn_pusher(root, fd)
+    except OSError as e:
+        # The commit has landed and stays dirty, so the next write or sweep pushes it.
+        print(f"  (push deferred: could not start the background pusher: {e})")
 
 
 def push_now(root: pathlib.Path) -> bool:

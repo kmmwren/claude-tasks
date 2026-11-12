@@ -702,21 +702,6 @@ def test_the_next_write_shows_what_the_last_background_push_reported(tmp_path, c
     assert C.clone_state_path(repo, git_sync.PUSH_LOG).read_text() == ""
 
 
-def test_a_pusher_that_fails_to_start_releases_the_push_lock(tmp_path, monkeypatch):
-    repo = make_repo(tmp_path)
-
-    def broken(*a, **k):
-        raise OSError("no python")
-
-    monkeypatch.setattr(git_sync.subprocess, "Popen", broken)
-    with pytest.raises(OSError):
-        git_sync.request_push(repo)
-
-    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
-    assert held is not None
-    os.close(held)
-
-
 def test_a_stale_fetch_is_refreshed_and_a_fresh_one_reused(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
     log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
@@ -759,3 +744,19 @@ def test_fetch_freshness_reads_a_worktree_fetch_head(tmp_path):
         git(wt, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD").stdout.strip()
     )
     assert git_sync._fetch_head(wt).exists()
+
+
+def test_a_pusher_that_cannot_start_leaves_the_commit_for_the_sweep(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+
+    monkeypatch.setattr(git_sync.sys, "executable", str(tmp_path / "no-such-python"))
+    (repo / "inbox" / "mine.md").write_text("x")
+
+    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+
+    assert "inbox/mine.md" in committed_files(repo, "HEAD")
+    assert git_sync._is_dirty(repo)
+    assert "could not start the background pusher" in capsys.readouterr().out
+    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
+    assert held is not None
+    os.close(held)
