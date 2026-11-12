@@ -20,6 +20,7 @@ import argparse
 import datetime
 import pathlib
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -36,9 +37,14 @@ from transition import BRIEF_DIRS, _append_log  # noqa: E402
 PUSH_ATTEMPTS = 8
 LOCK_WAIT = 120.0
 IDENTITY = ("-c", "user.name=claude-tasks", "-c", "user.email=noreply@anthropic.com")
-# Push outcomes that mean another writer won the race to update main, so a fresh retry can land.
-# A server-side ref-lock clash reports "[remote rejected] ... (failed)" rather than "[rejected]".
-LOST_RACE = ("[rejected]", "(failed)", "cannot lock ref", "incorrect old value")
+# A ref status line saying another writer won the race to update main, so a fresh retry can land.
+# A server-side ref-lock clash reports "[remote rejected] ... (failed)"; hook output on "remote:"
+# lines is ignored, so a declined push never matches.
+LOST_RACE = re.compile(
+    r"^ ! \[(?:rejected\]|remote rejected\] \S+ -> \S+ "
+    r"\((?:failed|cannot lock ref[^)]*|incorrect old value[^)]*)\))",
+    re.MULTILINE,
+)
 
 
 def _run(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
@@ -98,7 +104,7 @@ def _try_push(
     push = _run(wt, "push", "origin", "HEAD:main")
     if push.returncode == 0:
         return _run(wt, "rev-parse", "HEAD").stdout.strip()
-    if any(sign in push.stderr for sign in LOST_RACE):
+    if LOST_RACE.search(push.stderr):
         return None
     raise RuntimeError(f"push refused: {push.stderr.strip()}")
 

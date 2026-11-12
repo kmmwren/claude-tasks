@@ -154,12 +154,19 @@ def test_a_push_that_lost_the_race_is_retried(repos, monkeypatch, stderr):
         append_log.append_log(ID, "x", root=main)
 
 
-def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch):
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        " ! [remote rejected] HEAD -> main (pre-receive hook declined)",
+        "remote: lint check (failed)\nremote: cannot lock ref\n"
+        " ! [remote rejected] HEAD -> main (pre-receive hook declined)",
+    ],
+)
+def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch, stderr):
     _, main = repos
-    stderr = " ! [remote rejected] HEAD -> main (pre-receive hook declined)"
     monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
     monkeypatch.setattr(append_log, "_backoff", lambda attempt: pytest.fail("retried"))
-    with pytest.raises(RuntimeError, match="push refused: .*hook declined"):
+    with pytest.raises(RuntimeError, match=r"(?s)push refused: .*hook declined"):
         append_log.append_log(ID, "x", root=main)
 
 
