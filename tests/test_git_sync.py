@@ -418,10 +418,8 @@ def test_sweep_commits_and_pushes_every_uncommitted_change(tmp_path):
     assert git_sync.sweep(repo) is True
 
     assert git(repo, "status", "--porcelain").stdout == ""
-    assert git_sync.wait_for_push(repo)
-    git(repo, "fetch", "-q", "origin")
-    assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
-    assert "inbox/new.md" in committed_files(repo, "origin/main")
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+    assert "inbox/new.md" in committed_files(repo, _remote_head(repo).strip())
 
 
 def test_sweep_keeps_a_credential_bearing_file_local(tmp_path, capsys):
@@ -497,9 +495,7 @@ def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
 
     git_sync.main(["--sweep", str(repo)])
 
-    assert git_sync.wait_for_push(repo)
-    git(repo, "fetch", "-q", "origin")
-    assert "inbox/cli.md" in committed_files(repo, "origin/main")
+    assert "inbox/cli.md" in committed_files(repo, _remote_head(repo).strip())
 
 
 # ── coalesced push: one pusher per clone, writes during a push still land ────
@@ -805,7 +801,6 @@ def test_a_sweep_pushes_commits_a_failed_push_left_behind(tmp_path, monkeypatch)
     git(repo, "commit", "-qm", "brief(stranded): captured")
 
     assert git_sync.sweep(repo) is True
-    assert git_sync.wait_for_push(repo)
 
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
 
@@ -824,3 +819,40 @@ def test_an_undecodable_push_log_does_not_fail_the_write(tmp_path, capsys):
     git_sync._report_last_push(repo)
 
     assert "rejected" in capsys.readouterr().out
+
+
+def test_a_sweep_waits_for_a_running_pusher_then_returns_with_origin_current(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    _, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
+    slow.touch()
+    (repo / "inbox" / "first.md").write_text("1")
+    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    deadline = time.monotonic() + 10
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    slow.unlink()
+    (repo / "inbox" / "fresh.md").write_text("2")
+
+    assert git_sync.sweep(repo) is True
+
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+    assert "inbox/fresh.md" in committed_files(repo, _remote_head(repo).strip())
+
+
+def test_a_sweep_fetches_when_git_cannot_name_fetch_head(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+    monkeypatch.setattr(git_sync, "_fetch_head", lambda root: None)
+    (tmp_path / "touched").write_text("")  # a fresh cwd must not pass for a fresh fetch
+    monkeypatch.chdir(tmp_path)
+
+    git_sync._fetch_if_stale(repo)
+
+    assert _push_count(log.with_name("pushes.log.fetch")) == 1
+
+
+def test_fetch_head_is_none_when_git_cannot_name_it(tmp_path, monkeypatch):
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+
+    assert git_sync._fetch_head(not_a_repo) is None

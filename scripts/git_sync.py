@@ -129,7 +129,8 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
 FETCH_MAX_AGE = 45.0  # under the 60 s sweep interval, so every timed sweep fetches
 
 
-def _fetch_head(root: pathlib.Path) -> pathlib.Path:
+def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
+    """The clone's FETCH_HEAD; None when git cannot name it, so the caller fetches."""
     git = root / ".git"
     if git.is_dir():
         return git / "FETCH_HEAD"
@@ -142,13 +143,14 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    return pathlib.Path(out)
+    return pathlib.Path(out) if out else None
 
 
 def _fetch_if_stale(root: pathlib.Path) -> None:
     """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old."""
+    fetch_head = _fetch_head(root)
     try:
-        if time.time() - _fetch_head(root).stat().st_mtime < FETCH_MAX_AGE:
+        if fetch_head and time.time() - fetch_head.stat().st_mtime < FETCH_MAX_AGE:
             return
     except OSError:
         pass  # never fetched
@@ -498,14 +500,17 @@ def sync_commit_and_push(
 
 
 def sweep(root: pathlib.Path | None = None) -> bool:
-    """Commit and push every uncommitted change in the queue: the net under writers that never call sync_commit.
+    """Commit every uncommitted change and push before returning: the net under every writer.
 
-    The sweep is the one caller that refreshes origin/main, so writes stay free of network calls.
+    It is the one caller that refreshes origin/main, and dispatch relies on origin being current after it.
+    True means nothing is left to push; False means deferred or the push failed.
     """
     root = resolve_root() if root is None else root
     if owns_repo(root):
         _fetch_if_stale(root)
-    return sync_commit("queue: sync uncommitted briefs", root, paths=(".",))
+    if not _commit_for_push("queue: sync uncommitted briefs", root, (), (".",)):
+        return False
+    return push_now(root) if _is_dirty(root) else True
 
 
 def main(argv: list[str] | None = None) -> None:
