@@ -127,6 +127,7 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
 
 
 FETCH_MAX_AGE = 45.0  # under the 60 s sweep interval, so every timed sweep fetches
+FETCH_TIMEOUT = 20.0  # a hung fetch must not spend the sweep's whole budget
 
 
 def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
@@ -154,7 +155,10 @@ def _fetch_if_stale(root: pathlib.Path) -> None:
             return
     except OSError:
         pass  # never fetched
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    try:
+        _git(root, "fetch", "-q", "origin", "main", capture_output=True, timeout=FETCH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"  (fetch timed out after {FETCH_TIMEOUT:.0f}s; using origin/main as last fetched.)")
 
 
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
@@ -284,7 +288,9 @@ WRITERS_LOCK = ".tasks-writers.lock"  # shared by every writer between commit st
 DIRTY = ".tasks-push.dirty"  # main is ahead of origin and no push has started from it yet
 PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
-PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher; under dispatch's 120 s flush timeout
+PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher
+SWEEP_BUDGET = 110.0  # a sweep's whole run, under dispatch's 120 s flush timeout
+PUSH_RESERVE = 40.0  # of that budget, kept for the settle wait and the push itself
 
 
 def _ahead_of_origin(root: pathlib.Path) -> bool:
@@ -392,9 +398,12 @@ def request_push(root: pathlib.Path) -> None:
         print(f"  (push deferred: could not start the background pusher: {e})")
 
 
-def push_now(root: pathlib.Path) -> bool:
-    """Push synchronously, after any running pusher, for callers that need origin current."""
-    with exclusive_lock(clone_state_path(root, PUSH_LOCK), timeout=PUSH_WAIT) as acquired:
+def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
+    """Push synchronously, after any running pusher, for callers that need origin current.
+
+    `wait` bounds the wait for a running pusher; past it the push is left to that pusher.
+    """
+    with exclusive_lock(clone_state_path(root, PUSH_LOCK), timeout=wait) as acquired:
         if not acquired:
             print("  (push deferred: another pusher still running; it will push these commits.)")
             return False
@@ -506,12 +515,16 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     True means nothing is left to push; False means deferred or the push failed.
     """
     root = resolve_root() if root is None else root
+    deadline = time.monotonic() + SWEEP_BUDGET
     if owns_repo(root):
         _fetch_if_stale(root)
     if not _commit_for_push("queue: sync uncommitted briefs", root, (), (".",)):
         return False
     # Ahead, not dirty: a running pusher may already have taken the mark and still be pushing.
-    return push_now(root) if _ahead_of_origin(root) else True
+    if not _ahead_of_origin(root):
+        return True
+    # Time the fetch and commit locks spent comes off the wait, so dispatch never kills a push.
+    return push_now(root, wait=min(PUSH_WAIT, max(0.0, deadline - time.monotonic() - PUSH_RESERVE)))
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -839,7 +839,7 @@ def test_a_sweep_waits_for_a_running_pusher_then_returns_with_origin_current(tmp
     assert "inbox/fresh.md" in committed_files(repo, _remote_head(repo).strip())
 
 
-def test_a_sweep_fetches_when_git_cannot_name_fetch_head(tmp_path, monkeypatch):
+def test_a_stale_check_fetches_when_git_cannot_name_fetch_head(tmp_path, monkeypatch):
     repo = make_repo(tmp_path)
     log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
     monkeypatch.setattr(git_sync, "_fetch_head", lambda root: None)
@@ -854,6 +854,8 @@ def test_a_sweep_fetches_when_git_cannot_name_fetch_head(tmp_path, monkeypatch):
 def test_fetch_head_is_none_when_git_cannot_name_it(tmp_path, monkeypatch):
     not_a_repo = tmp_path / "plain"
     not_a_repo.mkdir()
+    # A checkout above TMPDIR must not answer for it.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
 
     assert git_sync._fetch_head(not_a_repo) is None
 
@@ -880,4 +882,38 @@ def test_a_sweep_waits_for_a_push_that_took_its_dirty_mark(tmp_path, monkeypatch
 
     assert git_sync.sweep(repo) is True
 
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+
+
+def test_a_sweep_waits_for_a_pusher_only_as_long_as_its_budget_allows(
+    tmp_path, monkeypatch, capsys
+):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "fresh.md").write_text("1")
+    held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
+    monkeypatch.setattr(git_sync, "SWEEP_BUDGET", git_sync.PUSH_RESERVE)  # nothing left to wait
+
+    started = time.monotonic()
+    assert git_sync.sweep(repo) is False
+
+    assert time.monotonic() - started < git_sync.PUSH_WAIT / 2
+    assert "another pusher still running" in capsys.readouterr().out
+    os.close(held)
+
+
+def test_a_hung_fetch_is_cut_off_and_the_sweep_carries_on(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    real_git = git_sync._git
+
+    def hung_fetch(root, *args, **kw):
+        if args[0] == "fetch":
+            raise subprocess.TimeoutExpired(["git", "fetch"], kw["timeout"])
+        return real_git(root, *args, **kw)
+
+    monkeypatch.setattr(git_sync, "_git", hung_fetch)
+    (repo / "inbox" / "fresh.md").write_text("1")
+
+    assert git_sync.sweep(repo) is True
+
+    assert "fetch timed out" in capsys.readouterr().out
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout

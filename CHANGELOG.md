@@ -43,7 +43,7 @@
   brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. A write never runs `git fetch`: the shadow
   check reads `origin/main` as the last sweep, push or rejected-push fetch left it. The sweep fetches
   unless `FETCH_HEAD` is under 45 s old, so a dispatch-time sweep reuses the timer's fetch, and a rejected push still fetches and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed. `--sweep` pushes
-  before it exits, after any running pusher, so `dispatch-cloud.sh` sees a fresh brief on `origin/main`; a sweep with
+  before it exits, after any running pusher, so `dispatch-cloud.sh` sees a fresh brief on `origin/main`. A sweep finishes inside 110 s, under dispatch's 120 s flush timeout: its fetch is cut off at 20 s and its wait for a running pusher shrinks by whatever the fetch and commit took. A sweep with
   nothing ahead of `origin/main` starts no push. The queue's sync lock also moved to the clone's
   common git dir, so every worktree of one clone shares it.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
