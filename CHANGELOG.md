@@ -38,7 +38,9 @@
   `sync_commit_and_push` pushes before returning, which `append_log.py` uses because it reads the
   brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. The shadow check reuses `origin/main` while `FETCH_HEAD` is under
   60 s old, so a burst of writes runs one `git fetch`, not one per write; a rejected push still fetches
-  and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed.
+  and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed. A sweep with
+  nothing ahead of `origin/main` starts no push. The queue's sync lock also moved to the clone's
+  common git dir, so every worktree of one clone shares it.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
   outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
   parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.

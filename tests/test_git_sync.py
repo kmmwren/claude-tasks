@@ -760,3 +760,43 @@ def test_a_pusher_that_cannot_start_leaves_the_commit_for_the_sweep(tmp_path, mo
     held = C.try_lock(C.clone_state_path(repo, git_sync.PUSH_LOCK))
     assert held is not None
     os.close(held)
+
+
+def test_an_idle_sweep_starts_no_push(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
+
+    assert git_sync.sweep(repo) is True
+    git_sync.wait_for_push(repo, timeout=2)
+
+    assert not git_sync._is_dirty(repo)
+    assert _push_count(log) == 0
+
+
+def test_a_sweep_pushes_commits_a_failed_push_left_behind(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "stranded.md").write_text("x")
+    git(repo, "add", "inbox/stranded.md")
+    # Committed and never pushed, with no dirty mark: what a failed push leaves behind.
+    git(repo, "commit", "-qm", "brief(stranded): captured")
+
+    assert git_sync.sweep(repo) is True
+    assert git_sync.wait_for_push(repo)
+
+    assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+
+
+def test_a_clone_without_an_origin_ref_is_treated_as_ahead(tmp_path):
+    repo = make_repo(tmp_path)
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+
+    assert git_sync._ahead_of_origin(repo) is True
+
+
+def test_an_undecodable_push_log_does_not_fail_the_write(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    C.clone_state_path(repo, git_sync.PUSH_LOG).write_bytes(b"rejected \xff\xfe\n")
+
+    git_sync._report_last_push(repo)
+
+    assert "rejected" in capsys.readouterr().out

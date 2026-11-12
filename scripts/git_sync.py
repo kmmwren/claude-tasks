@@ -279,10 +279,16 @@ def _integrate_remote(root: pathlib.Path) -> bool:
 # Per-clone state of the coalesced pusher, all beside the sync lock inside .git.
 PUSH_LOCK = ".tasks-push.lock"  # held by the one running pusher
 WRITERS_LOCK = ".tasks-writers.lock"  # shared by every writer between commit start and dirty mark
-DIRTY = ".tasks-push.dirty"  # a commit landed that no push has started from yet
+DIRTY = ".tasks-push.dirty"  # main is ahead of origin and no push has started from it yet
 PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
 PUSH_WAIT = 120.0  # longest sync_commit_and_push waits for a running pusher
+
+
+def _ahead_of_origin(root: pathlib.Path) -> bool:
+    """True when main carries commits origin/main lacks; True too when that cannot be read."""
+    ahead = _git(root, "rev-list", "--count", "origin/main..HEAD", capture_output=True, text=True)
+    return ahead.returncode != 0 or ahead.stdout.strip() != "0"
 
 
 def _mark_dirty(root: pathlib.Path) -> None:
@@ -342,7 +348,7 @@ def _run_pusher(root: pathlib.Path, fd: int | None) -> None:
 def _report_last_push(root: pathlib.Path) -> None:
     """Show the writer what the previous detached pusher reported, then clear it; the caller holds the push lock."""
     log = clone_state_path(root, PUSH_LOG)
-    report = log.read_text().strip() if log.exists() else ""
+    report = log.read_text(errors="replace").strip() if log.exists() else ""
     if report:
         print(f"  (previous background push reported:)\n{report}")
         log.write_text("")
@@ -458,7 +464,9 @@ def _commit_for_push(
     with shared_lock(clone_state_path(root, WRITERS_LOCK)):
         if not _commit(message, root, ids, paths):
             return False
-        _mark_dirty(root)
+        # An idle sweep, or a commit a running pusher already carried, needs no push.
+        if _ahead_of_origin(root):
+            _mark_dirty(root)
     return True
 
 
@@ -477,7 +485,8 @@ def sync_commit(
     root = resolve_root() if root is None else root
     if not _commit_for_push(message, root, ids, paths):
         return False
-    request_push(root)
+    if _is_dirty(root):
+        request_push(root)
     return True
 
 
