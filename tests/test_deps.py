@@ -1,4 +1,5 @@
 """deps.py — the shared dependency model."""
+
 import deps
 
 from tests.queue_helpers import brief_text, make_queue
@@ -54,5 +55,13 @@ def test_load_queue_reads_every_folder_and_tolerates_a_missing_one(tmp_path):
     loaded = {b.id: b.status for b in deps.load_queue(root)}
     assert loaded == {"a": "ready", "b": "blocked"}
     import shutil
+
     shutil.rmtree(root / "parked")
     assert {b.id for b in deps.load_queue(root)} == {"a", "b"}
+
+
+def test_load_queue_names_an_id_less_or_blank_id_brief_by_its_file_stem(tmp_path):
+    (tmp_path / "ready").mkdir()
+    (tmp_path / "ready" / "no-id-here.md").write_text("---\ntitle: T\n---\n")
+    (tmp_path / "ready" / "blank-id.md").write_text("---\nid:\ntitle: T\n---\n")
+    assert [b.id for b in deps.load_queue(tmp_path)] == ["blank-id", "no-id-here"]

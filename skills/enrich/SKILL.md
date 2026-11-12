@@ -43,6 +43,7 @@ context that's already discoverable.
 | `domain` | one of the domains in `tasks.toml` |
 | `tags` | free-form labels (e.g. `depends:<other-id>`) |
 | `assignee` | leave empty — enrichment doesn't claim work; `action-task` sets it |
+| `clears` | id of the fleet blocker this brief clears (the reverse of `blockers`); only when a blocker record names it |
 | `requires-local` | `true` if the brief needs local-machine files or creds |
 | `requires-repo` | repo slug if the brief needs a repo other than this queue |
 

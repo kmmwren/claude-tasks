@@ -78,6 +78,10 @@ session's loose ends back when it stops.
 That scaffolds the lifecycle folders, a `tasks.toml`, and a brief template, and tells you
 how the scripts will find it.
 
+The scripts require **Python 3.11+**. On macOS the system `python3` is 3.9; if a script
+is run with it, it exits with a message telling you which interpreters to use instead
+(rather than the cryptic import-time `TypeError` older Pythons would otherwise raise).
+
 ## The loop
 
 | You say… | Skill | What happens |
@@ -92,6 +96,11 @@ how the scripts will find it.
 | "recap" | **recap** | a quick in-chat status summary |
 
 ### Priorities and dependencies
+
+`rank.py --scope all|tag:<t>|project:<slug>|session:<id> --top K` reorders the unblocked
+candidates against your own taste profile (`profile/priorities.md`, drafted by `seed_profile.py`)
+with a one-line reason each. It learns from what you pick, bump and skip (`learn.py` proposes the
+weight changes). See [the design notes](docs/design.md#the-predictor-head-ranking-against-a-taste-profile).
 
 `prioritise` (the `/tasks-next` command) ranks `ready/` briefs by due urgency, importance,
 quick-win effort, lead time, and — crucially — how many other briefs each one **unblocks**.

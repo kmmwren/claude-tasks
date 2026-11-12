@@ -12,6 +12,7 @@ import re
 import sys
 
 from _paths import require_queue, resolve_root
+from git_sync import sync_commit
 
 
 def slugify(text: str) -> str:
@@ -26,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("title", help="One-line title for the capture")
     ap.add_argument("--body", default="", help="Raw body text (optional)")
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
+    ap.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
     a = ap.parse_args(argv)
 
     root = require_queue(a.root if a.root else resolve_root())
@@ -48,6 +50,8 @@ status: inbox
 
     path.write_text(content)
     print(f"Captured: inbox/{path.name}")
+    if not a.no_sync:
+        sync_commit(f"brief({uid}): captured (raw)", root, ids=[uid])
     return 0
 
 
