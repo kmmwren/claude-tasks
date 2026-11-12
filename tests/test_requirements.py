@@ -303,7 +303,8 @@ def test_add_task_requirements_flag_covers_the_register(queue, capsys):
     reg.append_items(queue, [item()])
     assert requirements_check.main([str(queue)]) == 1
     add_task.main(["--root", str(queue), "--title", "Cover it", "--status", "ready",
-                   "--criteria", "a test proves it", "--requirements", "PL-R001"])
+                   "--criteria", "a test proves it", "--requirements", "PL-R001",
+                   "--goal", "PL-R001 holds", "--context", "from the register"])
     assert "requirements: [PL-R001]" in next((queue / "ready").glob("*.md")).read_text()
     assert requirements_check.main([str(queue)]) == 0
 
@@ -311,5 +312,5 @@ def test_add_task_requirements_flag_covers_the_register(queue, capsys):
 def test_add_task_without_flag_writes_an_empty_requirements_field(queue):
     import add_task
 
-    add_task.main(["--root", str(queue), "--title", "Plain", "--status", "ready"])
-    assert "requirements: []" in next((queue / "ready").glob("*.md")).read_text()
+    add_task.main(["--root", str(queue), "--title", "Plain", "--status", "parked"])
+    assert "requirements: []" in next((queue / "parked").glob("*.md")).read_text()

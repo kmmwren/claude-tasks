@@ -562,7 +562,7 @@ def _header(m: dict[str, Any]) -> str:
 def _groups(m: dict[str, Any]) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Each milestone belongs to the workstream sharing most of its work; the rest go under one heading."""
     mine: dict[str, list[dict[str, Any]]] = {w["id"]: [] for w in m["workstreams"]}
-    rest = []
+    rest: list[dict[str, Any]] = []
     for ms in m["milestones"]:
         best, score = None, 0
         for w in m["workstreams"]:
@@ -616,9 +616,9 @@ def _open_decisions(m: dict[str, Any]) -> list[dict[str, Any]]:
 def _recommended(d: dict[str, Any], m: dict[str, Any]) -> str:
     a = m["ask"]
     if a and _plain(a.get("question", "")) == _plain(d["question"]) and a.get("recommendation"):
-        return a["recommendation"]
+        return str(a["recommendation"])
     if d.get("recommended"):
-        return d["recommended"]
+        return str(d["recommended"])
     pick = next((o for o in d.get("options", []) if "recommended" in o.get("label", "").lower()), None)
     if not pick:
         return ""
@@ -639,7 +639,7 @@ def _cards(m: dict[str, Any]) -> str:
     live = [x for x in m["milestones"] if x["status"] in ("active", "unverified")]
     upcoming = live or [x for x in m["milestones"] if x["status"] != "done"]
     rows = "".join(f'<li><span>{e(x["plain"])}</span></li>' for x in upcoming[:3])
-    cards += (f'<section class="card next"><h2>Next up</h2>'
+    cards += ('<section class="card next"><h2>Next up</h2>'
               + (f'<ul>{rows}</ul>' if rows else '<p>Every milestone is done.</p>') + '</section>')
     return f'<div class="cards{" one" if not opens else ""}">{cards}</div>'
 

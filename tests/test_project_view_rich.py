@@ -2,6 +2,7 @@
 import datetime as dt
 
 import project_view as pv
+
 from tests.project_fixtures import make_rich
 
 NOW = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)

@@ -20,6 +20,7 @@ from config import load_config
 from deps import parse_list
 from milestones import MilestonesError, progress
 from readiness import section
+from requirements_check import cited_ids
 
 DIRS = ["inbox", "ready", "in-progress", "blocked", "done", "parked"]
 COL_TITLE = {"inbox": "Inbox (raw)", "ready": "Ready", "in-progress": "In progress",
@@ -53,6 +54,7 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
                           "type": "todo", "autonomy": "needs-input", "importance": "3"}
                 else:
                     continue
+            header = re.match(r"^---\n(.*?)\n---", raw, re.DOTALL)
             goal = section(body, "Goal")
             if not goal and d == "inbox":
                 goal = body.strip()[:240]
@@ -65,7 +67,9 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
                 "autonomy": fm.get("autonomy", "needs-input"), "effort": fm.get("estimated-effort", ""),
                 "domain": fm.get("domain", ""), "parent": fm.get("parent", "") or "",
                 "assignee": fm.get("assignee", ""), "milestone": fm.get("milestone", ""),
+                "updated": fm.get("updated", ""),
                 "blocked_by": parse_list(fm.get("blocked_by", "")),
+                "requirements": cited_ids(header[1]) if header else [],
                 "goal": goal if goal != "# TODO" else "", "crit": crit,
                 "crit_done": done, "crit_total": total,
             })

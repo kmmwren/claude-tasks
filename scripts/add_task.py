@@ -52,6 +52,7 @@ def slug(s: str, maxwords: int = 6) -> str:
 
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
     tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
+    reqs = "[" + ", ".join(r.strip() for r in a.requirements.split(",") if r.strip()) + "]"
     crit = (
         "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {placeholder_criterion(a.title)}"
     )
@@ -72,6 +73,7 @@ parent: {a.parent}
 source: {a.source}
 blockers: []
 related: []
+requirements: {reqs}
 ---
 
 ## Goal
@@ -142,6 +144,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--domain", default="")
     ap.add_argument("--tags", default="")
     ap.add_argument("--parent", default="")
+    ap.add_argument(
+        "--requirements",
+        default="",
+        help="comma-separated requirement ids from requirements.md this brief covers",
+    )
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
     ap.add_argument(
         "--status",
