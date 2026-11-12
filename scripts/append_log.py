@@ -15,6 +15,7 @@ Usage:
 
 Exit codes: 0 logged; 1 unknown brief; 2 git failure.
 """
+
 import argparse
 import datetime
 import pathlib
@@ -32,6 +33,7 @@ from _paths import resolve_root  # noqa: E402
 from git_sync import _git, sync_commit  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
+SEARCHED_FOLDERS = (*BRIEF_DIRS, "inbox")
 PUSH_ATTEMPTS = 8
 LOCK_WAIT = 120.0
 IDENTITY = ("-c", "user.name=claude-tasks", "-c", "user.email=noreply@anthropic.com")
@@ -51,7 +53,7 @@ def _queue_prefix(root: pathlib.Path) -> pathlib.Path:
 
 
 def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
-    for d in (*BRIEF_DIRS, "inbox"):
+    for d in SEARCHED_FOLDERS:
         path = queue / d / f"{brief_id}.md"
         if path.exists():
             return path
@@ -69,12 +71,18 @@ def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
     if local is None or _committed(root, local):
         return
     if not sync_commit(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
-        raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry")
+        raise RuntimeError(
+            f"brief {brief_id!r} is uncommitted in {root} and committing it was deferred; retry"
+        )
     if not _committed(root, local):
-        raise RuntimeError(f"brief {brief_id!r} is uncommitted in {root} and git_sync could not commit it")
+        raise RuntimeError(
+            f"brief {brief_id!r} is uncommitted in {root} and git_sync could not commit it"
+        )
 
 
-def _try_push(wt: pathlib.Path, queue: pathlib.Path, brief_id: str, line: str, today: str) -> str | None:
+def _try_push(
+    wt: pathlib.Path, queue: pathlib.Path, brief_id: str, line: str, today: str
+) -> str | None:
     """Append, commit and push in `wt`; return the pushed sha, or None when the push lost a race."""
     path = _find(queue, brief_id)
     if path is None:
@@ -93,7 +101,7 @@ def _try_push(wt: pathlib.Path, queue: pathlib.Path, brief_id: str, line: str, t
 
 
 def _backoff(attempt: int) -> None:
-    time.sleep(random.uniform(0, min(0.25 * 2 ** attempt, 4.0)))
+    time.sleep(random.uniform(0, min(0.25 * 2**attempt, 4.0)))
 
 
 def _push_from_fresh_origin(root: pathlib.Path, brief_id: str, line: str, today: str) -> str:
@@ -124,7 +132,10 @@ def append_log(brief_id: str, line: str, root: pathlib.Path, today: str | None =
     try:
         with repo_lock(root, timeout=LOCK_WAIT) as acquired:
             if not acquired:
-                print(f"  (queue lock busy after {LOCK_WAIT:.0f}s; pushing without it)", file=sys.stderr)
+                print(
+                    f"  (queue lock busy after {LOCK_WAIT:.0f}s; pushing without it)",
+                    file=sys.stderr,
+                )
             return _push_from_fresh_origin(root, brief_id, line, today)
     except RuntimeError as e:
         raise RuntimeError(f"{e}; line not logged to {brief_id}: {today}: {line}") from e
