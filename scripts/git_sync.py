@@ -2,24 +2,14 @@
 """
 git_sync.py — commit the queue under the cross-process lock, then push it coalesced.
 
-Shared commit helper for every writer that touches the queue working tree (add_task.py
-for new briefs, transition.py for status changes). Routing all commits through here means
-concurrent writers take turns on the git index via the same mutex, instead of colliding
-on .git/index.lock and silently dropping commits. Each writer commits only the briefs it names.
-
-The commit is synchronous; the push is not. A writer marks the clone dirty and returns. At
-most one detached pusher runs per clone: it waits for in-flight writers to land, pushes once,
-and pushes again only if a write marked the clone dirty meanwhile. A burst of writes from
-concurrent sessions therefore costs one or two `git push` processes, not one per write.
-
 Usage (run from anywhere):
   python scripts/git_sync.py "brief(my-id): completed" my-id
   python scripts/git_sync.py --sweep [queue-root]   # commit+push everything dirty (timer job)
   python scripts/git_sync.py --push-pending ROOT --lock-fd N   # the detached pusher (internal)
 
-`--sweep` is the same helper over the whole tree: it catches files a session edited by hand,
-which no scripted writer could name. A queue root that is not the top of its own git repo
-(a project's `.tasks/`) is never synced here; its repo ships it.
+A named write commits only its briefs and pushes in the background; `--sweep` commits every
+uncommitted file and pushes before returning, within SWEEP_BUDGET seconds. A queue root that is
+not the top of its own git repo is never synced here.
 
 Exit codes: 0 — committed (push in the background) or safely deferred; 1 — bad usage.
 """
@@ -147,6 +137,14 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
     return pathlib.Path(out) if out else None
 
 
+def _timeout(deadline: float | None, cap: float | None = None) -> float | None:
+    """Seconds a subprocess may run: what is left before `deadline` (monotonic), at most `cap`."""
+    limits = [cap] if cap is not None else []
+    if deadline is not None:
+        limits.append(max(0.0, deadline - time.monotonic()))
+    return min(limits) if limits else None
+
+
 def _fetch_if_stale(root: pathlib.Path) -> None:
     """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old."""
     fetch_head = _fetch_head(root)
@@ -164,10 +162,7 @@ def _fetch_if_stale(root: pathlib.Path) -> None:
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     """New brief files whose id is already filed in another state dir, here or on origin/main.
 
-    A writer holding a stale view (a brief closed or moved meanwhile) would otherwise
-    re-create the id in its old folder, leaving it in two states at once. A write never fetches:
-    origin/main is as fresh as the last sweep, push or rejected-push fetch, so a rival pushed
-    since then is not seen until the next sweep.
+    Reads origin/main as last fetched, so a rival pushed since is not seen until the next sweep.
     """
     # Only briefs origin gained since our history diverged are rivals; an older origin path
     # we already moved away locally (committed but unpushed) is not.
@@ -235,13 +230,33 @@ def _report_divergence(root: pathlib.Path, why: str) -> None:
     )
 
 
-def _integrate_remote(root: pathlib.Path) -> bool:
+def _report_timeout(root: pathlib.Path, what: str) -> None:
+    print(
+        f"  (push deferred: git {what} timed out. Local commits kept, unpushed: "
+        f"{_short_log(root, 'origin/main..HEAD')}. The next sweep retries.)"
+    )
+
+
+def _integrate_remote(root: pathlib.Path, deadline: float | None = None) -> bool:
     """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
 
     Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
     refuses to move when an edit overlaps an incoming change.
     """
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    try:
+        _git(
+            root,
+            "fetch",
+            "-q",
+            "origin",
+            "main",
+            capture_output=True,
+            text=True,
+            timeout=_timeout(deadline, FETCH_TIMEOUT),
+        )
+    except subprocess.TimeoutExpired:
+        _report_timeout(root, "fetch")
+        return False
     with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         _git(
@@ -263,17 +278,41 @@ def _integrate_remote(root: pathlib.Path) -> bool:
                 _git(wt, "rebase", "--abort", capture_output=True, text=True)
                 _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
                 return False
-            if (
-                _git(
-                    wt, "push", "-q", "origin", "HEAD:main", capture_output=True, text=True
-                ).returncode
-                != 0
-            ):
+            pushed = _git(
+                wt,
+                "push",
+                "-q",
+                "origin",
+                "HEAD:main",
+                capture_output=True,
+                text=True,
+                timeout=_timeout(deadline),
+            )
+            if pushed.returncode != 0:
                 _report_divergence(root, "origin moved again while rebasing")
                 return False
+        except subprocess.TimeoutExpired:
+            _report_timeout(root, "push")
+            return False
         finally:
             _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
-    _git(root, "fetch", "-q", "origin", "main", capture_output=True, text=True)
+    try:
+        _git(
+            root,
+            "fetch",
+            "-q",
+            "origin",
+            "main",
+            capture_output=True,
+            text=True,
+            timeout=_timeout(deadline, FETCH_TIMEOUT),
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            "  (pushed, but the checkout was not advanced: fetch timed out; "
+            "the next sweep catches up.)"
+        )
+        return True
     if _git(root, "reset", "--keep", "origin/main", capture_output=True, text=True).returncode != 0:
         print(
             "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
@@ -289,7 +328,8 @@ DIRTY = ".tasks-push.dirty"  # main is ahead of origin and no push has started f
 PUSH_LOG = ".tasks-push.log"  # the detached pusher's output: divergence reports land here
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
 PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher
-SWEEP_BUDGET = 110.0  # a sweep's whole run, under dispatch's 120 s flush timeout
+# A sweep's whole run, under dispatch's 120 s flush timeout; the env var lets tests shrink it.
+SWEEP_BUDGET = float(os.environ.get("CLAUDE_TASKS_SWEEP_BUDGET", 110.0))
 PUSH_RESERVE = 40.0  # of that budget, kept for the settle wait and the push itself
 
 
@@ -316,27 +356,40 @@ def _take_dirty(root: pathlib.Path) -> bool:
     return True
 
 
-def _push(root: pathlib.Path) -> bool:
-    """Push main; on rejection rebase onto origin under the queue lock and push again."""
-    if _git(root, "push", "-q", "origin", "main").returncode == 0:
-        return True
-    with repo_lock(root) as acquired:
+def _push(root: pathlib.Path, deadline: float | None = None) -> bool:
+    """Push main; on rejection rebase onto origin under the queue lock and push again.
+
+    Past `deadline` the push is abandoned and its commits are left for the next sweep.
+    """
+    try:
+        if _git(root, "push", "-q", "origin", "main", timeout=_timeout(deadline)).returncode == 0:
+            return True
+    except subprocess.TimeoutExpired:
+        _report_timeout(root, "push")
+        return False
+    with repo_lock(root, timeout=_timeout(deadline, 30.0) or 0.0) as acquired:
         if not acquired:
             print("  (push deferred: lock held; the next write or sweep pushes these commits.)")
             return False
-        return _integrate_remote(root)
+        return _integrate_remote(root, deadline)
 
 
-def _drain(root: pathlib.Path) -> bool:
-    """Push until no commit is waiting; the caller holds the push lock. Returns the last push's result."""
+def _drain(root: pathlib.Path, deadline: float | None = None) -> bool:
+    """Push until no commit is waiting or `deadline` passes; the caller holds the push lock.
+
+    Returns the last push's result; a mark still set at the deadline counts as a failure.
+    """
     pushed = True
     while True:
         # Let writers already committing land first, so one push carries the whole burst.
-        with exclusive_lock(clone_state_path(root, WRITERS_LOCK), timeout=SETTLE_MAX, poll=0.05):
+        settle = _timeout(deadline, SETTLE_MAX)
+        with exclusive_lock(clone_state_path(root, WRITERS_LOCK), timeout=settle, poll=0.05):
             pass
+        if deadline is not None and time.monotonic() >= deadline:
+            return pushed and not _is_dirty(root)
         if not _take_dirty(root):
             return pushed
-        pushed = _push(root)
+        pushed = _push(root, deadline)
 
 
 def _release(fd: int) -> None:
@@ -398,10 +451,11 @@ def request_push(root: pathlib.Path) -> None:
         print(f"  (push deferred: could not start the background pusher: {e})")
 
 
-def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
+def push_now(root: pathlib.Path, wait: float = PUSH_WAIT, deadline: float | None = None) -> bool:
     """Push synchronously, after any running pusher, for callers that need origin current.
 
     `wait` bounds the wait for a running pusher; past it the push is left to that pusher.
+    `deadline` (monotonic) bounds the pushing itself.
     """
     with exclusive_lock(clone_state_path(root, PUSH_LOCK), timeout=wait) as acquired:
         if not acquired:
@@ -409,7 +463,7 @@ def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
             return False
         _report_last_push(root)
         _mark_dirty(root)
-        pushed = _drain(root)
+        pushed = _drain(root, deadline)
     if _is_dirty(root):  # a write that found the lock held just before it was released
         request_push(root)
     return pushed
@@ -524,7 +578,9 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     if not _ahead_of_origin(root):
         return True
     # Time the fetch and commit locks spent comes off the wait, so dispatch never kills a push.
-    return push_now(root, wait=min(PUSH_WAIT, max(0.0, deadline - time.monotonic() - PUSH_RESERVE)))
+    reserve = min(PUSH_RESERVE, SWEEP_BUDGET / 2)
+    wait = min(PUSH_WAIT, max(0.0, deadline - time.monotonic() - reserve))
+    return push_now(root, wait=wait, deadline=deadline)
 
 
 def main(argv: list[str] | None = None) -> None:

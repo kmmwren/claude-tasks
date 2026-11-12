@@ -105,7 +105,9 @@ def _candidates(
     return filed, filled
 
 
-def _promote_all(promotions: Sequence[Promotion], opts: Options, report: Report) -> list[Promotion]:
+def _promote_all(
+    promotions: Sequence[Promotion], opts: Options, report: Report
+) -> list[Promotion]:
     moved = [p for p in promotions if _promote_one(p, opts)]
     report.changed_underfoot = len(promotions) - len(moved)
     return moved
@@ -119,11 +121,7 @@ def _promote_one(p: Promotion, opts: Options) -> bool:
 
 
 def _classify(
-    opts: Options,
-    report: Report,
-    log: ClassLog,
-    fixed: Mapping[str, Call],
-    found: Sequence[Promotion],
+    opts: Options, report: Report, log: ClassLog, fixed: Mapping[str, Call], found: Sequence[Promotion]
 ) -> list[Verdict]:
     promoted = {p.original.id: p.reason for p in found}
     verdicts = classify(
@@ -136,9 +134,7 @@ def _classify(
         opts.jobs,
     )
     report.classes = dict(collections.Counter(v.cls.value for v in verdicts))
-    report.verdicts = [
-        {"id": v.brief_id, "class": v.cls.value, "reason": v.reason} for v in verdicts
-    ]
+    report.verdicts = [{"id": v.brief_id, "class": v.cls.value, "reason": v.reason} for v in verdicts]
     return verdicts
 
 

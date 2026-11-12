@@ -917,3 +917,64 @@ def test_a_hung_fetch_is_cut_off_and_the_sweep_carries_on(tmp_path, monkeypatch,
 
     assert "fetch timed out" in capsys.readouterr().out
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
+
+
+def test_a_sweep_that_waited_for_a_pusher_then_hit_a_hung_push_exits_within_its_budget(
+    tmp_path,
+):
+    repo = make_repo(tmp_path)
+    budget = 4.0
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'sub="$1"; [ "$1" = "-C" ] && sub="$3"\n'
+        '[ "$sub" = push ] && exec sleep 20\n'
+        f'exec "{shutil.which("git")}" "$@"\n'
+    )
+    shim.chmod(0o755)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time, pathlib; sys.path.insert(0, sys.argv[1]); import _concurrency as C; "
+            "fd = C.try_lock(C.clone_state_path(pathlib.Path(sys.argv[2]), '.tasks-push.lock')); "
+            "print(fd is not None, flush=True); time.sleep(0.5)",
+            str(SCRIPTS),
+            str(repo),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout.readline().strip() == "True"
+    (repo / "inbox" / "fresh.md").write_text("1")
+    env = {
+        **os.environ,
+        "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}",
+        "CLAUDE_TASKS_SWEEP_BUDGET": str(budget),
+    }
+    sweep = subprocess.Popen(
+        [sys.executable, str(SCRIPTS / "git_sync.py"), "--sweep", str(repo)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    started = time.monotonic()
+    try:
+        out, _ = sweep.communicate(timeout=budget + 8)
+    except subprocess.TimeoutExpired:
+        os.killpg(sweep.pid, signal.SIGKILL)
+        sweep.communicate()
+        pytest.fail("the sweep outlived its budget: the hung push was never cut off")
+    finally:
+        holder.wait()
+
+    assert sweep.returncode == 0
+    assert time.monotonic() - started < budget + 2
+    assert "git push timed out" in out
+    assert "queue: sync uncommitted briefs" in git(repo, "log", "-1", "--format=%s").stdout
+    assert "inbox/fresh.md" in committed_files(repo)
+    assert _remote_head(repo) != git(repo, "rev-parse", "HEAD").stdout
