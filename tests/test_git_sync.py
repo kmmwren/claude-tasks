@@ -1112,6 +1112,22 @@ def test_sync_reports_a_conflict_outside_the_log_and_keeps_local_commits(tmp_pat
     assert git(repo, "worktree", "list").stdout.count("\n") == 1
 
 
+def test_sync_aborts_when_both_sides_log_and_disagree_on_status(tmp_path, capsys):
+    repo, other = _seed_logged_brief(tmp_path)
+    git(other, "pull", "-q", "origin", "main")
+    origin_side = _log_brief(status="ready", log=_CAPTURED + "2026-11-13: origin line\n")
+    (other / "inbox" / "b.md").write_text(origin_side)
+    git(other, "commit", "-qam", "origin status")
+    git(other, "push", "-q", "origin", "main")
+    local_side = _log_brief(status="blocked", log=_CAPTURED + "2026-11-13: local line\n")
+    (repo / "inbox" / "b.md").write_text(local_side)
+
+    assert git_sync.sync_commit_and_push("brief(b): status", root=repo, ids=["b"]) is False
+
+    assert "rebase conflict in inbox/b.md" in capsys.readouterr().out
+    assert "status: blocked" in git(repo, "show", "HEAD:inbox/b.md").stdout
+    assert "status: ready" in git(repo, "show", "origin/main:inbox/b.md").stdout
+
 def test_sync_refuses_the_union_when_origin_moves_again_after_the_rebase_began(
     tmp_path, monkeypatch, capsys
 ):
