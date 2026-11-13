@@ -12,6 +12,8 @@ git repo of markdown files: greppable, diffable, syncable, and yours.
 
 ## How it works
 
+For how the queue reaches GitHub (writers, the 60-second sweep, merges and parking), see [docs/queue-sync.md](docs/queue-sync.md).
+
 Two actors, one queue: you drop ideas in, Claude works the ones it can and hands its loose
 ends back. Everything is plain markdown moving between folders:
 
