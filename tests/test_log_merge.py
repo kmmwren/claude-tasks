@@ -145,3 +145,26 @@ def test_text_after_the_log_changed_differently_on_both_sides_is_a_conflict():
 def test_a_brief_without_a_log_section_is_a_conflict():
     bare = "---\nstatus: inbox\n---\n\n## Goal\n\ng\n"
     assert merge_log_appends(bare, bare, bare) is None
+
+
+def test_dated_lines_both_sides_append_below_a_later_section_are_unioned_upstream_first():
+    def with_notes(*lines):
+        return (
+            brief("2026-11-09: captured.") + "\n## Notes\n\nn\n" + "".join(f"{x}\n" for x in lines)
+        )
+
+    merged = merge_log_appends(
+        with_notes(), with_notes("2026-11-10: upstream."), with_notes("2026-11-10: replayed.")
+    )
+    assert merged == with_notes("2026-11-10: upstream.", "2026-11-10: replayed.")
+
+
+def test_an_undated_line_appended_below_a_later_section_is_a_conflict():
+    def with_notes(*lines):
+        return (
+            brief("2026-11-09: captured.") + "\n## Notes\n\nn\n" + "".join(f"{x}\n" for x in lines)
+        )
+
+    assert (
+        merge_log_appends(with_notes(), with_notes("prose"), with_notes("2026-11-10: x.")) is None
+    )

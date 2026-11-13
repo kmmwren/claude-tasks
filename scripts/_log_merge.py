@@ -62,6 +62,34 @@ def _merge_text(base: str, upstream: str, replayed: str) -> str | None:
     return None
 
 
+def _appended_lines(base: str, side: str) -> tuple[str, ...] | None:
+    """The dated lines `side` added to the end of `base`, or None for any other change."""
+    if not side.startswith(base):
+        return None
+    lines = tuple(line for line in side[len(base) :].split("\n") if line)
+    return lines if all(_DATED.match(line) for line in lines) else None
+
+
+def _merge_after(base: str, upstream: str, replayed: str) -> str | None:
+    """Merge the text after the log; dated lines both sides appended to the file's end are kept.
+
+    The writers append to the end of the file, so in a brief with sections after the Execution log
+    the log lines land below those sections and both sides edit the same trailing text.
+    """
+    merged = _merge_text(base, upstream, replayed)
+    if merged is not None:
+        return merged
+    upstream_tail, replayed_tail = _appended_lines(base, upstream), _appended_lines(base, replayed)
+    if upstream_tail is None or replayed_tail is None:
+        return None
+    return base.rstrip("\n") + "\n" + "\n".join(_union_tails(upstream_tail, replayed_tail)) + "\n"
+
+
+def _union_tails(upstream: tuple[str, ...], replayed: tuple[str, ...]) -> list[str]:
+    """Both sides' appends in date order, `upstream` first on a tie."""
+    return sorted([*upstream, *_new_in(replayed, upstream)], key=_date_key)
+
+
 def _date_key(entry: str) -> str:
     return entry[:10] if _DATED.match(entry) else ""
 
@@ -97,8 +125,8 @@ def merge_log_appends(base: str, upstream: str, replayed: str) -> str | None:
     upstream_tail = _appended(base_log.entries, upstream_log.entries)
     replayed_tail = _appended(base_log.entries, replayed_log.entries)
     before = _merge_text(base_log.before, upstream_log.before, replayed_log.before)
-    after = _merge_text(base_log.after, upstream_log.after, replayed_log.after)
+    after = _merge_after(base_log.after, upstream_log.after, replayed_log.after)
     if upstream_tail is None or replayed_tail is None or before is None or after is None:
         return None
-    tail = sorted([*upstream_tail, *_new_in(replayed_tail, upstream_tail)], key=_date_key)
+    tail = _union_tails(upstream_tail, replayed_tail)
     return LoggedBrief(before, (), after).render((*base_log.entries, *tail))
