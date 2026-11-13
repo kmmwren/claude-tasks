@@ -84,7 +84,9 @@ def test_union_resolves_a_log_append_against_a_local_move(queue, tmp_path):
 
     merged = (wt / "done" / "b.md").read_text()
     assert "status: done" in merged
-    assert merged.endswith(CAPTURED + "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n")
+    assert merged.endswith(
+        CAPTURED + "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
+    )
     assert not (wt / "inbox" / "b.md").exists()
 
 

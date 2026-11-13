@@ -7,6 +7,7 @@ refuses to merge. The log is append-only and each line is dated, so the right me
 of both sides' entries in date order. Any change elsewhere in the brief is a real conflict and
 is left to a human.
 """
+
 import re
 
 LOG_HEADING = "## Execution log"

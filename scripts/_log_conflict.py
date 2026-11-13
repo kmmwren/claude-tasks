@@ -83,7 +83,11 @@ class Rebase:
         if self.snapshot_is_stale(path):
             return Verdict.STALE
         (self.worktree / path).write_text(merged)
-        return Verdict.RESOLVED if _run(self.worktree, "add", "--", path).returncode == 0 else Verdict.CONFLICT
+        return (
+            Verdict.RESOLVED
+            if _run(self.worktree, "add", "--", path).returncode == 0
+            else Verdict.CONFLICT
+        )
 
     def snapshot_is_stale(self, path: str) -> bool:
         """True when origin/main changed this brief, under any state dir, after `onto`.
@@ -93,7 +97,9 @@ class Rebase:
         """
         diff = _run(self.worktree, "diff", "--name-only", self.onto, "origin/main")
         name = pathlib.PurePath(path).name
-        return diff.returncode != 0 or any(pathlib.PurePath(p).name == name for p in diff.stdout.split())
+        return diff.returncode != 0 or any(
+            pathlib.PurePath(p).name == name for p in diff.stdout.split()
+        )
 
     def _merged_log(self, path: str) -> str | None:
         """The union of both sides' log appends, or None if a side changed anything else."""
