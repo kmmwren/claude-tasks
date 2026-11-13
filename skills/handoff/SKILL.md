@@ -197,6 +197,17 @@ If no direction is given, behave as the default sections above (everything to `i
 
 ## Step 4 — Report (quiet, tiny)
 
+For a session handoff (not an artifact, Slack or digest input), end the report with the
+successor prompt in a fenced block, ready to paste into the next session, after the ledger
+carries every `metadata.brief`:
+
+```bash
+python3 "/Users/katherine.wren@panaseer.com/.claude/local-plugins/claude-tasks/scripts/resume_prompt.py"
+```
+
+It rebuilds the prompt from the live ledger and the long-running registry every time; never
+write it by hand.
+
 One short line, never the whole pile. Name the direction if one was given. e.g.
 *"Parked 6 open items + 2 follow-ups under '<note>'; resume with `/tasks-next` when ready."*
 or *"Filed 6 open items to the inbox; run `/enrich` to turn them into briefs."*
