@@ -30,6 +30,12 @@
   unchanged.
 
 ### Fixed
+- **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits
+  onto `origin/main` conflicts only because two writers each appended to one brief's Execution log
+  (typically `append_log.py` on origin against a local move to `done/`), the file resolves as the union
+  of both sides' entries in date order and the push goes ahead. The union is refused, and reported as a
+  deferral naming the brief, if `origin/main` changed that brief after the rebase's snapshot was taken.
+  Any other conflict still aborts and reports as before.
 - **`append_log.py` retries a push GitHub refused because another writer was updating main.** A
   server-side ref-lock clash reports `[remote rejected] HEAD -> main (failed)` (or `cannot lock ref`,
   `incorrect old value`), which the retry loop did not count as a lost race, so the line was dropped.

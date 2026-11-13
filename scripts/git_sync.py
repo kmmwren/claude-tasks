@@ -20,6 +20,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import Deadline, HeldLock, repo_lock  # noqa: E402
+from _log_conflict import Rebase  # noqa: E402
 from _paths import TASK_DIRS, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
 
@@ -247,12 +248,9 @@ def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
 
 
 def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -> bool:
-    if _git(wt, "rebase", "origin/main", capture_output=True, text=True).returncode != 0:
-        conflicts = _git(
-            wt, "diff", "--name-only", "--diff-filter=U", capture_output=True, text=True
-        ).stdout.split()
-        _git(wt, "rebase", "--abort", capture_output=True, text=True)
-        _report_divergence(root, f"rebase conflict in {', '.join(conflicts)}")
+    rebased = Rebase.onto_origin(wt).run()
+    if not rebased.completed:
+        _report_divergence(root, rebased.reason)
         return False
     pushed = _git(
         wt,
