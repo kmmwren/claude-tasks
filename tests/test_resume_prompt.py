@@ -1,4 +1,5 @@
 """Tests for resume_prompt.py: the successor prompt rebuilt from a session's ledger and mission."""
+
 import json
 import pathlib
 
@@ -22,15 +23,19 @@ def item(id_: str, status: str, **meta: str) -> dict[str, object]:
 
 @pytest.fixture
 def rows(tmp_path: pathlib.Path) -> pathlib.Path:
-    return ledger(tmp_path / "tasks",
-                  item("1", "completed", brief="done/a.md"),
-                  item("2", "pending", brief="inbox/b.md"),
-                  item("3", "in_progress", brief="inbox/c.md", blocker="waits on CI"),
-                  item("10", "in_progress", brief="ready/d.md"),
-                  item("4", "pending"))
+    return ledger(
+        tmp_path / "tasks",
+        item("1", "completed", brief="done/a.md"),
+        item("2", "pending", brief="inbox/b.md"),
+        item("3", "in_progress", brief="inbox/c.md", blocker="waits on CI"),
+        item("10", "in_progress", brief="ready/d.md"),
+        item("4", "pending"),
+    )
 
 
-def test_open_items_put_in_progress_first_unblocked_first_then_ledger_order(rows: pathlib.Path) -> None:
+def test_open_items_put_in_progress_first_unblocked_first_then_ledger_order(
+    rows: pathlib.Path,
+) -> None:
     assert [i.id for i in resume_prompt.open_items(SID, rows)] == ["10", "3", "2", "4"]
 
 
@@ -42,15 +47,24 @@ def test_line_names_the_brief_blocker_and_a_missing_brief(rows: pathlib.Path) ->
 
 def test_mission_is_found_by_a_previous_session_id(tmp_path: pathlib.Path) -> None:
     registry = tmp_path / "registry.json"
-    registry.write_text(json.dumps({"sessions": [
-        {"id": "current", "name": "FDO", "mission": "Ship FDO.", "previous_ids": [SID]}]}))
+    registry.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {"id": "current", "name": "FDO", "mission": "Ship FDO.", "previous_ids": [SID]}
+                ]
+            }
+        )
+    )
     found = resume_prompt.Mission.lookup(SID, registry, tmp_path / "jobs")
     assert found == resume_prompt.Mission("FDO", "Ship FDO.")
 
 
 def test_mission_is_found_by_the_roster_entrys_job_short_id(tmp_path: pathlib.Path) -> None:
     registry = tmp_path / "registry.json"
-    registry.write_text(json.dumps({"sessions": [{"id": "x", "name": "PRs", "mission": "Zero.", "job": SID[:8]}]}))
+    registry.write_text(
+        json.dumps({"sessions": [{"id": "x", "name": "PRs", "mission": "Zero.", "job": SID[:8]}]})
+    )
     found = resume_prompt.Mission.lookup(SID, registry, tmp_path / "jobs")
     assert found == resume_prompt.Mission("PRs", "Zero.")
 
@@ -63,7 +77,9 @@ def test_pinned_session_off_the_roster_takes_its_job_name(tmp_path: pathlib.Path
     assert resume_prompt.header(SID, mission) == f'Resume long-running session "FDO" (was {SID}).'
 
 
-def test_prompt_without_a_registry_entry_still_lists_the_work(rows: pathlib.Path, tmp_path: pathlib.Path) -> None:
+def test_prompt_without_a_registry_entry_still_lists_the_work(
+    rows: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
     mission = resume_prompt.Mission.lookup(SID, tmp_path / "missing.json", tmp_path / "jobs")
     prompt = resume_prompt.render(SID, mission, resume_prompt.open_items(SID, rows))
     assert prompt.startswith(f"Resume the open work of session {SID}.")
@@ -71,7 +87,8 @@ def test_prompt_without_a_registry_entry_still_lists_the_work(rows: pathlib.Path
 
 
 def test_corrupt_registry_and_ledger_file_degrade_instead_of_crashing(
-        rows: pathlib.Path, tmp_path: pathlib.Path) -> None:
+    rows: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
     (rows / SID / "bad.json").write_text("{not json")
     registry = tmp_path / "registry.json"
     registry.write_text("[]")
@@ -80,8 +97,11 @@ def test_corrupt_registry_and_ledger_file_degrade_instead_of_crashing(
 
 
 def test_main_reads_session_id_from_the_environment(
-        rows: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str]) -> None:
+    rows: pathlib.Path,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
     monkeypatch.setenv("CLAUDE_TASKS_LEDGER_ROOT", str(rows))
     monkeypatch.setenv("LONG_RUNNING_REGISTRY", str(tmp_path / "none.json"))
