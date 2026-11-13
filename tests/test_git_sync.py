@@ -1172,3 +1172,106 @@ def test_sync_refuses_the_union_when_origin_moves_again_after_the_rebase_began(
     assert "origin moved again while rebasing" in capsys.readouterr().out
     assert "done/b.md" not in committed_files(repo, "origin/main")
     assert "closed locally" in git(repo, "show", "HEAD:done/b.md").stdout
+
+
+# ── two writers append to one brief; an unresolvable divergence is parked, never stranded ──
+
+# What the real writers append below a section: dated lines and `- ` bullets, mixed.
+_ORIGIN_APPENDS = (
+    "- VERIFIED: shared note.\n2026-11-13: origin dated.\n- INFERRED: origin follow-up.\n"
+)
+_LOCAL_APPENDS = "- VERIFIED: shared note.\n- VERIFIED: local note.\n"
+
+
+def _append_locally(repo, text):
+    with (repo / "inbox" / "b.md").open("a") as fh:
+        fh.write(text)
+
+
+def test_a_sweep_lands_two_writers_appends_to_one_brief_whatever_their_shape(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path, tail=_HANDOFF)
+    _origin_logs(other, _ORIGIN_APPENDS)
+    _append_locally(repo, _LOCAL_APPENDS)
+
+    assert git_sync.sweep(repo) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:inbox/b.md").stdout
+    assert merged == _log_brief(tail=_HANDOFF) + (
+        "- VERIFIED: shared note.\n- VERIFIED: local note.\n"
+        "2026-11-13: origin dated.\n- INFERRED: origin follow-up.\n"
+    )
+    assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
+    assert git(repo, "ls-remote", "--heads", "origin", "wip/*").stdout == ""
+
+
+def _diverge_on_the_goal(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path)
+    git(other, "pull", "-q", "origin", "main")
+    (other / "inbox" / "b.md").write_text(_log_brief(goal="origin rewrote the goal"))
+    git(other, "commit", "-qam", "edit goal")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "b.md").write_text(_log_brief(goal="local rewrote the goal"))
+    return repo
+
+
+def test_an_unresolvable_sweep_parks_its_commits_on_a_wip_branch_and_leaves_no_rebase(
+    tmp_path, capsys
+):
+    repo = _diverge_on_the_goal(tmp_path)
+
+    assert git_sync.sweep(repo) is False
+
+    out, branch = capsys.readouterr().out, git_sync._wip_branch()
+    assert f"ALERT: local commits parked on origin/{branch}" in out
+    assert branch.startswith("wip/queue-sync-")
+    parked = git(repo, "ls-remote", "--heads", "origin", branch).stdout.split()[0]
+    assert parked == git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert git(repo, "status", "--porcelain").stdout == ""
+    assert not (repo / ".git" / "rebase-merge").exists()
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
+
+
+def test_a_second_unresolvable_sweep_reparks_the_same_branch(tmp_path, capsys):
+    repo = _diverge_on_the_goal(tmp_path)
+    git_sync.sweep(repo)
+    (repo / "inbox" / "more.md").write_text("later local brief")
+
+    assert git_sync.sweep(repo) is False
+
+    branch = git_sync._wip_branch()
+    parked = git(repo, "ls-remote", "--heads", "origin", branch).stdout.split()[0]
+    assert parked == git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert capsys.readouterr().out.count(f"parked on origin/{branch}") == 2
+
+
+def test_the_wip_branch_names_the_host_and_the_day(monkeypatch):
+    monkeypatch.setattr(git_sync.socket, "gethostname", lambda: "Kat's Mac.local")
+    assert git_sync._wip_branch() == f"wip/queue-sync-Kat-s-Mac-{git_sync.datetime.date.today()}"
+    monkeypatch.setattr(git_sync.socket, "gethostname", lambda: "")
+    assert git_sync._wip_branch().startswith("wip/queue-sync-host-")
+
+
+@pytest.mark.parametrize("failure", ["timeout", "rejected"])
+def test_a_wip_push_that_fails_is_alerted_and_the_commits_stay_local(
+    tmp_path, monkeypatch, capsys, failure
+):
+    repo = _diverge_on_the_goal(tmp_path)
+    real_git = git_sync._git
+
+    def wip_push_fails(root, *args, **kw):
+        if args[:1] == ("push",) and any(a.startswith("HEAD:refs/heads/wip/") for a in args):
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired("git", 1)
+            return subprocess.CompletedProcess(args, 1, "", "remote: denied")
+        return real_git(root, *args, **kw)
+
+    monkeypatch.setattr(git_sync, "_git", wip_push_fails)
+
+    assert git_sync.sweep(repo) is False
+
+    out = capsys.readouterr().out
+    reason = "push timed out" if failure == "timeout" else "remote: denied"
+    assert "ALERT: could not park the local commits on origin/wip/queue-sync-" in out
+    assert reason in out
+    assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
