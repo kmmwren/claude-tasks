@@ -204,7 +204,17 @@ def _report_divergence(root: pathlib.Path, why: str) -> None:
     print(
         f"  (push deferred: {why}. Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
         f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
-        "Resolve in a worktree, rebase onto origin/main and push.)"
+        f"Resolve on a detached worktree, never the checked-out main: {_recovery_steps(root)}.)"
+    )
+
+
+def _recovery_steps(root: pathlib.Path) -> str:
+    """Rebasing `main` itself from a second worktree leaves `root`'s index stale, so stay detached."""
+    wt = f"{root}-recover"
+    return (
+        f"git -C {root} worktree add --detach {wt} HEAD; cd {wt}; git rebase origin/main; "
+        f"git push origin HEAD:main; git -C {root} merge --ff-only origin/main; "
+        f"git -C {root} worktree remove {wt}"
     )
 
 

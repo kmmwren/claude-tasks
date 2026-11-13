@@ -1126,7 +1126,9 @@ def test_sync_reports_a_conflict_outside_the_log_and_keeps_local_commits(tmp_pat
 
     assert git_sync.sync_commit_and_push("brief(b): edit", root=repo, ids=["b"]) is False
 
-    assert "rebase conflict in inbox/b.md" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "rebase conflict in inbox/b.md" in out
+    assert f"worktree add --detach {repo}-recover HEAD" in out and "push origin HEAD:main" in out
     assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
     assert git(repo, "worktree", "list").stdout.count("\n") == 1
 
