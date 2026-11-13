@@ -322,13 +322,20 @@ def wsjf_score(
 def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
     """Map every brief id to its status folder, and count how many briefs depend on each id."""
     status_by_id: dict[str, str] = {}
-    unlocks: dict[str, int] = {}
+    edges: set[tuple[str, str]] = set()
+    blocks_edges: set[tuple[str, str]] = set()
     for d in INDEX_DIRS:
         for f in (root / d).glob("*.md"):
             b = fm(f.read_text())
-            status_by_id[brief_id(b, f.stem)] = d
-            for dep in parse_deps(b):
-                unlocks[dep] = unlocks.get(dep, 0) + 1
+            bid = brief_id(b, f.stem)
+            status_by_id[bid] = d
+            edges |= {(dep, bid) for dep in parse_deps(b)}
+            blocks_edges |= {(bid, waiter) for waiter in Brief(bid, d, b).blocks}
+    # A `blocks:` edge only counts while the brief it names is still open.
+    edges |= {(blocker, w) for blocker, w in blocks_edges if status_by_id.get(w) in LIVE_DIRS}
+    unlocks: dict[str, int] = {}
+    for blocker, _ in edges:
+        unlocks[blocker] = unlocks.get(blocker, 0) + 1
     return status_by_id, unlocks
 
 
@@ -341,10 +348,13 @@ class WaitGraph:
     @classmethod
     def build(cls, briefs: list[Brief]) -> "WaitGraph":
         known = {b.id for b in briefs}
+        live = [b for b in briefs if b.status in LIVE_DIRS]
+        live_ids = {b.id for b in live}
+        pairs = [(dep, b.id) for b in live for dep in sorted(dependency_edges(b, known))]
+        pairs += [(b.id, w) for b in live for w in sorted(b.blocks & live_ids)]
         edges: dict[str, list[str]] = {}
-        for b in (b for b in briefs if b.status in LIVE_DIRS):
-            for dep in sorted(dependency_edges(b, known)):
-                edges.setdefault(dep, []).append(b.id)
+        for blocker, waiter in dict.fromkeys(pairs):
+            edges.setdefault(blocker, []).append(waiter)
         return cls({dep: tuple(ws) for dep, ws in edges.items()})
 
     def fold(self, base: Callable[[str], float], step: float) -> Callable[[str], float]:

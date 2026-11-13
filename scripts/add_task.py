@@ -17,6 +17,9 @@ Examples:
      --context "Key leaked in PR 123; rotate in the vault." --criteria "Old key rejected by the API" \
      --domain security --importance 1 --autonomy needs-input --due 2026-06-05 --ready --commit
 
+  # work found mid-task: queue it with the brief it blocks, so the prioritiser can rank it
+  python scripts/add_task.py --title "Fix flaky fixture" --blocks 2026-11-04-ship-the-importer
+
   echo "idea: a hook that blocks committing secrets" | \
      python scripts/add_task.py --stdin --title "Pre-commit secret scanner"
 """
@@ -50,9 +53,13 @@ def slug(s: str, maxwords: int = 6) -> str:
     return "-".join(words[:maxwords]) or "task"
 
 
+def flow_list(items: list[str]) -> str:
+    return "[" + ", ".join(items) + "]"
+
+
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
-    tags = "[" + ", ".join(t.strip() for t in a.tags.split(",") if t.strip()) + "]"
-    reqs = "[" + ", ".join(r.strip() for r in a.requirements.split(",") if r.strip()) + "]"
+    tags = flow_list([t.strip() for t in a.tags.split(",") if t.strip()])
+    reqs = flow_list([r.strip() for r in a.requirements.split(",") if r.strip()])
     crit = (
         "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {placeholder_criterion(a.title)}"
     )
@@ -72,6 +79,7 @@ tags: {tags}
 parent: {a.parent}
 source: {a.source}
 blockers: []
+blocks: {flow_list(a.blocks)}
 related: []
 requirements: {reqs}
 ---
@@ -149,6 +157,13 @@ def main(argv: list[str] | None = None) -> None:
         default="",
         help="comma-separated requirement ids from requirements.md this brief covers",
     )
+    ap.add_argument(
+        "--blocks",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="repeatable id of a brief this one blocks (the inverse of that brief's blockers:)",
+    )
     ap.add_argument("--source", default="claude", choices=["claude", "user"])
     ap.add_argument(
         "--status",
@@ -171,6 +186,7 @@ def main(argv: list[str] | None = None) -> None:
 
     status = a.status or ("ready" if a.ready else "inbox")
     a.criteria = [c.strip() for c in a.criteria if c.strip()]
+    a.blocks = [b.strip() for b in a.blocks if b.strip()]
     context = a.context.strip()
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()

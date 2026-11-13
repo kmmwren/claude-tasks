@@ -51,6 +51,7 @@ parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-
 assignee: # OPTIONAL who (person or agent) has claimed this. Empty = unclaimed. Advisory, not a lock.
 source: # who created it: user | claude.
 blockers: [] # list of brief ids or external blockers (original form; blocked_by is preferred)
+blocks: [] # OPTIONAL ids of briefs this one blocks (the inverse of their blockers:); each open one raises this brief's rank.
 blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.
 clears: # OPTIONAL fleet-blocker id (or [ids]) this brief clears; while its record is active or unverified, prioritise.py ranks the brief first. Needs tasks.toml `fleet_blockers_dir`.
 milestone: # OPTIONAL id from the project's milestones file; only checked if tasks.toml sets `milestones`.

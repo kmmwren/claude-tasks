@@ -129,6 +129,11 @@ class Brief:
         }
 
     @property
+    def blocks(self) -> set[str]:
+        """Ids of the briefs this one blocks: the inverse of their `blockers:`/`blocked_by:`."""
+        return set(parse_list(self.fields.get("blocks", "")))
+
+    @property
     def external_blockers(self) -> list[str]:
         return [b for b in self.blocked_by if is_external(b)]
 

@@ -49,6 +49,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   enrichment (the `enrich` skill turns inbox items into ready briefs).
 - **`--autonomy full`** ONLY if a future agent could complete it end-to-end with zero
   user input. Be honest — over-tagging `full` makes the queue lie about what's delegable.
+- **`--blocks <brief-id>`** (repeatable): name each open brief this new work is blocking, so the
+  prioritiser ranks it higher. Use the same ids as `blockers:`/`blocked_by:`. Omit it when the work blocks nothing.
 - **`--commit`** writes, commits, and pushes. Use it unless you have a reason to batch.
 
 The script finds the queue via `$CLAUDE_TASKS_DIR` → nearest `.tasks/` → `~/tasks`, or
