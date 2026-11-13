@@ -8,8 +8,12 @@ ID = "demo-brief"
 
 
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
-                          capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 
 
 @pytest.fixture
@@ -19,7 +23,9 @@ def repos(tmp_path):
     main = tmp_path / "main"
     subprocess.run(["git", "clone", "-q", str(origin), str(main)], check=True)
     (main / "ready").mkdir()
-    (main / "ready" / f"{ID}.md").write_text(f"---\nid: {ID}\n---\n\n## Execution log\n\n2026-01-01: captured.\n")
+    (main / "ready" / f"{ID}.md").write_text(
+        f"---\nid: {ID}\n---\n\n## Execution log\n\n2026-01-01: captured.\n"
+    )
     git(main, "add", "-A")
     git(main, "commit", "-qm", "base")
     git(main, "push", "-q", "origin", "HEAD:main")
@@ -86,10 +92,12 @@ def test_cli_exit_codes(repos, capsys):
 
 def _failing(real, fragment):
     """Wrap append_log._run so any git call whose args contain `fragment` fails."""
-    def run(repo, *args):
+
+    def run(repo, *args, **kw):
         if fragment in args:
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
-        return real(repo, *args)
+        return real(repo, *args, **kw)
+
     return run
 
 
@@ -120,12 +128,95 @@ def test_push_that_always_loses_the_race_gives_up_naming_the_line(repos, capsys,
     assert git(main, "worktree", "list").count("\n") == 1
 
 
+def _push_fails_with(real, stderr):
+    def run(repo, *args, **kw):
+        if args[:1] == ("push",):
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr=stderr)
+        return real(repo, *args, **kw)
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        " ! [rejected]        HEAD -> main (fetch first)",
+        " ! [remote rejected] HEAD -> main (failed)",
+        " ! [remote rejected] HEAD -> main (cannot lock ref 'refs/heads/main')",
+        " ! [remote rejected] HEAD -> main (incorrect old value provided)",
+    ],
+)
+def test_a_push_that_lost_the_race_is_retried(repos, monkeypatch, stderr):
+    _, main = repos
+    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
+    monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
+    with pytest.raises(RuntimeError, match=f"still rejected after {append_log.PUSH_ATTEMPTS}"):
+        append_log.append_log(ID, "x", root=main)
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        " ! [remote rejected] HEAD -> main (pre-receive hook declined)",
+        "remote: lint check (failed)\nremote: cannot lock ref\n"
+        " ! [remote rejected] HEAD -> main (pre-receive hook declined)",
+    ],
+)
+def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch, stderr):
+    _, main = repos
+    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
+    monkeypatch.setattr(append_log, "_backoff", lambda attempt: pytest.fail("retried"))
+    with pytest.raises(RuntimeError, match=r"(?s)push refused: .*hook declined"):
+        append_log.append_log(ID, "x", root=main)
+
+
+def _hang_on(monkeypatch, verb):
+    real = append_log._git
+
+    def hung(root, *args, **kw):
+        if args[:1] == (verb,):
+            raise subprocess.TimeoutExpired(["git", *args], kw["timeout"])
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(append_log, "_git", hung)
+
+
+@pytest.mark.parametrize("verb", ["fetch", "push"])
+def test_a_hung_network_call_fails_the_append_naming_the_line(repos, capsys, monkeypatch, verb):
+    _, main = repos
+    _hang_on(monkeypatch, verb)
+
+    assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
+
+    err = capsys.readouterr().err
+    assert f"git {verb} timed out after {append_log.NETWORK_TIMEOUT:.0f}s" in err
+    assert "keep me" in err
+    assert git(main, "worktree", "list").count("\n") == 1
+
+
+def test_every_network_call_carries_the_network_timeout(repos, monkeypatch):
+    _, main = repos
+    real, timeouts = append_log._git, []
+
+    def recording(root, *args, **kw):
+        if args[:1] in (("push",), ("fetch",)):
+            timeouts.append(kw["timeout"])
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(append_log, "_git", recording)
+    append_log.append_log(ID, "timed", root=main, today="2026-11-12")
+
+    assert timeouts == [append_log.NETWORK_TIMEOUT] * 2
+
+
 PEER = "peer-memory-abc12345"
 
 
 def _file_uncommitted_peer_brief(main):
     (main / "inbox").mkdir(exist_ok=True)
-    (main / "inbox" / f"{PEER}.md").write_text(f"---\nid: {PEER}\n---\n\n## Execution log\n\n2026-01-01: filed.\n")
+    (main / "inbox" / f"{PEER}.md").write_text(
+        f"---\nid: {PEER}\n---\n\n## Execution log\n\n2026-01-01: filed.\n"
+    )
 
 
 def test_brief_uncommitted_in_main_checkout_is_logged_and_leaves_sync_working(repos):
@@ -141,8 +232,22 @@ def test_brief_uncommitted_in_main_checkout_is_logged_and_leaves_sync_working(re
 def test_deferred_filing_of_uncommitted_brief_is_a_runtime_error(repos, monkeypatch):
     _, main = repos
     _file_uncommitted_peer_brief(main)
-    monkeypatch.setattr(append_log, "sync_commit", lambda *a, **k: False)
-    with pytest.raises(RuntimeError, match="uncommitted"):
+    monkeypatch.setattr(append_log, "sync_commit_and_push", lambda *a, **k: False)
+    with pytest.raises(RuntimeError, match="committing it was deferred"):
+        append_log.append_log(PEER, "x", root=main)
+
+
+def test_a_committed_brief_whose_push_was_deferred_says_so(repos, monkeypatch):
+    _, main = repos
+    _file_uncommitted_peer_brief(main)
+
+    def commit_without_pushing(message, root, ids=()):
+        git(root, "add", f"inbox/{PEER}.md")
+        git(root, "commit", "-q", "-m", message)
+        return False
+
+    monkeypatch.setattr(append_log, "sync_commit_and_push", commit_without_pushing)
+    with pytest.raises(RuntimeError, match="pushing it was deferred"):
         append_log.append_log(PEER, "x", root=main)
 
 
@@ -161,14 +266,14 @@ def test_relative_root_sees_a_committed_brief_as_committed(repos, monkeypatch, t
     def refuse(*a, **k):
         raise AssertionError("a committed brief must not be re-filed")
 
-    monkeypatch.setattr(append_log, "sync_commit", refuse)
+    monkeypatch.setattr(append_log, "sync_commit_and_push", refuse)
     assert append_log.main([ID, "relative root", "--root", main.name]) == 0
 
 
 def test_filing_that_commits_nothing_is_a_runtime_error(repos, monkeypatch):
     _, main = repos
     _file_uncommitted_peer_brief(main)
-    monkeypatch.setattr(append_log, "sync_commit", lambda *a, **k: True)
+    monkeypatch.setattr(append_log, "sync_commit_and_push", lambda *a, **k: True)
     with pytest.raises(RuntimeError, match="could not commit"):
         append_log.append_log(PEER, "x", root=main)
 
@@ -195,7 +300,9 @@ def test_backoff_sleeps_at_most_the_capped_doubling(monkeypatch, attempt, cap):
 def _push_from_peer(origin, tmp_path, n):
     peer = tmp_path / f"peer-clone-{n}"
     if not peer.exists():
-        subprocess.run(["git", "clone", "-q", str(origin), str(peer)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(origin), str(peer)], check=True, capture_output=True
+        )
     git(peer, "pull", "-q", "--rebase", "origin", "main")
     (peer / f"racer-{n}.txt").write_text("x")
     git(peer, "add", "-A")
@@ -219,11 +326,11 @@ def test_push_that_keeps_losing_races_still_lands_the_line(repos, tmp_path, monk
     origin, main = repos
     real, raced = append_log._run, []
 
-    def racing(repo, *args):
+    def racing(repo, *args, **kw):
         if args[:1] == ("push",) and len(raced) < 5:
             _push_from_peer(origin, tmp_path, len(raced))
             raced.append(1)
-        return real(repo, *args)
+        return real(repo, *args, **kw)
 
     monkeypatch.setattr(append_log, "_run", racing)
     monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
@@ -239,7 +346,11 @@ def test_push_declined_for_another_reason_fails_at_once_with_the_line(repos, cap
     hook.chmod(0o755)
     pushes = []
     real = append_log._run
-    monkeypatch.setattr(append_log, "_run", lambda repo, *a: (a[:1] == ("push",) and pushes.append(1), real(repo, *a))[1])
+    monkeypatch.setattr(
+        append_log,
+        "_run",
+        lambda repo, *a, **kw: (a[:1] == ("push",) and pushes.append(1), real(repo, *a, **kw))[1],
+    )
     assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
     err = capsys.readouterr().err
     assert "policy says no" in err and "keep me" in err

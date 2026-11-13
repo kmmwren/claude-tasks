@@ -29,6 +29,7 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 
 # isort: split
 import contextlib
+import dataclasses
 import errno
 import fcntl
 import os
@@ -39,46 +40,144 @@ from collections.abc import Iterable, Iterator
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 
 
-def lock_path(root: pathlib.Path) -> pathlib.Path:
-    """Where the sync lock lives. Inside .git so it is per-clone and never committed.
+def clone_state_path(root: pathlib.Path, name: str) -> pathlib.Path:
+    """Where per-clone state file `name` (a lock, a mark, a log) lives.
 
-    Falls back to the repo root for worktrees (where .git is a file, not a dir) and
-    for non-git callers (tests), so the lock always has a real directory to live in.
+    Inside the clone's common git dir, so it is never committed and every worktree of the
+    clone shares it. Falls back to the queue root for non-git callers (tests).
     """
+    git = _common_git_dir(root)
+    return (git if git is not None else root) / name
+
+
+def _common_git_dir(root: pathlib.Path) -> pathlib.Path | None:
+    """The git dir shared by all worktrees of `root`'s clone, read from disk without spawning git."""
     git = root / ".git"
-    return (git if git.is_dir() else root) / ".tasks-sync.lock"
+    if git.is_dir():
+        return git
+    try:
+        gitdir = git.read_text().removeprefix("gitdir:").strip()
+    except OSError:
+        return None
+    worktree_dir = (root / gitdir).resolve()
+    try:
+        return (worktree_dir / (worktree_dir / "commondir").read_text().strip()).resolve()
+    except OSError:
+        return worktree_dir
+
+
+def lock_path(root: pathlib.Path) -> pathlib.Path:
+    """Where the queue's sync lock lives."""
+    return clone_state_path(root, ".tasks-sync.lock")
+
+
+def _flock_within(fd: int, op: int, timeout: float, poll: float) -> bool:
+    """Take flock `op` on `fd`, polling until `timeout` seconds pass; True once held."""
+    deadline = Deadline.in_(timeout)
+    while True:
+        try:
+            fcntl.flock(fd, op | fcntl.LOCK_NB)
+            return True
+        except OSError as e:
+            if e.errno not in (errno.EAGAIN, errno.EACCES):
+                raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
+            if deadline.expired():
+                return False
+            time.sleep(poll)
 
 
 @contextlib.contextmanager
-def repo_lock(root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1) -> Iterator[bool]:
-    """Serialize git index operations across processes.
-
-    Blocks (polling, non-blocking flock) until the lock is free or `timeout` seconds
-    pass. Yields True if the lock was acquired, False on timeout — callers treat a
-    timeout as "the brief is safe on disk; sync was deferred" rather than an error,
-    because the file write already succeeded before the lock was ever requested.
-    """
-    path = lock_path(root)
+def _held_flock(path: pathlib.Path, op: int, timeout: float, poll: float) -> Iterator[bool]:
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
-    deadline = time.monotonic() + timeout
     acquired = False
     try:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except OSError as e:
-                if e.errno not in (errno.EAGAIN, errno.EACCES):
-                    raise  # pragma: no cover - defensive: only EAGAIN/EACCES mean "held"
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(poll)
+        acquired = _flock_within(fd, op, timeout, poll)
         yield acquired
     finally:
         if acquired:
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+def exclusive_lock(
+    path: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
+    """Hold an exclusive flock on `path`; yields False if `timeout` passed first."""
+    return _held_flock(path, fcntl.LOCK_EX, timeout, poll)
+
+
+def shared_lock(
+    path: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
+    """Hold a shared flock on `path`, alongside other sharers; yields False if `timeout` passed first."""
+    return _held_flock(path, fcntl.LOCK_SH, timeout, poll)
+
+
+class HeldLock:
+    """An exclusive flock owned through its open file descriptor, which a child process can inherit."""
+
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self._held = True
+
+    def release(self) -> None:
+        """Close the descriptor, freeing the flock once no child holds a copy; idempotent."""
+        if self._held:
+            self._held = False
+            os.close(self.fd)
+
+    def __enter__(self) -> "HeldLock":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+def try_lock(path: pathlib.Path) -> HeldLock | None:
+    """Take an exclusive flock on `path` without waiting; None if another process holds it."""
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    if _flock_within(fd, fcntl.LOCK_EX, 0.0, 0.0):
+        return HeldLock(fd)
+    os.close(fd)
+    return None
+
+
+@dataclasses.dataclass(frozen=True)
+class Deadline:
+    """A point in monotonic time that a run of waits and subprocesses must finish before."""
+
+    at: float
+
+    @classmethod
+    def in_(cls, seconds: float) -> "Deadline":
+        return cls(time.monotonic() + seconds)
+
+    def remaining(self) -> float:
+        """Seconds left before the deadline, never negative."""
+        return max(0.0, self.at - time.monotonic())
+
+    def expired(self) -> bool:
+        return time.monotonic() >= self.at
+
+    def cap(self, seconds: float) -> float:
+        """`seconds`, or what is left of the deadline if that is less."""
+        return min(seconds, self.remaining())
+
+    def reserving(self, seconds: float) -> "Deadline":
+        """The same deadline moved `seconds` earlier, for work that must finish before it."""
+        return Deadline(self.at - seconds)
+
+
+def repo_lock(
+    root: pathlib.Path, timeout: float = 30.0, poll: float = 0.1
+) -> contextlib.AbstractContextManager[bool]:
+    """Serialize git index operations across processes.
+
+    Yields True if the lock was acquired, False on timeout. Callers treat a timeout as
+    "the brief is safe on disk; sync was deferred" rather than an error, because the
+    file write already succeeded before the lock was ever requested.
+    """
+    return exclusive_lock(lock_path(root), timeout=timeout, poll=poll)
 
 
 @contextlib.contextmanager

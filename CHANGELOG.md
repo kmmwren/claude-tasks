@@ -30,6 +30,24 @@
   unchanged.
 
 ### Fixed
+- **`append_log.py` retries a push GitHub refused because another writer was updating main.** A
+  server-side ref-lock clash reports `[remote rejected] HEAD -> main (failed)` (or `cannot lock ref`,
+  `incorrect old value`), which the retry loop did not count as a lost race, so the line was dropped.
+  These now retry from fresh origin/main like `[rejected]`; a declined hook still fails at once.
+- **`append_log.py` no longer hangs when GitHub does.** Its fetch and push each stop after 20 s
+  (`git_sync.NETWORK_TIMEOUT`); it then exits 2 naming the line it could not log.
+- **Queue writes no longer fork a `git push` each.** `git_sync.sync_commit` still commits
+  synchronously, then marks the clone dirty and returns; one detached pusher per clone (a flock on
+  `.git/.tasks-push.lock`) waits for in-flight writers, pushes once, and pushes again only if a write
+  landed meanwhile. Twenty concurrent writes cost at most two pushes. Its output, including any
+  divergence report, goes to `.git/.tasks-push.log`, which the next write prints and clears.
+  `sync_commit_and_push` pushes before returning, which `append_log.py` uses because it reads the
+  brief back from `origin/main`. `triage.py`'s report field `synced` is now `committed`. A write never runs `git fetch`: the shadow
+  check reads `origin/main` as the last sweep, push or rejected-push fetch left it. The sweep fetches
+  unless `FETCH_HEAD` is under 45 s old, so a dispatch-time sweep reuses the timer's fetch, and a rejected push still fetches and rebases. The 60 s `git_sync.py --sweep` job is the catch-up for a push that failed. `--sweep` pushes
+  before it exits, after any running pusher, so `dispatch-cloud.sh` sees a fresh brief on `origin/main`. A sweep finishes inside 110 s, under dispatch's 120 s flush timeout: its fetch is cut off at 20 s and its wait for a running pusher shrinks by whatever the fetch and commit took. A sweep with
+  nothing ahead of `origin/main` starts no push. The queue's sync lock also moved to the clone's
+  common git dir, so every worktree of one clone shares it.
 - **The readiness gate also covers `parked/` (and `done/`) sources.** `transition.py move` from any folder
   outside `ready`, `in-progress` and `blocked` into one of them refuses an un-enriched brief, so inbox to
   parked to ready is no longer a way round it. Landing in `parked` and closing to `done` stay unconditional.

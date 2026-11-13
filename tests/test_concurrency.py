@@ -19,6 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 import _concurrency as C
 import pytest
 
+from tests.queue_helpers import wait_for_pusher_idle
+
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
@@ -90,6 +92,7 @@ def test_concurrent_adds_all_land_committed_and_pushed(queue):
     assert all(r.returncode == 0 for r in results), [r.stderr for r in results]
     # Every brief committed locally AND present on the remote — none silently dropped.
     assert len(briefs_on(queue, "HEAD")) == n
+    assert wait_for_pusher_idle(queue)
     git(queue, "fetch", "-q", "origin")
     assert len(briefs_on(queue, "origin/main")) == n
     # The repo is not wedged: no orphaned index.lock left behind.
@@ -100,7 +103,11 @@ def test_same_title_concurrent_adds_do_not_overwrite(queue):
     """Two sessions capturing the same title must produce two distinct briefs."""
     n = 6
     with ThreadPoolExecutor(max_workers=n) as ex:
-        results = list(ex.map(lambda _: run_add(queue, "identical title here", "--on-duplicate", "file"), range(n)))
+        results = list(
+            ex.map(
+                lambda _: run_add(queue, "identical title here", "--on-duplicate", "file"), range(n)
+            )
+        )
     assert all(r.returncode == 0 for r in results)
     files = list((queue / "inbox").glob("*.md"))
     assert len(files) == n  # no lost write — distinct -2, -3, … suffixes
@@ -168,6 +175,43 @@ def test_lock_path_prefers_git_dir(tmp_path):
     assert C.lock_path(tmp_path) == tmp_path / ".tasks-sync.lock"
     (tmp_path / ".git").mkdir()
     assert C.lock_path(tmp_path) == tmp_path / ".git" / ".tasks-sync.lock"
+
+
+def test_clone_state_of_a_worktree_lives_in_the_clones_common_git_dir(tmp_path):
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "-q", str(main)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(main),
+            "-c",
+            "user.email=t@t.t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "seed",
+        ],
+        check=True,
+    )
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "--detach", str(wt)], check=True
+    )
+
+    assert C.clone_state_path(wt, "x") == (main / ".git" / "x").resolve()
+
+
+def test_clone_state_of_a_git_file_without_commondir_lives_in_its_gitdir(tmp_path):
+    (tmp_path / "modules" / "sub").mkdir(parents=True)
+    root = tmp_path / "sub"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: ../modules/sub\n")
+
+    assert C.clone_state_path(root, "x") == (tmp_path / "modules" / "sub" / "x").resolve()
 
 
 def test_atomic_write_replaces_and_leaves_no_temp(tmp_path):
@@ -260,3 +304,19 @@ def test_require_lock_raises_rather_than_running_unlocked(tmp_path):
         assert acquired
         with pytest.raises(TimeoutError), C.require_lock(tmp_path, timeout=0.05):
             pass  # pragma: no cover
+
+
+def test_a_deadline_counts_down_and_never_goes_negative():
+    deadline = C.Deadline.in_(60.0)
+    assert 59.0 < deadline.remaining() <= 60.0
+    assert not deadline.expired()
+    assert C.Deadline.in_(-1.0).remaining() == 0.0
+    assert C.Deadline.in_(-1.0).expired()
+
+
+def test_a_deadline_caps_a_wait_and_reserves_time_at_its_end():
+    deadline = C.Deadline.in_(60.0)
+    assert deadline.cap(5.0) == 5.0
+    assert deadline.cap(500.0) <= 60.0
+    assert deadline.reserving(40.0).cap(500.0) <= 20.0
+    assert deadline.reserving(100.0).cap(500.0) == 0.0
