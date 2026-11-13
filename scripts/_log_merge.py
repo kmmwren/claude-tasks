@@ -5,8 +5,9 @@ Two writers (append_log.py pushing from a worktree of origin, a local writer com
 queue tree) each add a line at the end of the same brief, so git sees overlapping edits and
 refuses to merge. The log is append-only and each line is dated, so the right merge keeps the
 base entries exactly as they were and adds both sides' new entries after them in date order.
-Dated lines both sides append below a later section merge the same way. Any other change
-elsewhere in the brief, or to an existing entry, is a real conflict left to a human.
+Lines both sides append below a later section merge the same way: writers append to the end of
+the file, as dated lines or as bullets. Any other change elsewhere in the brief, or to an
+existing entry, is a real conflict left to a human.
 """
 
 import re
@@ -63,16 +64,30 @@ def _merge_text(base: str, upstream: str, replayed: str) -> str | None:
     return None
 
 
-def _appended_lines(base: str, side: str) -> tuple[str, ...] | None:
-    """The dated lines `side` added to the end of `base`, or None for any other change."""
+def _appended_entries(base: str, side: str) -> tuple[str, ...] | None:
+    """The entries `side` added to the end of `base`, or None for any other change."""
     if not side.startswith(base):
         return None
-    lines = tuple(line for line in side[len(base) :].split("\n") if line)
-    return lines if all(_DATED.match(line) for line in lines) else None
+    return _tail_entries([line for line in side[len(base) :].split("\n") if line])
+
+
+def _tail_entries(lines: list[str]) -> tuple[str, ...]:
+    """Appended lines as entries: each bullet before the first dated line stands alone and every
+    line after one belongs to the dated line above it, so a bullet both sides added matches 1:1."""
+    entries: list[str] = []
+    dated = False
+    for line in lines:
+        starts_entry = bool(_DATED.match(line))
+        dated = dated or starts_entry
+        if dated and not starts_entry:
+            entries[-1] += "\n" + line
+        else:
+            entries.append(line)
+    return tuple(entries)
 
 
 def _merge_after(base: str, upstream: str, replayed: str) -> str | None:
-    """Merge the text after the log; dated lines both sides appended to the file's end are kept.
+    """Merge the text after the log; lines both sides appended to the file's end are kept.
 
     The writers append to the end of the file, so in a brief with sections after the Execution log
     the log lines land below those sections and both sides edit the same trailing text.
@@ -80,7 +95,8 @@ def _merge_after(base: str, upstream: str, replayed: str) -> str | None:
     merged = _merge_text(base, upstream, replayed)
     if merged is not None:
         return merged
-    upstream_tail, replayed_tail = _appended_lines(base, upstream), _appended_lines(base, replayed)
+    upstream_tail = _appended_entries(base, upstream)
+    replayed_tail = _appended_entries(base, replayed)
     if upstream_tail is None or replayed_tail is None:
         return None
     return base.rstrip("\n") + "\n" + "\n".join(_union_tails(upstream_tail, replayed_tail)) + "\n"

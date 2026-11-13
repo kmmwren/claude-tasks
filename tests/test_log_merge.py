@@ -159,8 +159,14 @@ def test_dated_lines_both_sides_append_below_a_later_section_are_unioned_upstrea
     assert merged == below_notes("2026-11-10: upstream.", "2026-11-10: replayed.")
 
 
-def test_an_undated_line_appended_below_a_later_section_is_a_conflict():
-    assert (
-        merge_log_appends(below_notes(), below_notes("prose"), below_notes("2026-11-10: x."))
-        is None
+def test_bullets_both_sides_append_below_a_later_section_are_unioned_and_a_shared_one_kept_once():
+    upstream = below_notes("- shared", "2026-11-13: dated.", "- under dated")
+    replayed = below_notes("- shared", "- local")
+    assert merge_log_appends(below_notes(), upstream, replayed) == below_notes(
+        "- shared", "- local", "2026-11-13: dated.\n- under dated"
     )
+
+
+def test_a_rewritten_line_above_the_appends_is_still_a_conflict():
+    rewritten = below_notes("prose").replace("\nn\n", "\nedited\n")
+    assert merge_log_appends(below_notes(), rewritten, below_notes("2026-11-10: x.")) is None
