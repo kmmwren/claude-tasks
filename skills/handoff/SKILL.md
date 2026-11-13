@@ -202,7 +202,7 @@ successor prompt in a fenced block, ready to paste into the next session, after 
 carries every `metadata.brief`:
 
 ```bash
-python3 "/Users/katherine.wren@panaseer.com/.claude/local-plugins/claude-tasks/scripts/resume_prompt.py"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resume_prompt.py"
 ```
 
 It rebuilds the prompt from the live ledger and the long-running registry every time; never

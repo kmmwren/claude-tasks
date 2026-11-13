@@ -47,6 +47,16 @@ def jobs_root() -> pathlib.Path:
     return pathlib.Path(os.environ.get("LONG_RUNNING_JOBS") or _home() / ".claude" / "jobs")
 
 
+def _read_json(path: pathlib.Path) -> Mapping[str, object]:
+    """The file's JSON object, or empty (with a warning when unreadable) so one bad file never sinks the prompt."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as err:
+        print(f"resume_prompt: skipping unreadable {path}: {err}", file=sys.stderr)
+        return {}
+    return data if isinstance(data, Mapping) else {}
+
+
 def _text(row: Mapping[str, object], key: str) -> str | None:
     value = row.get(key)
     return value if isinstance(value, str) and value else None
@@ -97,14 +107,15 @@ class Mission:
     def _from_roster(cls, session_id: str, registry: pathlib.Path) -> Mission | None:
         if not registry.is_file():
             return None
-        sessions = json.loads(registry.read_text()).get("sessions", [])
-        match = next((s for s in sessions if cls._owns(s, session_id)), None)
-        return cls(match.get("name", ""), match.get("mission", "")) if match else None
+        sessions = _read_json(registry).get("sessions")
+        rows = [s for s in sessions if isinstance(s, Mapping)] if isinstance(sessions, list) else []
+        match = next((s for s in rows if cls._owns(s, session_id)), None)
+        return cls(_text(match, "name") or "", _text(match, "mission") or "") if match else None
 
     @classmethod
     def _from_job(cls, session_id: str, jobs: pathlib.Path) -> Mission | None:
         state = jobs / session_id[:8] / "state.json"
-        name = _text(json.loads(state.read_text()), "name") if state.is_file() else None
+        name = _text(_read_json(state), "name") if state.is_file() else None
         return cls(name, "") if name else None
 
     @staticmethod
@@ -115,7 +126,8 @@ class Mission:
 
 
 def open_items(session_id: str, root: pathlib.Path) -> list[Item]:
-    items = (Item.from_json(json.loads(p.read_text())) for p in (root / session_id).glob("*.json"))
+    rows = (_read_json(p) for p in (root / session_id).glob("*.json"))
+    items = (Item.from_json(r) for r in rows if r)
     return sorted((i for i in items if i.is_open), key=lambda i: i.order)
 
 
