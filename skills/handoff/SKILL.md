@@ -201,6 +201,20 @@ One short line, never the whole pile. Name the direction if one was given. e.g.
 *"Parked 6 open items + 2 follow-ups under '<note>'; resume with `/tasks-next` when ready."*
 or *"Filed 6 open items to the inbox; run `/enrich` to turn them into briefs."*
 
+## Step 5: Verify it shipped, then close
+
+A session handoff that shipped work ends with the session closed, not left idle.
+
+1. List every sha and branch this session claims landed. Confirm each is on the default branch of
+   origin: `git fetch origin`, then `git branch -r --contains <sha>` shows `origin/<default>`, or
+   `git merge-base --is-ancestor <sha> origin/<default>` exits 0.
+2. Anything not on main stays in its brief with its exact state; the session does not close.
+3. When all are on main, end your last message with the newest sha or PR link and stop. The
+   orphan-close sweep (`child_sessions.close_orphans`, run by `long-running-keepalive.py`) reads
+   that evidence and stops the job with `claude stop` (`child_sessions.close`).
+4. A pinned session (`long_running.PinnedSessions`, `jobs/pins.json`) never closes: skip this step,
+   as in "Long-running sessions" above.
+
 ## Note
 
 A `SessionStart(compact)` hook (`catch-compact-thrash.py`) launches the external handoff
