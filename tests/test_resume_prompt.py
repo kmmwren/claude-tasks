@@ -70,6 +70,15 @@ def test_prompt_without_a_registry_entry_still_lists_the_work(rows: pathlib.Path
     assert "run /claude-tasks:handoff" in prompt and "task 1;" not in prompt
 
 
+def test_corrupt_registry_and_ledger_file_degrade_instead_of_crashing(
+        rows: pathlib.Path, tmp_path: pathlib.Path) -> None:
+    (rows / SID / "bad.json").write_text("{not json")
+    registry = tmp_path / "registry.json"
+    registry.write_text("[]")
+    assert resume_prompt.Mission.lookup(SID, registry, tmp_path / "jobs") is None
+    assert [i.id for i in resume_prompt.open_items(SID, rows)] == ["10", "3", "2", "4"]
+
+
 def test_main_reads_session_id_from_the_environment(
         rows: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str]) -> None:
