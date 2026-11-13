@@ -21,7 +21,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import Deadline, HeldLock, repo_lock  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
-from _paths import TASK_DIRS, resolve_root  # noqa: E402
+from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
 
 
@@ -170,13 +170,8 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     shadows = []
     for new in _tracked(root, "--others", "--exclude-standard"):
         path = pathlib.PurePath(new)
-        if (
-            path.parent.name in TASK_DIRS
-            and path.suffix == ".md"
-            and any(
-                f.name == path.name and f.parent.name in TASK_DIRS and f.parent != path.parent
-                for f in filed
-            )
+        if is_brief(path) and any(
+            f.name == path.name and is_brief(f) and f.parent != path.parent for f in filed
         ):
             shadows.append(new)
     return shadows

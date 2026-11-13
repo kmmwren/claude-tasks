@@ -1,10 +1,10 @@
-"""Tests for _log_conflict.Rebase: union log-only conflicts, refuse them on a stale snapshot."""
+"""Tests for _log_conflict.Rebase: union log-only conflicts, abort on any other conflict."""
 
 import pathlib
 import subprocess
 
 import pytest
-from _log_conflict import Rebase, RebaseResult, Verdict
+from _log_conflict import Rebase, RebaseResult, Stage, Verdict
 
 BRIEF = "---\nid: b\nstatus: {status}\n---\n\n## Goal\n\n{goal}\n\n## Execution log\n\n{log}"
 CAPTURED = "2026-11-09: captured.\n"
@@ -90,35 +90,6 @@ def test_union_resolves_a_log_append_against_a_local_move(queue, tmp_path):
     assert not (wt / "inbox" / "b.md").exists()
 
 
-def test_a_snapshot_older_than_origins_brief_is_refused(queue, tmp_path):
-    queue.origin_appends("2026-11-09: logged on origin.\n")
-    queue.move_locally("2026-11-09: closed locally.\n")
-    rebase = Rebase.onto_origin(queue.scratch(tmp_path))
-    queue.origin_appends("2026-11-10: logged after the snapshot.\n")
-    git(queue.repo, "fetch", "-q", "origin")
-
-    result = rebase.run()
-
-    assert result == RebaseResult(False, stale=("done/b.md",))
-    assert "origin/main changed done/b.md" in result.reason
-    in_progress = git(rebase.worktree, "rev-parse", "--git-path", "rebase-merge").strip()
-    assert not (rebase.worktree / in_progress).exists()
-    assert "logged on origin" not in git(rebase.worktree, "show", "HEAD:done/b.md")
-    assert git(rebase.worktree, "status", "--porcelain") == ""
-
-
-def test_an_edit_to_another_brief_does_not_make_the_snapshot_stale(queue, tmp_path):
-    queue.origin_appends("2026-11-09: logged on origin.\n")
-    queue.move_locally("2026-11-09: closed locally.\n")
-    rebase = Rebase.onto_origin(queue.scratch(tmp_path))
-    queue.write(queue.other, "inbox/c.md", brief().replace("id: b", "id: c"))
-    queue.commit(queue.other, "another brief")
-    git(queue.other, "push", "-q", "origin", "main")
-    git(queue.repo, "fetch", "-q", "origin")
-
-    assert rebase.run().completed is True
-
-
 def test_a_conflict_outside_the_log_is_reported_not_unioned(queue, tmp_path):
     queue.write(queue.other, "inbox/b.md", brief(goal="origin rewrote the goal"))
     queue.commit(queue.other, "edit goal")
@@ -139,17 +110,60 @@ def test_a_rebase_that_fails_without_a_conflict_says_so(queue, tmp_path):
     assert result.reason == "rebase failed without a conflicting file"
 
 
-def test_a_reason_names_both_conflicts_and_stale_briefs():
-    result = RebaseResult(False, conflict=("inbox/a.md",), stale=("done/b.md",))
-    assert result.reason == (
-        "rebase conflict in inbox/a.md; origin/main changed done/b.md since the rebase began"
-    )
-
-
 @pytest.mark.parametrize("path", ["scripts/tool.py", "elsewhere/b.md", "inbox/never-conflicted.md"])
 def test_only_a_conflicted_task_brief_is_resolved(queue, tmp_path, path):
     assert Rebase.onto_origin(queue.scratch(tmp_path)).resolve(path) is Verdict.CONFLICT
 
 
-def test_an_unreadable_diff_counts_as_stale(queue, tmp_path):
-    assert Rebase(queue.scratch(tmp_path), "0" * 40).snapshot_is_stale("done/b.md") is True
+def test_the_stages_are_git_s_base_upstream_and_replayed_slots():
+    assert [int(stage) for stage in (Stage.BASE, Stage.UPSTREAM, Stage.REPLAYED)] == [1, 2, 3]
+
+
+def test_a_later_replayed_commit_that_conflicts_after_an_earlier_one_resolved(
+    queue, tmp_path, monkeypatch
+):
+    queue.origin_appends("2026-11-09: logged on origin.\n")
+    queue.move_locally("2026-11-09: closed locally.\n")
+    with (queue.repo / "done" / "b.md").open("a") as fh:
+        fh.write("2026-11-10: second local commit.\n")
+    queue.commit(queue.repo, "second")
+    wt = queue.scratch(tmp_path)
+
+    assert Rebase.onto_origin(wt).run() == RebaseResult(True)
+
+    assert (
+        (wt / "done" / "b.md")
+        .read_text()
+        .endswith(
+            CAPTURED
+            + "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
+            + "2026-11-10: second local commit.\n"
+        )
+    )
+    assert git(wt, "rev-list", "--count", "origin/main..HEAD").strip() == "2"
+
+
+def test_a_brief_that_resolves_alongside_a_file_that_conflicts_aborts_as_a_conflict(
+    queue, tmp_path
+):
+    queue.write(queue.repo, "inbox/c.md", brief().replace("id: b", "id: c"))
+    queue.commit(queue.repo, "second brief")
+    git(queue.repo, "push", "-q", "origin", "main")
+    git(queue.other, "pull", "-q", "origin", "main")
+    queue.write(queue.other, "inbox/c.md", brief(goal="origin goal").replace("id: b", "id: c"))
+    with (queue.other / "inbox" / "b.md").open("a") as fh:
+        fh.write("2026-11-09: logged on origin.\n")
+    queue.commit(queue.other, "log b and edit c")
+    git(queue.other, "push", "-q", "origin", "main")
+    queue.write(queue.repo, "inbox/c.md", brief(goal="local goal").replace("id: b", "id: c"))
+    with (queue.repo / "inbox" / "b.md").open("a") as fh:
+        fh.write("2026-11-09: logged locally.\n")
+    queue.commit(queue.repo, "log b and edit c locally")
+    wt = queue.scratch(tmp_path)
+
+    result = Rebase.onto_origin(wt).run()
+
+    assert result == RebaseResult(False, conflict=("inbox/c.md",))
+    assert git(wt, "status", "--porcelain") == ""
+    assert "logged locally" in git(wt, "show", "HEAD:inbox/b.md")
+    assert "logged on origin" not in git(wt, "show", "HEAD:inbox/b.md")

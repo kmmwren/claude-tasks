@@ -14,13 +14,12 @@ import pathlib
 import re
 
 from deps import fm, parse_list
-from readiness import brief_missing_fields, raw_title, section
+from readiness import EXECUTION_LOG, brief_missing_fields, raw_title, section
 from transition import set_field
 from triage_sources import cited_sources
 
 GENERATED_BY = "inbox-triage"
 FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
-EXECUTION_LOG = re.compile(r"^##[ \t]+Execution log\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 
 
 @dataclasses.dataclass(frozen=True)

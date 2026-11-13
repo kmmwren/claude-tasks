@@ -15,6 +15,8 @@ from collections.abc import Sequence
 READY_FIELDS = ("goal", "criteria", "context")
 # What add_task writes into a brief that was given no context.
 PLACEHOLDER_CONTEXT = "_none recorded_"
+# The whole `## Execution log` section, heading included, up to the next `##` heading.
+EXECUTION_LOG = re.compile(r"^##[ \t]+Execution log\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 _CRITERION = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s*(.+?)\s*$", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # Templates write these where a field is still to be filled in.

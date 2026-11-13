@@ -1112,7 +1112,7 @@ def test_sync_reports_a_conflict_outside_the_log_and_keeps_local_commits(tmp_pat
     assert git(repo, "worktree", "list").stdout.count("\n") == 1
 
 
-def test_sync_refuses_the_union_when_origin_changed_the_brief_mid_rebase(
+def test_sync_refuses_the_union_when_origin_moves_again_after_the_rebase_began(
     tmp_path, monkeypatch, capsys
 ):
     repo, other = _seed_logged_brief(tmp_path)
@@ -1131,6 +1131,6 @@ def test_sync_refuses_the_union_when_origin_changed_the_brief_mid_rebase(
 
     assert git_sync.sync_commit_and_push("brief(b): done", root=repo, ids=["b"]) is False
 
-    assert "origin/main changed done/b.md since the rebase began" in capsys.readouterr().out
+    assert "origin moved again while rebasing" in capsys.readouterr().out
     assert "done/b.md" not in committed_files(repo, "origin/main")
     assert "closed locally" in git(repo, "show", "HEAD:done/b.md").stdout

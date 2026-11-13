@@ -15,8 +15,8 @@ import pathlib
 import re
 
 from deps import fm
-from readiness import raw_title
-from triage_brief import EXECUTION_LOG, FRONTMATTER
+from readiness import EXECUTION_LOG, raw_title
+from triage_brief import FRONTMATTER
 from triage_sources import GH_ISSUE, cited_sources
 
 ACTIVE_FOLDERS = ("inbox", "ready", "in-progress", "blocked", "parked")

@@ -44,6 +44,12 @@ _SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 _COMMENT = re.compile(r"(?:^|\s)#.*")
 
 
+def is_brief(path: str | os.PathLike[str]) -> bool:
+    """True if `path` names a task brief: a `.md` file directly inside a state directory."""
+    pure = pathlib.PurePath(path)
+    return pure.suffix == ".md" and pure.parent.name in TASK_DIRS
+
+
 def strip_comment(value: str) -> str:
     """Drop a frontmatter value's inline `#` comment. The shared cleaner for every parser."""
     return _COMMENT.sub("", value).strip()
