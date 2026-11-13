@@ -133,7 +133,7 @@ def _fetch_if_stale(root: pathlib.Path) -> None:
     except OSError:
         pass  # never fetched
     try:
-        _git(root, "fetch", "-q", "origin", "main", capture_output=True, timeout=NETWORK_TIMEOUT)
+        _fetch_origin(root, Deadline.in_(NETWORK_TIMEOUT))
     except subprocess.TimeoutExpired:
         print(
             f"  (fetch timed out after {NETWORK_TIMEOUT:.0f}s; using origin/main as last fetched.)"
