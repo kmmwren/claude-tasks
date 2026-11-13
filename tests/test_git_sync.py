@@ -1092,8 +1092,7 @@ def test_sync_unions_log_lines_when_a_ready_brief_moves_to_done_while_origin_log
     git(repo, "fetch", "-q", "origin")
     merged = git(repo, "show", "origin/main:done/b.md").stdout
     assert merged == _log_brief(status="done", tail=_HANDOFF) + (
-        "2026-11-10: first origin line.\n2026-11-11: second origin line.\n"
-        "2026-11-13: completed.\n"
+        "2026-11-10: first origin line.\n2026-11-11: second origin line.\n2026-11-13: completed.\n"
     )
     assert "ready/b.md" not in committed_files(repo, "origin/main")
     assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
@@ -1147,6 +1146,7 @@ def test_sync_aborts_when_both_sides_log_and_disagree_on_status(tmp_path, capsys
     assert "rebase conflict in inbox/b.md" in capsys.readouterr().out
     assert "status: blocked" in git(repo, "show", "HEAD:inbox/b.md").stdout
     assert "status: ready" in git(repo, "show", "origin/main:inbox/b.md").stdout
+
 
 def test_sync_refuses_the_union_when_origin_moves_again_after_the_rebase_began(
     tmp_path, monkeypatch, capsys
