@@ -1040,25 +1040,25 @@ def _log_brief(status="inbox", goal="g", log=_CAPTURED):
     return _LOG_BRIEF.format(status=status, goal=goal, log=log)
 
 
-def _seed_logged_brief(tmp_path):
+def _seed_logged_brief(tmp_path, status="inbox"):
     repo = make_repo(tmp_path)
-    (repo / "inbox" / "b.md").write_text(_log_brief())
+    (repo / status / "b.md").write_text(_log_brief(status=status))
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "seed")
     git(repo, "push", "-q", "origin", "main")
     return repo, _clone_other(tmp_path)
 
 
-def _origin_logs(other, line):
+def _origin_logs(other, line, status="inbox"):
     git(other, "pull", "-q", "origin", "main")
-    with (other / "inbox" / "b.md").open("a") as fh:
+    with (other / status / "b.md").open("a") as fh:
         fh.write(line)
     git(other, "commit", "-qam", "log line")
     git(other, "push", "-q", "origin", "main")
 
 
-def _move_to_done(repo, line):
-    git(repo, "mv", "inbox/b.md", "done/b.md")
+def _move_to_done(repo, line, status="inbox"):
+    git(repo, "mv", f"{status}/b.md", "done/b.md")
     (repo / "done" / "b.md").write_text(_log_brief(status="done", log=_CAPTURED + line))
 
 
@@ -1076,6 +1076,26 @@ def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path
         _CAPTURED + "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
     )
     assert "inbox/b.md" not in committed_files(repo, "origin/main")
+    assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
+
+
+def test_sync_unions_log_lines_when_a_ready_brief_moves_to_done_while_origin_logs_it(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path, status="ready")
+    _origin_logs(other, "2026-11-10: first origin line.\n", status="ready")
+    _origin_logs(other, "2026-11-11: second origin line.\n", status="ready")
+    _move_to_done(repo, "2026-11-13: completed.\n", status="ready")
+
+    assert git_sync.sync_commit_and_push("brief(b): done", root=repo, ids=["b"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert merged == _log_brief(
+        status="done",
+        log=_CAPTURED
+        + "2026-11-10: first origin line.\n2026-11-11: second origin line.\n"
+        + "2026-11-13: completed.\n",
+    )
+    assert "ready/b.md" not in committed_files(repo, "origin/main")
     assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
 
 
