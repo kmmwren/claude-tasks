@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import _concurrency as C
+import _log_conflict
 import git_sync
 import pytest
 from _concurrency import Deadline
@@ -1027,3 +1028,109 @@ def test_a_held_lock_releases_once_and_frees_the_flock(tmp_path):
 def test_a_deadline_caps_a_wait_at_what_remains():
     assert C.Deadline.in_(0).cap(5) == 0
     assert 0 < C.Deadline.in_(100).cap(5) <= 5
+
+
+# ── a rebase conflict confined to execution-log appends resolves as their union ──
+
+_LOG_BRIEF = "---\nid: b\nstatus: {status}\n---\n\n## Goal\n\n{goal}\n\n## Execution log\n\n{log}"
+_CAPTURED = "2026-11-09: captured.\n"
+
+
+def _log_brief(status="inbox", goal="g", log=_CAPTURED):
+    return _LOG_BRIEF.format(status=status, goal=goal, log=log)
+
+
+def _seed_logged_brief(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "b.md").write_text(_log_brief())
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    git(repo, "push", "-q", "origin", "main")
+    return repo, _clone_other(tmp_path)
+
+
+def _origin_logs(other, line):
+    git(other, "pull", "-q", "origin", "main")
+    with (other / "inbox" / "b.md").open("a") as fh:
+        fh.write(line)
+    git(other, "commit", "-qam", "log line")
+    git(other, "push", "-q", "origin", "main")
+
+
+def _move_to_done(repo, line):
+    git(repo, "mv", "inbox/b.md", "done/b.md")
+    (repo / "done" / "b.md").write_text(_log_brief(status="done", log=_CAPTURED + line))
+
+
+def test_sync_unions_log_lines_when_origin_logged_a_brief_moved_locally(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path)
+    _origin_logs(other, "2026-11-09: logged on origin.\n")
+    _move_to_done(repo, "2026-11-09: closed locally.\n")
+
+    assert git_sync.sync_commit_and_push("brief(b): done", root=repo, ids=["b"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert "status: done" in merged
+    assert merged.endswith(
+        _CAPTURED + "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n"
+    )
+    assert "inbox/b.md" not in committed_files(repo, "origin/main")
+    assert git(repo, "status", "-sb").stdout.splitlines()[0] == "## main...origin/main"
+
+
+def test_sync_unions_across_several_replayed_commits(tmp_path):
+    repo, other = _seed_logged_brief(tmp_path)
+    _origin_logs(other, "2026-11-09: logged on origin.\n")
+    _move_to_done(repo, "2026-11-09: closed locally.\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "move and log")
+    with (repo / "done" / "b.md").open("a") as fh:
+        fh.write("2026-11-10: later local line.\n")
+
+    assert git_sync.sync_commit_and_push("brief(b): log", root=repo, ids=["b"]) is True
+
+    git(repo, "fetch", "-q", "origin")
+    merged = git(repo, "show", "origin/main:done/b.md").stdout
+    assert merged.endswith(
+        "2026-11-09: logged on origin.\n2026-11-09: closed locally.\n2026-11-10: later local line.\n"
+    )
+
+
+def test_sync_reports_a_conflict_outside_the_log_and_keeps_local_commits(tmp_path, capsys):
+    repo, other = _seed_logged_brief(tmp_path)
+    git(other, "pull", "-q", "origin", "main")
+    (other / "inbox" / "b.md").write_text(_log_brief(goal="origin rewrote the goal"))
+    git(other, "commit", "-qam", "edit goal")
+    git(other, "push", "-q", "origin", "main")
+    (repo / "inbox" / "b.md").write_text(_log_brief(goal="local rewrote the goal"))
+
+    assert git_sync.sync_commit_and_push("brief(b): edit", root=repo, ids=["b"]) is False
+
+    assert "rebase conflict in inbox/b.md" in capsys.readouterr().out
+    assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
+
+
+def test_sync_refuses_the_union_when_origin_changed_the_brief_mid_rebase(
+    tmp_path, monkeypatch, capsys
+):
+    repo, other = _seed_logged_brief(tmp_path)
+    _origin_logs(other, "2026-11-09: logged on origin.\n")
+    _move_to_done(repo, "2026-11-09: closed locally.\n")
+    real_run = _log_conflict._run
+
+    def origin_moves_after_the_rebase_starts(worktree, *args):
+        done = real_run(worktree, *args)
+        if args[:1] == ("rebase",) and args[1] not in ("--abort", "--continue"):
+            _origin_logs(other, "2026-11-10: logged after the snapshot.\n")
+            git(repo, "fetch", "-q", "origin")
+        return done
+
+    monkeypatch.setattr(_log_conflict, "_run", origin_moves_after_the_rebase_starts)
+
+    assert git_sync.sync_commit_and_push("brief(b): done", root=repo, ids=["b"]) is False
+
+    assert "origin/main changed done/b.md since the rebase began" in capsys.readouterr().out
+    assert "done/b.md" not in committed_files(repo, "origin/main")
+    assert "closed locally" in git(repo, "show", "HEAD:done/b.md").stdout
