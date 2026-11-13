@@ -7,8 +7,10 @@ for the whole burst. `--sweep` is the timer's net: it commits what no writer nam
 """
 
 import contextlib
+import datetime
 import pathlib
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -200,9 +202,10 @@ def _short_log(root: pathlib.Path, rev_range: str) -> str:
     return "; ".join(out.splitlines()) or "none"
 
 
-def _report_divergence(root: pathlib.Path, why: str) -> None:
+def _report_divergence(root: pathlib.Path, why: str, parked: str = "") -> None:
     print(
-        f"  (push deferred: {why}. Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
+        f"  (push deferred: {why}. {parked + '. ' if parked else ''}"
+        f"Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
         f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
         f"Resolve on a detached worktree, never the checked-out main: {_recovery_steps(root)}.)"
     )
@@ -252,10 +255,44 @@ def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
             _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
 
 
+def _wip_branch() -> str:
+    """The branch an unresolvable divergence is parked on: one per host and day, so reruns reuse it."""
+    host = re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname().split(".")[0]) or "host"
+    return f"wip/queue-sync-{host}-{datetime.date.today().isoformat()}"
+
+
+def _park_local_commits(root: pathlib.Path, deadline: Deadline) -> str:
+    """Push the local commits to the wip branch so origin holds them; say where they went.
+
+    Only this sync writes the branch and local main only grows, so a forced push is a fast-forward
+    of the same history or a safe replace. A failed push leaves the commits local, and says so.
+    """
+    branch = _wip_branch()
+    try:
+        parked = _git(
+            root,
+            "push",
+            "-q",
+            "--force",
+            "origin",
+            f"HEAD:refs/heads/{branch}",
+            capture_output=True,
+            text=True,
+            timeout=deadline.cap(NETWORK_TIMEOUT),
+        )
+    except subprocess.TimeoutExpired:
+        return f"ALERT: could not park the local commits on origin/{branch} (push timed out)"
+    if parked.returncode != 0:
+        return (
+            f"ALERT: could not park the local commits on origin/{branch}: {parked.stderr.strip()}"
+        )
+    return f"ALERT: local commits parked on origin/{branch} for a human to merge"
+
+
 def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -> bool:
     rebased = Rebase.onto_origin(wt).run()
     if not rebased.completed:
-        _report_divergence(root, rebased.reason)
+        _report_divergence(root, rebased.reason, _park_local_commits(root, deadline))
         return False
     pushed = _git(
         wt,
