@@ -147,24 +147,20 @@ def test_a_brief_without_a_log_section_is_a_conflict():
     assert merge_log_appends(bare, bare, bare) is None
 
 
-def test_dated_lines_both_sides_append_below_a_later_section_are_unioned_upstream_first():
-    def with_notes(*lines):
-        return (
-            brief("2026-11-09: captured.") + "\n## Notes\n\nn\n" + "".join(f"{x}\n" for x in lines)
-        )
+def below_notes(*lines):
+    """A logged brief with a later Notes section and `lines` appended below it."""
+    return brief("2026-11-09: captured.") + "\n## Notes\n\nn\n" + "".join(f"{x}\n" for x in lines)
 
+
+def test_dated_lines_both_sides_append_below_a_later_section_are_unioned_upstream_first():
     merged = merge_log_appends(
-        with_notes(), with_notes("2026-11-10: upstream."), with_notes("2026-11-10: replayed.")
+        below_notes(), below_notes("2026-11-10: upstream."), below_notes("2026-11-10: replayed.")
     )
-    assert merged == with_notes("2026-11-10: upstream.", "2026-11-10: replayed.")
+    assert merged == below_notes("2026-11-10: upstream.", "2026-11-10: replayed.")
 
 
 def test_an_undated_line_appended_below_a_later_section_is_a_conflict():
-    def with_notes(*lines):
-        return (
-            brief("2026-11-09: captured.") + "\n## Notes\n\nn\n" + "".join(f"{x}\n" for x in lines)
-        )
-
     assert (
-        merge_log_appends(with_notes(), with_notes("prose"), with_notes("2026-11-10: x.")) is None
+        merge_log_appends(below_notes(), below_notes("prose"), below_notes("2026-11-10: x."))
+        is None
     )

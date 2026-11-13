@@ -5,7 +5,8 @@ Two writers (append_log.py pushing from a worktree of origin, a local writer com
 queue tree) each add a line at the end of the same brief, so git sees overlapping edits and
 refuses to merge. The log is append-only and each line is dated, so the right merge keeps the
 base entries exactly as they were and adds both sides' new entries after them in date order.
-Any change elsewhere in the brief, or to an existing entry, is a real conflict left to a human.
+Dated lines both sides append below a later section merge the same way. Any other change
+elsewhere in the brief, or to an existing entry, is a real conflict left to a human.
 """
 
 import re
@@ -114,8 +115,8 @@ def _new_in(replayed: tuple[str, ...], upstream: tuple[str, ...]) -> list[str]:
 def merge_log_appends(base: str, upstream: str, replayed: str) -> str | None:
     """Merge `upstream` and `replayed` onto `base`, or None when they differ by more than appends.
 
-    None means: the text outside the log changed on both sides, or a side did not keep the base
-    entries as an exact prefix. The base entries stay in place; both sides' appended entries
+    None means: the text outside the log changed on both sides by more than appended dated lines,
+    or a side did not keep the base entries as an exact prefix. The base entries stay in place; both sides' appended entries
     follow in date order, `upstream` first on a tie.
     """
     parsed = (LoggedBrief.parse(text) for text in (base, upstream, replayed))
