@@ -98,11 +98,13 @@ its digest at <path>`), the digest is the input in place of the session:
 - **Name:** the digest's `# Handoff digest: <name> (<sid>)` heading.
 - **Judgement layer:** Step 2 reads the digest's `## Her prompts`, `## Last compaction
   summaries` and `## Recent assistant text` in place of the conversation.
-- **Provenance:** each brief's `--context` opens with
-  `From session <sid> (<name>) via external handoff; re-check before acting.`
-- **Closing:** close each source item with
-  `python3 ~/.claude/scripts/handoff_external.py close <sid> <id> <brief path>` instead of
-  `TaskUpdate`, which edits the current session's ledger, not the source's.
+- **Filing and closing:** file each brief with
+  `python3 ~/.claude/scripts/handoff_external.py brief <sid> --item <id> [--item <id> ...] -- <add_task.py args>`.
+  It opens the brief's `--context` with
+  `From session <sid> (<name>) via external handoff; re-check before acting.` and records the
+  filed or merged-into path on every named item. A brief sharpened by hand is recorded with
+  `handoff_external.py close <sid> <id> <brief path>`. Never `TaskUpdate`, which edits the
+  current session's ledger, not the source's.
 - **Customer data:** briefs never carry customer security data copied from the digest;
   summarise as conclusions.
 
