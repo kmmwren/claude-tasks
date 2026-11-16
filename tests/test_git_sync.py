@@ -1337,3 +1337,18 @@ def test_a_wip_push_that_fails_is_alerted_and_the_commits_stay_local(
     assert "ALERT: could not park the local commits on origin/wip/queue-sync-" in out
     assert reason in out
     assert "local rewrote the goal" in git(repo, "show", "HEAD:inbox/b.md").stdout
+
+
+def test_a_missing_sweep_time_scale_keeps_the_real_budget_without_a_warning(capsys):
+    assert git_sync._sweep_time_scale(None) == 1.0
+    assert capsys.readouterr().err == ""
+
+
+def test_a_positive_sweep_time_scale_shrinks_the_budget():
+    assert git_sync._sweep_time_scale("0.05") == 0.05
+
+
+@pytest.mark.parametrize("raw", ["abc", "0", "-2"])
+def test_a_bad_sweep_time_scale_warns_and_keeps_the_real_budget(raw, capsys):
+    assert git_sync._sweep_time_scale(raw) == 1.0
+    assert "CLAUDE_TASKS_SWEEP_TIME_SCALE" in capsys.readouterr().err
