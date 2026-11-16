@@ -10,6 +10,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -954,6 +955,67 @@ def test_a_hung_push_fails_with_the_dirty_mark_left_for_the_next_sweep(
     assert "push timed out" in capsys.readouterr().out
     assert PushState(repo).is_dirty()
     assert PushState(repo).try_lock_pusher() is not None
+
+
+_TIME_SCALE = 0.05  # SWEEP_BUDGET 5.5 s, PUSH_RESERVE 2 s
+_HOLD_PUSHER_LOCK = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from _push_state import PushState
+lock = PushState(Path(sys.argv[2])).try_lock_pusher()
+print("locked", flush=True)
+time.sleep(float(sys.argv[3]))
+"""
+
+
+@pytest.mark.parametrize(
+    "hold_seconds", [60.0, 1.0], ids=["lock-held-throughout", "lock-freed-early"]
+)
+def test_a_sweep_subprocess_exits_within_its_budget_with_a_held_lock_and_a_hung_push(
+    tmp_path, monkeypatch, hold_seconds
+):
+    """A real `git_sync.py --sweep` returns inside SWEEP_BUDGET whether it waits out a held pusher lock or pushes into a hung remote."""
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "fresh.md").write_text("1")
+    shim_dir = tmp_path / "hang"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'sub="$1"; [ "$1" = "-C" ] && sub="$3"\n'
+        '[ "$sub" = push ] && exec sleep 3600\n'
+        f'exec "{shutil.which("git")}" "$@"\n'
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_TASKS_SWEEP_TIME_SCALE", str(_TIME_SCALE))
+    budget = 110.0 * _TIME_SCALE
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_PUSHER_LOCK, str(SCRIPTS), str(repo), str(hold_seconds)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "locked"
+        started = time.monotonic()
+        try:
+            subprocess.run(
+                [sys.executable, str(SCRIPTS / "git_sync.py"), "--sweep", str(repo)],
+                capture_output=True,
+                text=True,
+                timeout=budget * 3,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"the sweep outlived three times its {budget:.1f}s budget")
+        elapsed = time.monotonic() - started
+    finally:
+        holder.kill()
+        holder.wait()
+
+    assert elapsed < budget + 1.5
+    assert PushState(repo).is_dirty()
+    assert _remote_head(repo) != git(repo, "rev-parse", "HEAD").stdout
 
 
 def test_a_hung_rebase_fetch_fails_the_push_and_removes_the_scratch_worktree(

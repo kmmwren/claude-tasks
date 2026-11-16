@@ -8,6 +8,7 @@ for the whole burst. `--sweep` is the timer's net: it commits what no writer nam
 
 import contextlib
 import datetime
+import os
 import pathlib
 import re
 import socket
@@ -341,8 +342,10 @@ def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
 
 SETTLE_MAX = 10.0  # longest a pusher waits for in-flight writers before pushing anyway
 PUSH_WAIT = 90.0  # longest a synchronous push waits for a running pusher
-SWEEP_BUDGET = 110.0  # a sweep's whole run, under dispatch's 120 s flush timeout
-PUSH_RESERVE = 40.0  # of that budget, the most one drain may spend settling, fetching and pushing
+# Read once at load so a subprocess test can run the real sweep on a seconds-long budget.
+_TIME_SCALE = float(os.environ.get("CLAUDE_TASKS_SWEEP_TIME_SCALE", "1"))
+SWEEP_BUDGET = 110.0 * _TIME_SCALE  # a sweep's whole run, under dispatch's 120 s flush timeout
+PUSH_RESERVE = 40.0 * _TIME_SCALE  # of that budget, the most one drain may spend settling, fetching and pushing
 REBASE_LOCK_WAIT = 30.0  # longest a rejected push waits for the queue lock before deferring
 
 
