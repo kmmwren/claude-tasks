@@ -327,6 +327,16 @@ def test_main_text_renders_all_flags(tmp_path, monkeypatch, capsys):
     assert "→1" in out  # blk unlocks one brief
 
 
+def test_not_before_in_the_future_is_not_actionable(tmp_path):
+    held = _brief("held").replace("due: \n", "due: \nnot_before: 2026-06-05\n")
+    started = _brief("started").replace("due: \n", "due: \nnot_before: 2026-06-02\n")
+    root = _queue(tmp_path, [("ready", "held.md", held), ("ready", "started.md", started)])
+    by_id = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    assert by_id["held"]["_actionable"] is False
+    assert "not before 2026-06-05" in prioritise._flags(by_id["held"])
+    assert by_id["started"]["_actionable"] is True
+
+
 def test_fm_strips_an_inline_comment_from_a_populated_value():
     assert prioritise.fm("---\nstatus: ready # ready | done\n---\n")["status"] == "ready"
 

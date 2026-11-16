@@ -40,6 +40,7 @@ context that's already discoverable.
 | `importance` | 1–4 (default 3 unless clearly urgent/strategic) |
 | `autonomy` | Honest: `full` ONLY if a future agent can complete end-to-end with zero user input |
 | `estimated-effort` | xs / s / m / l / xl |
+| `not_before` | ISO date; the brief is not offered before it (omit unless the work is waiting on a date) |
 | `domain` | one of the domains in `tasks.toml` |
 | `tags` | free-form labels (e.g. `depends:<other-id>`) |
 | `assignee` | leave empty — enrichment doesn't claim work; `action-task` sets it |

@@ -227,6 +227,12 @@ def days_until_due(brief: dict[str, Any], today: datetime.date) -> int | None:
     return (due - today).days if due else None
 
 
+def not_before(brief: dict[str, Any], today: datetime.date) -> datetime.date | None:
+    """The `not_before:` date while still in the future; a brief gated on a date cannot start before it."""
+    start = _date(brief.get("not_before", "") or "")
+    return start if start and start > today else None
+
+
 def age_days(brief: dict[str, Any], today: datetime.date) -> int:
     """Days since `created:`, else since the date an id like 2026-11-04-x starts with."""
     born = _date(brief.get("created", "") or "") or _date(brief.get("id", "") or "")
@@ -485,8 +491,10 @@ def _annotate(f: pathlib.Path, b: dict[str, Any], ctx: _RankContext) -> dict[str
             "_file": f.name,
             "_lane": Lane.FLEET_BLOCKER if blocker else lane_of(b, ctx.today, ctx.weights),
             "_move": move_of(b, blocked, ctx.weights),
+            "_not_before": not_before(b, ctx.today),
             "_actionable": b.get("autonomy") == "full"
             and not blocked
+            and not not_before(b, ctx.today)
             and is_runnable_in_context(b, ctx.context),
         }
     )
@@ -585,6 +593,8 @@ def _flags(b: dict[str, Any]) -> str:
             flags += f" ⛔blocked({', '.join(b['_unmet']) or b.get('autonomy', '')})"
         elif b.get("autonomy") != "full":
             flags += f" 🙋{b.get('autonomy', '')}"
+        elif b.get("_not_before"):
+            flags += f" ⏳not before {b['_not_before']}"
     if b["_lead_urgent"]:
         flags += " ⏱lead"
     if b["_unlocks"]:
@@ -630,6 +640,7 @@ def _json_row(b: dict[str, Any]) -> dict[str, Any]:
         "unlocks": b["_unlocks"],
         "lead_urgent": b["_lead_urgent"],
         "actionable": b["_actionable"],
+        "not_before": str(b["_not_before"] or ""),
         "score_additive": b["_score_additive"],
         "score_wsjf": b["_score_wsjf"],
         "rank_additive": b["_rank_additive"],

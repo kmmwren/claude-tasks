@@ -45,6 +45,7 @@ importance: # 1 (critical) | 2 (high) | 3 (medium) | 4 (low)
 autonomy: # full | needs-input | blocked
 estimated-effort: # xs (<30min) | s (<2h) | m (<1day) | l (<1week) | xl (>1week)
 due: # OPTIONAL YYYY-MM-DD hard deadline. Empty = no deadline.
+not_before: # OPTIONAL ISO date; the brief is not offered before it. Empty = startable now.
 domain: # OPTIONAL category. Define the allowed set in tasks.toml [domains].
 tags: [] # OPTIONAL free-form labels, e.g. [security, depends:other-brief-id].
 parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-level.
