@@ -358,7 +358,9 @@ def _sweep_time_scale(raw: str | None) -> float:
 
 _TIME_SCALE = _sweep_time_scale(os.environ.get("CLAUDE_TASKS_SWEEP_TIME_SCALE"))
 SWEEP_BUDGET = 110.0 * _TIME_SCALE  # a sweep's whole run, under dispatch's 120 s flush timeout
-PUSH_RESERVE = 40.0 * _TIME_SCALE  # of that budget, the most one drain may spend settling, fetching and pushing
+PUSH_RESERVE = (
+    40.0 * _TIME_SCALE
+)  # of that budget, the most one drain may spend settling, fetching and pushing
 REBASE_LOCK_WAIT = 30.0  # longest a rejected push waits for the queue lock before deferring
 
 
