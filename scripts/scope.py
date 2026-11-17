@@ -1,4 +1,4 @@
-"""The scopes a ranking runs over: all | tag:<t> | project:<slug> | session:<id>.
+"""The scopes a ranking runs over: all | tag:<t> | project:<slug> | session:<id> | ids:<slug>,...
 
 prioritise.py filters and weights by scope, and rank.py passes its scope through, so both read
 one parser. A scope's `name` is also the key of its `[priority.scope_weights]` table.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import abc
 import os
 import pathlib
+from collections.abc import Iterable
 from typing import Protocol
 
 from _paths import SESSION_ENV, session_root
@@ -16,6 +17,9 @@ from _paths import SESSION_ENV, session_root
 
 class Scoped(Protocol):
     """What a scope reads from a brief to decide whether it belongs."""
+
+    @property
+    def id(self) -> str: ...
 
     @property
     def tags(self) -> frozenset[str]: ...
@@ -62,6 +66,25 @@ class ProjectScope(Scope):
         return brief.project == self.value or f"project:{self.value}" in brief.tags
 
 
+class IdsScope(Scope):
+    """Exactly the named briefs, so a session bound to a fixed set can pull nothing else."""
+
+    name = "ids"
+    SEPARATOR = ","
+
+    @classmethod
+    def of(cls, slugs: Iterable[str]) -> IdsScope:
+        return cls(cls.SEPARATOR.join(slugs))
+
+    @property
+    def slugs(self) -> frozenset[str]:
+        parts = (part.strip() for part in self.value.split(self.SEPARATOR))
+        return frozenset(part for part in parts if part)
+
+    def admits(self, brief: Scoped) -> bool:
+        return brief.id in self.slugs
+
+
 class SessionScope(AllScope):
     """Everything in the queue a session is bound to (its `sessions/<id>.toml`)."""
 
@@ -75,15 +98,13 @@ class SessionScope(AllScope):
 
 
 SCOPES: dict[str, type[Scope]] = {
-    cls.name: cls for cls in (AllScope, TagScope, ProjectScope, SessionScope)
+    cls.name: cls for cls in (AllScope, TagScope, ProjectScope, SessionScope, IdsScope)
 }
-SCOPE_HELP = "all | tag:<t> | project:<slug> | session:<id>"
+SCOPE_HELP = "all | tag:<t> | project:<slug> | session:<id> | ids:<slug>,..."
 
 
 def parse_scope(text: str) -> Scope:
     name, _, value = text.partition(":")
     if name not in SCOPES or (name != "all" and not value):
-        raise SystemExit(
-            f"--scope must be all, tag:<t>, project:<slug> or session:<id>, not {text!r}"
-        )
+        raise SystemExit(f"--scope must be one of {SCOPE_HELP}, not {text!r}")
     return SCOPES[name](value)

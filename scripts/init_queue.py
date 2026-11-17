@@ -29,7 +29,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from _concurrency import atomic_write
+import _toml
 from _paths import CONFIG_FILE, TASK_DIRS, binding_path, is_queue, require_queue
 from requirements_register import REGISTER_FILE, stub
 
@@ -129,7 +129,7 @@ class SessionLink:
 
     def bind(self, root: pathlib.Path, env: Mapping[str, str] | None = None) -> pathlib.Path:
         path = binding_path(self.id, env)
-        atomic_write(path, f"root = {json.dumps(str(root.resolve()))}\n")
+        _toml.update(path, {"root": str(root.resolve())}, existing=_toml.read_or_empty)
         return path
 
 

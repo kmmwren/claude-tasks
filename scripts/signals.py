@@ -32,6 +32,10 @@ class Subject:
     leverage: int
 
     @property
+    def id(self) -> str:
+        return str(self.fields.get("id", "") or "").strip()
+
+    @property
     def project(self) -> str:
         return str(self.fields.get("project", "") or "").strip()
 

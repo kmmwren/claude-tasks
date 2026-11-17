@@ -91,7 +91,7 @@ PRIORITY_DEFAULTS: dict[str, Any] = {
             Signal.SHIPS_PR.value: 800,
             Signal.CLEARS_BLOCKER.value: 800,
         }
-        for kind in ("all", "tag", "session")
+        for kind in ("all", "tag", "session", "ids")
     }
     | {
         "project": {

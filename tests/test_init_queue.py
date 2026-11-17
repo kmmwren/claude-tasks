@@ -106,3 +106,14 @@ def test_fold_to_must_be_a_queue(tmp_path):
 def test_session_and_fold_to_go_together(tmp_path):
     with pytest.raises(SystemExit):
         init_queue.main([str(tmp_path / "q"), "--session", "s1"])
+
+
+def test_session_binding_heals_an_unreadable_session_file(tmp_path, capsys):
+    link, env = _session(tmp_path)
+    (tmp_path / "sessions").mkdir()
+    (tmp_path / "sessions" / "s1.toml").write_text("root = \n")
+    root = init_queue.init_queue(tmp_path / "child", session=link, env=env)
+    assert (
+        _paths.resolve_root(env={**env, _paths.SESSION_ENV: "s1"}, cwd=tmp_path) == root.resolve()
+    )
+    assert "not valid TOML, rewriting it" in capsys.readouterr().err
