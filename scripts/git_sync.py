@@ -706,6 +706,36 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     return push_now(root, wait=deadline.reserving(PUSH_RESERVE).cap(PUSH_WAIT))
 
 
+def _names_a_file(arg: str) -> bool:
+    """Brief ids are bare slugs, so a separator or a `.md` suffix marks a path."""
+    return pathlib.PurePath(arg).name != arg or arg.endswith(".md")
+
+
+def brief_id_for(arg: str) -> str:
+    """The id a CLI argument names: itself, or the stem of the brief file it points at.
+
+    A path must be `<queue>/<state dir>/<id>.md`. It need not exist, so a brief another tool just
+    moved or deleted can still be committed by the path it used to have. Anything else exits with
+    the reason, never an empty commit.
+    """
+    if not _names_a_file(arg):
+        return arg
+    root = resolve_root().resolve()
+    try:
+        rel = pathlib.Path(arg).expanduser().resolve().relative_to(root)
+    except ValueError:
+        sys.exit(
+            f"git_sync.py: {arg} is outside the queue root {root}; "
+            "pass a brief id or a path inside it."
+        )
+    if len(rel.parts) != 2 or not is_brief(rel):
+        sys.exit(f"git_sync.py: {arg} is not a brief: expected <state dir>/<id>.md under {root}.")
+    return rel.stem
+
+
+USAGE = "Usage: python scripts/git_sync.py '<commit-message>' [brief-id-or-path ...]"
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "--sweep":
@@ -716,11 +746,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     # A flag in the message slot would otherwise be committed and pushed as the message.
     if not argv or argv[0].startswith("-"):
-        print(
-            "Usage: python scripts/git_sync.py '<commit-message>' [brief-id ...]", file=sys.stderr
-        )
+        print(USAGE, file=sys.stderr)
         sys.exit(0 if argv and argv[0] in ("-h", "--help") else 1)
-    sync_commit(argv[0], ids=argv[1:])
+    sync_commit(argv[0], ids=[brief_id_for(arg) for arg in argv[1:]])
 
 
 if __name__ == "__main__":

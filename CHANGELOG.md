@@ -208,6 +208,10 @@
   queue warns once, naming the file as `<source label>/tasks.toml` rather than its cache path.
 - **Roll-up omission messages no longer carry the local queue path.** A queue that cannot be read is
   named by its repository and queue path only.
+- **`git_sync.py '<message>' <path>` commits the brief the path names.** A trailing argument was only ever
+  read as an id, so a path to a brief in any state folder matched nothing and committed nothing. A path
+  now resolves to its brief's id; one outside the queue root, or not `<state dir>/<id>.md`, exits 1 with
+  the reason before anything is staged.
 - **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits
   onto `origin/main` conflicts only because two writers each appended to one brief's Execution log
   (typically `append_log.py` on origin against a local move to `done/`), the file resolves as the base
