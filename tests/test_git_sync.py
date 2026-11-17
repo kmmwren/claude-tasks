@@ -339,6 +339,78 @@ def test_cli_stages_a_named_deletion(tmp_path, monkeypatch):
     assert "ready/mine.md" not in committed_files(repo)
 
 
+@pytest.fixture
+def cli_queue(tmp_path, monkeypatch):
+    """A repo with two dirty briefs and the CLI pointed at it, run from an unrelated cwd."""
+    repo = make_repo(tmp_path)
+    (repo / "ready" / "mine.md").write_text("mine")
+    (repo / "ready" / "theirs.md").write_text("theirs")
+    monkeypatch.setattr(git_sync, "resolve_root", lambda: repo)
+    monkeypatch.chdir(tmp_path)
+    return repo
+
+
+def test_cli_accepts_an_absolute_brief_path(cli_queue):
+    git_sync.main(["brief(mine): captured", str(cli_queue / "ready" / "mine.md")])
+
+    assert "ready/mine.md" in committed_files(cli_queue)
+    assert "ready/theirs.md" not in committed_files(cli_queue)
+
+
+def test_cli_accepts_a_relative_brief_path_from_the_cwd(cli_queue, monkeypatch):
+    monkeypatch.chdir(cli_queue / "ready")
+
+    git_sync.main(["brief(mine): captured", "./mine.md"])
+
+    assert "ready/mine.md" in committed_files(cli_queue)
+    assert "ready/theirs.md" not in committed_files(cli_queue)
+
+
+def test_cli_path_commits_a_brief_that_moved_out_from_under_it(cli_queue):
+    _seed_brief(cli_queue, "inbox", "moved")
+    (cli_queue / "inbox" / "moved.md").rename(cli_queue / "done" / "moved.md")
+    (cli_queue / "ready" / "other.md").write_text("other")
+
+    git_sync.main(["brief(moved): done", str(cli_queue / "inbox" / "moved.md")])
+
+    assert "done/moved.md" in committed_files(cli_queue)
+    assert "inbox/moved.md" not in committed_files(cli_queue)
+    assert "ready/other.md" not in committed_files(cli_queue)
+
+
+def test_cli_rejects_a_path_outside_the_queue_root(cli_queue, tmp_path):
+    stray = tmp_path / "elsewhere" / "ready" / "mine.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("stray")
+    before = git(cli_queue, "rev-parse", "HEAD").stdout
+
+    with pytest.raises(SystemExit) as exc:
+        git_sync.main(["brief(mine): captured", str(stray)])
+
+    assert "outside the queue root" in str(exc.value)
+    assert git(cli_queue, "rev-parse", "HEAD").stdout == before
+
+
+@pytest.mark.parametrize(
+    "rel", ["ready/notes.txt", "mine.md", "ready/sub/mine.md", "scripts/mine.md"]
+)
+def test_cli_rejects_a_path_that_is_not_a_brief(cli_queue, rel):
+    with pytest.raises(SystemExit) as exc:
+        git_sync.main(["brief(mine): captured", str(cli_queue / rel)])
+
+    assert "is not a brief" in str(exc.value)
+
+
+def test_cli_keeps_a_bare_id_working_without_resolving_the_root(monkeypatch):
+    monkeypatch.setattr(git_sync, "resolve_root", lambda: pytest.fail("an id needs no root"))
+    seen = {}
+    monkeypatch.setattr(git_sync, "sync_commit", lambda msg, ids: seen.update(ids=list(ids)))
+
+    git_sync.main(["msg", "brief-a", "brief-b"])
+
+    assert seen == {"ids": ["brief-a", "brief-b"]}
+
+
 # ── a brief whose id already lives in another state dir is never re-created ───
 
 
