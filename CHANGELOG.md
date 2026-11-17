@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- **`resume_prompt.py` prints the successor prompt for a long-running session.** At the end of a
+  session handoff it rebuilds the paste-ready resume prompt from the live ledger (open items, in
+  progress first, each with its `metadata.brief` and blocker) and the long-running registry's
+  mission; an unreadable registry, job state or ledger file warns and is skipped.
+- **`handoff` also hands off running agents and background tasks.** Step 1 lists the session's
+  background `Agent` and `run_in_background` work with no completion yet, writes each one's brief
+  (what it was asked, its output file, how to collect or re-run it) into the item it serves, and
+  records them in the ledger item's `metadata.agents`; `resume_prompt.py` prints them under the item.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by

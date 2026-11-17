@@ -155,6 +155,27 @@ unless the session is long-running, where the item stays open with `metadata.bri
 A handoff ends this session's ownership; an item left open makes the session keep
 claiming and chasing work that now lives in the queue.
 
+### Running agents and background tasks
+
+Clearing the session loses any background `Agent` or `run_in_background` Bash command that is
+still running, so hand those off too. List every one this session launched that has no
+completion notification yet. Never wait for it, stop it or work its result during the handoff.
+For each, add a `## Running background work` section to the brief of the item it serves (the
+brief's `--context` when you file it now, a sharpen of the existing brief otherwise; an agent
+that serves no item becomes its own brief). The section says:
+
+- **kind and name:** `agent` or `task`, and its description or agent id.
+- **asked:** one line of what it was asked to do.
+- **output:** the output file path from its launch result.
+- **collect:** how the successor gets the result: read the output file; message the agent by
+  id if it may still be alive; otherwise re-run it with the same prompt.
+
+Also record the same four fields on the ledger item, so the successor prompt prints them
+under it: `TaskUpdate` with `metadata.agents` = a list of
+`{"kind": "agent", "name": "...", "asked": "...", "output": "...", "collect": "..."}`
+(set it in the same call that closes the item, or on the open item for a long-running
+session).
+
 ## Step 2 — The judgement layer (discussed but never tracked)
 
 Now re-read the conversation and capture the **follow-ups that never made it into a todo**
@@ -198,6 +219,18 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
 If no direction is given, behave as the default sections above (everything to `inbox/`).
 
 ## Step 4 — Report (quiet, tiny)
+
+For a session handoff (not an artifact, Slack or digest input), end the report with the
+successor prompt in a fenced block, ready to paste into the next session, after the ledger
+carries every `metadata.brief`:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resume_prompt.py"
+```
+
+It rebuilds the prompt from the live ledger and the long-running registry every time, listing
+each item's running agents and background tasks beneath it; never write it by hand. It lists
+open items only, so it serves long-running sessions, whose items stay open.
 
 One short line, never the whole pile. Name the direction if one was given. e.g.
 *"Parked 6 open items + 2 follow-ups under '<note>'; resume with `/tasks-next` when ready."*
