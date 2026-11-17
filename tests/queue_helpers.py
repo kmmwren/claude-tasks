@@ -89,14 +89,21 @@ def inbox_text(
     tags: str = "[]",
     parent: str = "",
     importance: str = "3",
+    status: str = "inbox",
+    extra: str = "",
+    ticked: bool = False,
 ) -> str:
-    """An inbox brief as add_task files it: stub fields unless given."""
+    """An inbox brief as add_task files it: stub fields unless given.
+
+    `extra` is frontmatter lines, each ending in a newline (`updated: 2026-10-01`), added verbatim.
+    """
     title = title or f"Title of {bid}"
-    checks = "\n".join(f"- [ ] {c}" for c in criteria) or f"- [ ] {title} is done."
+    mark = "x" if ticked else " "
+    checks = "\n".join(f"- [{mark}] {c}" for c in criteria) or f"- [{mark}] {title} is done."
     return f"""---
 id: {bid}
 title: {title}
-status: inbox
+status: {status}
 type: todo
 importance: {importance}
 autonomy: full
@@ -104,7 +111,7 @@ domain: work
 tags: {tags}
 parent: {parent}
 source: claude
----
+{extra}---
 
 ## Goal
 

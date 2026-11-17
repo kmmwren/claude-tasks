@@ -31,7 +31,7 @@ import json
 import pathlib
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
@@ -273,6 +273,17 @@ def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
         )
 
 
+def _set_fields(text: str, fields: Mapping[str, str]) -> str:
+    """Set each `key: value` in the frontmatter block; a value is flattened onto one line."""
+    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    if not m or not fields:
+        return text
+    block = m.group(2)
+    for key, value in fields.items():
+        block = set_field(block, key, " ".join(value.split()))
+    return text[: m.start(2)] + block + text[m.end(2) :]
+
+
 def _append_log(text: str, today: str, message: str) -> str:
     """Append a dated line to the Execution log (creating the section if it is missing)."""
     line = f"{today}: {message}"
@@ -285,6 +296,8 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
     """Refuse a self-block or a blocker id that is not a brief (externals are free text)."""
     if brief_id in blocked_by:
         raise ValueError(f"{brief_id!r} cannot be blocked by itself")
+    if not blocked_by:
+        return  # nothing to look up; reading the whole queue per move would make a bulk sweep quadratic
     known = {b.id for b in load_queue(root)}
     unknown = [b for b in blocked_by if not is_external(b) and b not in known]
     if unknown:
@@ -302,6 +315,7 @@ def move_brief(
     only_if: Callable[[], bool] | None = None,
     probes: list[str] | None = None,
     confirmed: list[str] | None = None,
+    fields: Mapping[str, str] | None = None,
 ) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
@@ -318,7 +332,8 @@ def move_brief(
     whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
     `external:<reason>`) so a blocked brief always says what it waits for; any other target
     clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
-    left alone and ValueError is raised. Callers commit separately via sync_commit.
+    left alone and ValueError is raised. `fields` sets extra frontmatter keys in the same write
+    (why it was closed, what it duplicates). Callers commit separately via sync_commit.
     Returns the new path.
     """
     if new_status not in VALID_STATUSES:
@@ -362,6 +377,7 @@ def move_brief(
         )
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
+        text = _set_fields(text, fields or {})
         text = _append_log(text, today, message)
         new_path = root / new_status / f"{brief_id}.md"
         atomic_write(new_path, text)

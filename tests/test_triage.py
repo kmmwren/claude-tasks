@@ -6,6 +6,7 @@ import json
 import pytest
 import triage
 from class_log import Correction
+from triage_classify import Call
 from triage_enrich import Fill
 
 from tests.queue_helpers import inbox_text, make_inbox
@@ -35,7 +36,7 @@ def _fill(briefs):
 def synced(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True
+        triage, "sync_commit", lambda msg, root, ids, paths=(): calls.append(sorted(ids)) or True
     )
     return calls
 
@@ -79,7 +80,7 @@ def test_progress_logs_each_batch(tmp_path, capsys):
 
 @pytest.fixture
 def offline(monkeypatch):
-    monkeypatch.setattr(triage, "LiveSources", lambda root: LIVE)
+    monkeypatch.setattr(triage, "LiveSources", lambda root, prs: LIVE)
 
 
 def test_main_prints_the_dry_run_report(tmp_path, capsys, offline):
@@ -126,7 +127,14 @@ def test_a_repeat_of_an_earlier_brief_is_a_duplicate_and_is_not_promoted(tmp_pat
     root = make_inbox(tmp_path, {"filed": QUEUE["filed"], "filed-again": twin})
     report = triage.run(_opts(root, apply=True))
     assert (report.duplicates, report.promoted_as_filed) == (1, 1)
-    assert [p.stem for p in (root / "inbox").glob("*.md")] == ["filed-again"]
+    assert list((root / "inbox").glob("*.md")) == []
+    closed = (root / "done" / "filed-again.md").read_text()
+    assert "closed_reason: duplicate" in closed and "duplicate_of: filed" in closed
+    survivor = (root / "ready" / "filed.md").read_text()
+    assert (
+        "merged filed-again: Title of filed" in survivor
+        and "## Merged from filed-again" in survivor
+    )
     assert [(v.brief_id, v.cls) for v in _log(root).verdicts()] == [
         ("filed-again", "duplicate"),
         ("filed", "ready"),
@@ -163,3 +171,256 @@ def test_the_classifier_is_shown_earlier_corrections(tmp_path, synced):
 
     opts = dataclasses.replace(_opts(root, apply=True), classify=classify)
     assert triage.run(opts).classes == {"drop": 1} and seen == [(["bare"], ["Old one"])]
+
+
+FINISHED = dict(criteria=("It ships.",), ticked=True)
+
+
+@pytest.fixture
+def committed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        triage,
+        "sync_commit",
+        lambda msg, root, ids, paths=(): calls.append((msg, sorted(ids), list(paths))) or True,
+    )
+    return calls
+
+
+def _call(cls, reason="because"):
+    return Call(cls, reason)
+
+
+def _classifier(calls):
+    return lambda briefs, examples: {b.id: calls[b.id] for b in briefs if b.id in calls}
+
+
+def _with_ready(tmp_path, inbox, ready):
+    root = make_inbox(tmp_path, inbox)
+    for bid, text in ready.items():
+        (root / "ready" / f"{bid}.md").write_text(text)
+    return root
+
+
+def test_apply_closes_finished_briefs_from_inbox_and_ready_and_logs_each(tmp_path, committed):
+    root = _with_ready(
+        tmp_path,
+        {"done-inbox": inbox_text("done-inbox", **FINISHED)},
+        {"done-ready": inbox_text("done-ready", status="ready", **FINISHED)},
+    )
+    report = triage.run(_opts(root, apply=True))
+    assert report.closed == {"evidence": 2}
+    assert sorted(p.stem for p in (root / "done").glob("*.md")) == ["done-inbox", "done-ready"]
+    assert not list((root / "inbox").glob("*.md")) and not list((root / "ready").glob("*.md"))
+    rows = [json.loads(line) for line in (root / "closed.jsonl").read_text().splitlines()]
+    assert sorted((r["id"], r["from"], r["to"]) for r in rows) == [
+        ("done-inbox", "inbox", "done"),
+        ("done-ready", "ready", "done"),
+    ]
+    assert committed[0][1:] == (["done-inbox", "done-ready"], ["closed.jsonl"])
+    assert committed[0][0].endswith("close 2")
+
+
+def test_a_brief_closed_on_evidence_is_neither_promoted_nor_classified(tmp_path, committed):
+    done = inbox_text("done-inbox", context="Per o/r#2.", goal="Ship it.", **FINISHED)
+    root = make_inbox(tmp_path, {"done-inbox": done})
+    report = triage.run(_opts(root, apply=True))
+    assert (report.promoted_as_filed, report.classes) == (0, {})
+    assert not (root / "ready" / "done-inbox.md").exists()
+
+
+def test_a_dry_run_plans_the_closes_but_moves_nothing_and_commits_nothing(tmp_path, committed):
+    root = make_inbox(tmp_path, {"done-inbox": inbox_text("done-inbox", **FINISHED)})
+    report = triage.run(_opts(root, apply=False))
+    assert [(m.brief_id, str(m.reason)) for m in report.moves] == [("done-inbox", "evidence")]
+    assert report.closed == {"evidence": 1} and not report.committed and committed == []
+    assert (root / "inbox" / "done-inbox.md").exists() and not (root / "closed.jsonl").exists()
+
+
+class Bell:
+    """A notifier that records what it was told and reports whether it delivered."""
+
+    def __init__(self, delivers=True):
+        self.texts = []
+        self.delivers = delivers
+
+    def __call__(self, text):
+        self.texts.append(text)
+        return self.delivers
+
+
+def _judged_queue(tmp_path):
+    root = make_inbox(
+        tmp_path,
+        {
+            "junk": inbox_text("junk"),
+            "stale": inbox_text("stale", extra="created: 2026-10-01\n"),
+            "fresh": inbox_text("fresh", extra="created: 2026-11-10\n"),
+        },
+    )
+    calls = {
+        "junk": _call(BC.DROP, "obsolete"),
+        "stale": _call(BC.NEEDS_INFO),
+        "fresh": _call(BC.NEEDS_INFO),
+    }
+    return root, _classifier(calls)
+
+
+def _judged_opts(root, classify, bell, apply=True):
+    return dataclasses.replace(_opts(root, apply=apply), classify=classify, notify=bell)
+
+
+def test_drop_and_stale_verdicts_raise_one_aggregated_alert_and_move_nothing(tmp_path, committed):
+    root, classify = _judged_queue(tmp_path)
+    bell = Bell()
+    report = triage.run(_judged_opts(root, classify, bell))
+    assert report.closed == {} and report.alerts_delivered
+    assert sorted(p.stem for p in (root / "inbox").glob("*.md")) == ["fresh", "junk", "stale"]
+    assert not (root / "closed.jsonl").exists()
+    [text] = bell.texts
+    assert "2 briefs" in text and "- junk: Title of junk (obsolete)" in text
+    assert "- stale: Title of stale (untouched for 41 days)" in text and "fresh" not in text
+    assert json.loads((root / ".triage-alerts.json").read_text()) == {
+        "junk": "2026-11-11",
+        "stale": "2026-11-11",
+    }
+    assert committed[0][2] == [".triage-alerts.json"] and committed[0][0].endswith("alert 2")
+
+
+def test_a_standing_flag_is_not_raised_again_on_the_next_run(tmp_path, committed):
+    root, classify = _judged_queue(tmp_path)
+    bell = Bell()
+    triage.run(_judged_opts(root, classify, bell))
+    again = triage.run(_judged_opts(root, classify, bell))
+    assert len(bell.texts) == 1 and (again.alerts, again.alerts_held) == ([], 2)
+    assert len(committed) == 1
+
+
+def test_a_flag_is_raised_again_after_stale_days_more(tmp_path, committed):
+    root, classify = _judged_queue(tmp_path)
+    bell = Bell()
+    triage.run(_judged_opts(root, classify, bell))
+    later = dataclasses.replace(_judged_opts(root, classify, bell), today="2026-12-03")
+    assert len(triage.run(later).alerts) == 2 and len(bell.texts) == 2
+
+
+def test_an_alert_that_was_not_delivered_is_not_recorded_so_the_next_run_retries(
+    tmp_path, committed
+):
+    root, classify = _judged_queue(tmp_path)
+    report = triage.run(_judged_opts(root, classify, Bell(delivers=False)))
+    assert not report.alerts_delivered and len(report.alerts) == 2
+    assert not (root / ".triage-alerts.json").exists() and not report.committed
+    assert len(triage.run(_judged_opts(root, classify, Bell())).alerts) == 2
+
+
+def test_a_dry_run_lists_the_alerts_but_sends_and_records_nothing(tmp_path, committed):
+    root, classify = _judged_queue(tmp_path)
+    bell = Bell()
+    report = triage.run(_judged_opts(root, classify, bell, apply=False))
+    assert len(report.alerts) == 2 and bell.texts == [] and not report.alerts_delivered
+    assert not (root / ".triage-alerts.json").exists()
+
+
+def test_an_unconfigured_notifier_warns_on_stderr_and_loses_nothing(tmp_path, committed, capsys):
+    root, classify = _judged_queue(tmp_path)
+    opts = dataclasses.replace(_opts(root, apply=True), classify=classify)
+    report = triage.run(opts)
+    assert not report.alerts_delivered and len(list((root / "inbox").glob("*.md"))) == 3
+    assert "alert not delivered" in capsys.readouterr().err
+
+
+def test_the_cap_defers_the_rest_and_the_report_says_how_many(tmp_path, committed):
+    root = make_inbox(tmp_path, {f"d{n}": inbox_text(f"d{n}", **FINISHED) for n in range(3)})
+    capped_opts = dataclasses.replace(_opts(root, apply=True), rules=triage.CloseRules(21, 2))
+    report = triage.run(capped_opts)
+    assert (report.closed, report.closes_deferred) == ({"evidence": 2}, 1)
+    assert sorted(p.stem for p in (root / "inbox").glob("*.md")) == ["d2"]
+
+
+def test_a_brief_restored_by_the_owner_is_not_closed_again(tmp_path, committed):
+    restored = inbox_text("back", extra="closed_reason: evidence\n", **FINISHED)
+    root = make_inbox(tmp_path, {"back": restored})
+    assert triage.run(_opts(root, apply=True)).closed == {}
+    assert (root / "inbox" / "back.md").exists()
+
+
+def test_a_close_refused_by_the_move_is_counted_and_not_logged(tmp_path, committed, monkeypatch):
+    root = make_inbox(tmp_path, {"d": inbox_text("d", **FINISHED)})
+    monkeypatch.setattr(triage, "apply_moves", lambda moves, root, today: [])
+    report = triage.run(_opts(root, apply=True))
+    assert (report.closes_changed_underfoot, report.committed) == (1, False)
+
+
+def test_main_dry_run_prints_the_plan_grouped_by_reason(tmp_path, capsys, offline):
+    root = make_inbox(tmp_path, {"d": inbox_text("d", **FINISHED)})
+    triage.main(["promote", "--dry-run", "--root", str(root)])
+    assert capsys.readouterr().out.splitlines()[:3] == [
+        "1 planned moves",
+        "evidence: 1 -> done/",
+        "  d (from inbox): every success criterion is ticked",
+    ]
+    assert (root / "inbox" / "d.md").exists()
+
+
+def test_main_reads_the_triage_table_for_its_rules(tmp_path, capsys, offline):
+    root = make_inbox(tmp_path, {f"d{n}": inbox_text(f"d{n}", **FINISHED) for n in range(3)})
+    (root / "tasks.toml").write_text("[triage]\nmax_moves = 1\n")
+    triage.main(["promote", "--dry-run", "--root", str(root)])
+    assert "capped at 1 moves per run: 2 more left for the next run" in capsys.readouterr().out
+
+
+def test_main_dry_run_also_prints_the_alert_plan(tmp_path, capsys, offline, monkeypatch):
+    root = make_inbox(tmp_path, {"junk": inbox_text("junk")})
+    monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
+    monkeypatch.setattr(
+        triage, "claude_classify", lambda model: _classifier({"junk": _call(BC.DROP, "obsolete")})
+    )
+    triage.main(["promote", "--dry-run", "--llm", "--root", str(root)])
+    out = capsys.readouterr().out
+    assert "1 alerts to raise (briefs stay where they are)" in out and "  junk: obsolete" in out
+    assert (root / "inbox" / "junk.md").exists()
+
+
+def test_main_apply_sends_the_alert_through_the_session_alert_notifier(
+    tmp_path, capsys, offline, monkeypatch, committed
+):
+    root = make_inbox(tmp_path, {"junk": inbox_text("junk")})
+    bell = Bell()
+    monkeypatch.setattr(triage, "session_alert_notifier", lambda: bell)
+    monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
+    monkeypatch.setattr(
+        triage, "claude_classify", lambda model: _classifier({"junk": _call(BC.DROP, "obsolete")})
+    )
+    triage.main(["promote", "--apply", "--llm", "--root", str(root)])
+    assert len(bell.texts) == 1 and json.loads(capsys.readouterr().out)["alerts_delivered"]
+
+
+def _closed_queue(tmp_path):
+    root = make_inbox(tmp_path, {"d": inbox_text("d", **FINISHED)})
+    triage.run(_opts(root, apply=True))
+    return root
+
+
+def test_reopen_puts_a_closed_brief_back_and_commits_the_audit_row(tmp_path, capsys, committed):
+    root = _closed_queue(tmp_path)
+    committed.clear()
+    triage.main(["reopen", "d", "--root", str(root)])
+    assert capsys.readouterr().out == "d -> inbox/\n"
+    assert (root / "inbox" / "d.md").exists() and not (root / "done" / "d.md").exists()
+    assert committed == [("triage: reopen d", ["d"], ["closed.jsonl"])]
+    assert triage.run(_opts(root, apply=True)).closed == {}
+
+
+def test_reopen_without_an_id_is_a_usage_error(tmp_path):
+    with pytest.raises(SystemExit) as exit_info:
+        triage.main(["reopen", "--root", str(make_inbox(tmp_path, {}))])
+    assert exit_info.value.code == 2
+
+
+def test_reopen_of_a_brief_triage_never_closed_exits_with_the_reason(tmp_path, capsys, committed):
+    root = make_inbox(tmp_path, {"b": inbox_text("b")})
+    with pytest.raises(SystemExit) as exit_info:
+        triage.main(["reopen", "b", "--root", str(root)])
+    assert exit_info.value.code == 1 and "has not closed 'b'" in capsys.readouterr().err
+    assert committed == []
