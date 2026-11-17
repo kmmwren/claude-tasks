@@ -14,9 +14,14 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
 from typing import Any
 
 HEADLESS_WRAPPER = "~/.claude-switch/claude-any.sh"
+# Wrapper exits meaning no account will run any call (no quota, route refused, no usable login,
+# kill switch), so every later call in this run would fail the same way.
+NO_CAPACITY = frozenset({2, 3, 4, 10})
+_spent = threading.Event()
 
 
 def headless_claude() -> list[str]:
@@ -54,7 +59,9 @@ def local_run(reason: str) -> dict[str, str]:
 def ask_json(
     prompt: str, schema: dict[str, Any], model: str, reason: str, timeout: int = 600
 ) -> Any:
-    """The structured output of one call, or None when the call fails or answers off-schema."""
+    """The structured output of one call, or None when it fails, answers off-schema or capacity is spent."""
+    if _spent.is_set():
+        return None
     try:
         with tempfile.TemporaryDirectory() as scratch:
             out = subprocess.run(
@@ -68,6 +75,18 @@ def ask_json(
                 cwd=scratch,
             ).stdout
         return json.loads(out).get("structured_output")
+    except subprocess.CalledProcessError as e:
+        return _refused(e)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as e:
-        print(f"inbox-triage: headless call failed: {str(e)[:300]}", file=sys.stderr)
+        print(f"inbox-triage: headless call failed: {type(e).__name__}: {e}"[:300], file=sys.stderr)
         return None
+
+
+def _refused(e: subprocess.CalledProcessError) -> None:
+    """Report an exit by its status and the wrapper's own reason; latch the run off when no account can run."""
+    lines = str(e.stderr or "").strip().splitlines()
+    why = f"exit {e.returncode}: {lines[-1] if lines else 'no stderr'}"[:300]
+    if e.returncode in NO_CAPACITY:
+        _spent.set()
+        why += "; skipping this run's remaining calls"
+    print(f"inbox-triage: headless call failed: {why}", file=sys.stderr)

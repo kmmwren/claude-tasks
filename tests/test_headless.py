@@ -3,10 +3,53 @@
 import json
 import subprocess
 
+import headless
 import pytest
 from headless import ask_json, command, headless_claude
 
 SCHEMA = {"type": "object"}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_run():
+    headless._spent.clear()
+    yield
+    headless._spent.clear()
+
+
+def _exiting(status, stderr):
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        raise subprocess.CalledProcessError(status, cmd, stderr=stderr)
+
+    return run, calls
+
+
+def test_a_failure_names_its_exit_status_and_reason_not_the_command(monkeypatch, capsys):
+    run, _ = _exiting(1, "claude-any: ran as katherine, exit 1\n")
+    monkeypatch.setattr(subprocess, "run", run)
+    assert ask_json("prompt", SCHEMA, "sonnet", "why") is None
+    err = capsys.readouterr().err
+    assert "exit 1: claude-any: ran as katherine, exit 1" in err and "--json-schema" not in err
+
+
+@pytest.mark.parametrize("status", sorted(headless.NO_CAPACITY))
+def test_no_capacity_skips_the_rest_of_the_run(monkeypatch, capsys, status):
+    run, calls = _exiting(status, "")
+    monkeypatch.setattr(subprocess, "run", run)
+    assert ask_json("prompt", SCHEMA, "sonnet", "why") is None
+    assert ask_json("prompt", SCHEMA, "sonnet", "why") is None
+    assert len(calls) == 1 and "skipping this run's remaining calls" in capsys.readouterr().err
+
+
+def test_an_ordinary_failure_does_not_stop_the_run(monkeypatch):
+    run, calls = _exiting(1, "boom")
+    monkeypatch.setattr(subprocess, "run", run)
+    ask_json("prompt", SCHEMA, "sonnet", "why")
+    ask_json("prompt", SCHEMA, "sonnet", "why")
+    assert len(calls) == 2
 
 
 def test_uses_the_wrapper_only_when_installed(tmp_path, monkeypatch):
