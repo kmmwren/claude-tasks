@@ -2,13 +2,8 @@
 """
 triage_alerts.py: tell the owner about briefs that need a human call, and leave them where they are.
 
-A needs-info brief idle past `[triage] stale_days` and a brief the model calls a drop are flagged,
-never moved: the owner may be away, and judgement alone must not lose work. One aggregated alert
-goes out per run through a notifier (the session-alerts channel by default; a missing script
-warns on stderr instead). <queue>/.triage-alerts.json records when each brief was last alerted, so
-a brief is raised again only after `stale_days` more.
-
-Stdlib only.
+A stale needs-info brief or a model-called drop is flagged, never moved. One aggregated alert goes
+out per run; <queue>/.triage-alerts.json holds when each brief was last alerted.
 """
 
 import dataclasses
@@ -156,11 +151,20 @@ def session_alert_notifier(scripts_dir: pathlib.Path = SCRIPTS_DIR) -> Notifier:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             module.post(CHANNEL, PROJECT, KIND, text)
-        except Exception as err:  # a broken alert script must never stop triage or lose a close
+        except (
+            Exception,
+            SystemExit,
+        ) as err:  # a broken alert script never stops triage or loses a close
             return _warn(f"{script.name} failed: {err}")
         return True
 
     return notify
+
+
+def undelivered_text(alerts: Sequence[Alert]) -> str:
+    """The run-report line for alerts that went nowhere, so a headless run shows them too."""
+    ids = ", ".join(a.brief_id for a in alerts)
+    return f"{len(alerts)} alerts NOT delivered and not recorded, raised again next run: {ids}"
 
 
 def undelivered(text: str) -> bool:

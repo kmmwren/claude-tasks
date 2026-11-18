@@ -64,6 +64,7 @@ requires-local: # OPTIONAL true, when the brief needs files only on a local mach
 closed_reason: # SET BY inbox-triage when it moves the brief to done/: duplicate | evidence. `triage.py reopen <id>` clears it.
 duplicate_of: # SET BY inbox-triage on a duplicate: the id of the brief it was merged into.
 closed_evidence: # SET BY inbox-triage on an evidence close: what showed the work was finished.
+closed_from: # SET BY inbox-triage: the folder the brief was closed from, so `triage.py reopen <id>` knows where it goes back.
 reopened: # SET BY `triage.py reopen`: the date the owner put the brief back. Triage never closes it again.
 ---
 

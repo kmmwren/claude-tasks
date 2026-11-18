@@ -2,12 +2,8 @@
 """
 triage_evidence.py: whether a brief's own evidence says its work is finished.
 
-Two kinds of evidence close a brief. Every success criterion ticked is one. The other is its pull
-requests: a brief closes on PR state alone only when it names a PR as its deliverable in the title
-or goal, no PR it cites is open or unreadable, it cites no issue, and nothing in the title or goal
-looks past the merge ("follow up", "after merge"). A brief with no such evidence is never closed.
-
-Stdlib only.
+Every success criterion ticked is evidence. So is a PR named as the deliverable, when none it cites
+is open or unreadable, it cites no issue, and nothing looks past the merge. No evidence, no close.
 """
 
 import dataclasses

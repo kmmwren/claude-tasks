@@ -5,6 +5,7 @@ import json
 import pathlib
 
 import pytest
+import triage_close
 from class_log import BriefClass, Verdict
 from deps import fm
 from triage_brief import InboxBrief, load_inbox
@@ -13,6 +14,7 @@ from triage_close import (
     CloseRules,
     Move,
     MoveLog,
+    MoveRecord,
     Reason,
     _demoted,
     apply_moves,
@@ -33,6 +35,7 @@ from tests.queue_helpers import inbox_text, make_inbox
 BC = BriefClass
 TODAY = datetime.date(2026, 11, 11)
 OLD = "created: 2026-10-01\n"
+FINISHED = dict(criteria=("It ships.",), ticked=True)
 
 
 def _brief(bid="b", **kw):
@@ -48,14 +51,23 @@ def _moves(briefs, verdicts, dupes=None):
 
 
 @pytest.mark.parametrize(
-    "reason, fields",
+    "reason, survivor, fields",
     [
-        (Reason.DUPLICATE, {"closed_reason": "duplicate", "duplicate_of": "keep"}),
-        (Reason.EVIDENCE, {"closed_reason": "evidence", "closed_evidence": "obsolete"}),
+        (
+            Reason.DUPLICATE,
+            "keep",
+            {"closed_reason": "duplicate", "duplicate_of": "keep", "closed_from": "inbox"},
+        ),
+        (
+            Reason.EVIDENCE,
+            "",
+            {"closed_reason": "evidence", "closed_evidence": "obsolete", "closed_from": "inbox"},
+        ),
     ],
 )
-def test_each_reason_records_its_frontmatter(reason, fields):
-    assert Move("b", "T", "inbox", reason, "obsolete", "keep").fields == fields
+def test_each_reason_records_its_frontmatter(reason, survivor, fields):
+    assert Move("b", "T", "inbox", reason, "obsolete", survivor).fields == fields
+    assert set(fields) <= set(CLOSING_FIELDS)
 
 
 def test_a_move_log_line_says_why_and_how_to_undo_it():
@@ -176,7 +188,7 @@ def _rows(root):
 
 def test_apply_closes_to_done_with_frontmatter_a_log_line_and_an_audit_row(tmp_path):
     root = make_inbox(tmp_path, {})
-    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready"))
+    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready", **FINISHED))
     move = Move("a", "Title of a", "ready", Reason.EVIDENCE, "o/r#1 MERGED")
     assert apply_moves([move], root, "2026-11-11") == [move]
     fields = _closed_fields(root, "done", "a")
@@ -237,9 +249,9 @@ def test_a_survivor_without_an_execution_log_gets_the_body_at_its_end(tmp_path):
 def test_merging_twice_appends_the_body_once(tmp_path):
     root, move = _duplicate_queue(tmp_path)
     apply_moves([move], root, "2026-11-11")
-    (root / "inbox" / "a.md").write_text(
-        (root / "done" / "a.md").read_text().replace("status: done", "status: inbox")
-    )
+    closed = (root / "done" / "a.md").read_text().replace("status: done", "status: inbox")
+    stripped = [ln for ln in closed.splitlines() if not ln.startswith(CLOSING_FIELDS)]
+    (root / "inbox" / "a.md").write_text("\n".join(stripped) + "\n")
     (root / "done" / "a.md").unlink()
     apply_moves([move], root, "2026-11-12")
     assert (root / "inbox" / "keep.md").read_text().count("## Merged from a") == 1
@@ -284,7 +296,7 @@ def test_an_unknown_brief_is_skipped(tmp_path):
 
 def test_closing_from_ready_works_and_keeps_the_brief_restorable(tmp_path):
     root = make_inbox(tmp_path, {})
-    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready"))
+    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready", **FINISHED))
     apply_moves([Move("a", "T", "ready", Reason.EVIDENCE, "o/r#1 MERGED")], root, "2026-11-11")
     assert (root / "done" / "a.md").exists() and not (root / "ready" / "a.md").exists()
     assert load_inbox(root) == []
@@ -322,7 +334,7 @@ def test_reopen_puts_a_closed_brief_back_where_it_came_from_and_logs_it(tmp_path
     assert "2026-11-12: reopened by its owner; triage had closed it (evidence)" in text
     assert _rows(root)[-1]["reason"] == "reopened"
     fields = InboxBrief(root / "ready" / "a.md", text).fields
-    assert [fields.get(k) for k in CLOSING_FIELDS] == ["", "", ""]
+    assert [fields.get(k) for k in CLOSING_FIELDS] == [""] * len(CLOSING_FIELDS)
     assert fields["reopened"] == "2026-11-12" and fields["status"] == "ready"
     assert not eligible(InboxBrief(root / "ready" / "a.md", text))
 
@@ -369,3 +381,149 @@ def test_the_plan_is_grouped_by_reason_with_counts_and_names_the_cap():
 
 def test_an_empty_plan_says_so_without_a_cap_line():
     assert plan_text([], 0, 200) == "0 planned moves"
+
+
+def _ready_queue(tmp_path, *ids):
+    root = make_inbox(tmp_path, {})
+    for bid in ids:
+        (root / "ready" / f"{bid}.md").write_text(inbox_text(bid, status="ready", **ENRICHED))
+    return root
+
+
+def _closing(*ids):
+    return [Move(i, "T", "ready", Reason.EVIDENCE, "ticked") for i in ids]
+
+
+def _failing_on(monkeypatch, brief_id, error):
+    real = triage_close.move_brief
+
+    def move(bid, *args, **kwargs):
+        if bid == brief_id:
+            raise error
+        return real(bid, *args, **kwargs)
+
+    monkeypatch.setattr("triage_close.move_brief", move)
+
+
+def test_a_lock_timeout_on_the_second_of_three_moves_is_skipped_and_the_rest_are_logged(
+    tmp_path, monkeypatch, capsys
+):
+    root = _ready_queue(tmp_path, "a", "b", "c")
+    _failing_on(monkeypatch, "b", RuntimeError("timed out waiting for the queue lock"))
+    done = apply_moves(_closing("a", "b", "c"), root, "2026-11-11")
+    assert [m.brief_id for m in done] == ["a", "c"]
+    assert [r["id"] for r in _rows(root)] == ["a", "c"]
+    assert (root / "ready" / "b.md").exists() and (root / "done" / "c.md").exists()
+    assert "b not closed" in capsys.readouterr().err
+    assert reopen("a", root, "2026-11-12") == "ready"
+
+
+def test_an_unexpected_failure_on_a_later_move_leaves_the_earlier_moves_logged(
+    tmp_path, monkeypatch
+):
+    root = _ready_queue(tmp_path, "a", "b", "c")
+    _failing_on(monkeypatch, "c", OSError("disk full"))
+    with pytest.raises(OSError):
+        apply_moves(_closing("a", "b", "c"), root, "2026-11-11")
+    assert [r["id"] for r in _rows(root)] == ["a", "b"]
+    assert reopen("b", root, "2026-11-12") == "ready"
+
+
+def test_a_lock_timeout_while_merging_leaves_the_duplicate_open(tmp_path, monkeypatch, capsys):
+    root, move = _duplicate_queue(tmp_path)
+
+    def timed_out(*args, **kwargs):
+        raise TimeoutError("queue lock not acquired")
+
+    monkeypatch.setattr("triage_close.require_lock", timed_out)
+    assert apply_moves([move], root, "2026-11-11") == []
+    assert (root / "inbox" / "a.md").exists() and not (root / "closed.jsonl").exists()
+    assert "a not closed" in capsys.readouterr().err
+
+
+def test_reopen_works_from_the_brief_alone_when_its_log_row_was_never_written(tmp_path):
+    root = _closed_on_evidence(tmp_path)
+    (root / "closed.jsonl").unlink()
+    assert reopen("a", root, "2026-11-12") == "ready"
+    assert _rows(root)[-1]["reason"] == "reopened"
+    assert (root / "ready" / "a.md").exists()
+
+
+def test_reopen_of_a_duplicate_without_a_log_row_uses_the_brief_frontmatter(tmp_path):
+    root, move = _duplicate_queue(tmp_path)
+    apply_moves([move], root, "2026-11-11")
+    (root / "closed.jsonl").unlink()
+    assert reopen("a", root, "2026-11-12") == "inbox"
+    assert not _closed_fields(root, "inbox", "a").get("duplicate_of")
+
+
+def test_the_move_log_reads_back_a_typed_record(tmp_path):
+    root = make_inbox(tmp_path, {})
+    log = MoveLog(root)
+    log.append(Move("a", "T", "inbox", Reason.DUPLICATE, "x", "k"))
+    assert log.last("a") == MoveRecord("a", "inbox", "done", "duplicate", "x")
+    assert log.last("zz") is None
+
+
+@pytest.mark.parametrize("folder", ["done", "in-progress"])
+def test_a_duplicate_is_not_merged_into_a_survivor_that_is_closed_or_claimed(tmp_path, folder):
+    root, move = _duplicate_queue(tmp_path, keep_status=folder)
+    before = (root / folder / "keep.md").read_text()
+    assert apply_moves([move], root, "2026-11-11") == []
+    assert (root / folder / "keep.md").read_text() == before
+    assert (root / "inbox" / "a.md").exists() and not (root / "closed.jsonl").exists()
+
+
+def test_a_duplicate_is_not_merged_into_a_survivor_that_carries_an_assignee(tmp_path):
+    root, move = _duplicate_queue(tmp_path, keep_status="ready")
+    keep = root / "ready" / "keep.md"
+    keep.write_text(keep.read_text().replace("source: claude\n", "source: claude\nassignee: me\n"))
+    assert apply_moves([move], root, "2026-11-11") == []
+    assert "Merged from" not in keep.read_text() and (root / "inbox" / "a.md").exists()
+
+
+def test_a_survivor_closed_earlier_in_the_same_run_takes_no_merge(tmp_path):
+    root = make_inbox(
+        tmp_path, {"a": inbox_text("a", **DUP_BODY), "keep": inbox_text("keep", **FINISHED)}
+    )
+    finish = Move("keep", "T", "inbox", Reason.EVIDENCE, "ticked")
+    twin = Move("a", "Title of a", "inbox", Reason.DUPLICATE, "same as keep", "keep")
+    assert apply_moves([finish, twin], root, "2026-11-11") == [finish]
+    assert "Merged from" not in (root / "done" / "keep.md").read_text()
+    assert (root / "inbox" / "a.md").exists()
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [("- [x]", "- [ ]"), ("source: claude\n", "source: claude\nassignee: me\n")],
+    ids=["criterion unticked", "assignee set"],
+)
+def test_a_brief_edited_since_it_was_read_is_not_closed(tmp_path, edit):
+    root = _ready_queue(tmp_path, "a")
+    path = root / "ready" / "a.md"
+    path.write_text(path.read_text().replace(*edit))
+    assert apply_moves(_closing("a"), root, "2026-11-11") == []
+    assert path.exists() and not (root / "closed.jsonl").exists()
+
+
+def test_a_duplicate_claimed_since_it_was_read_is_neither_merged_nor_closed(tmp_path):
+    root, move = _duplicate_queue(tmp_path)
+    twin = root / "inbox" / "a.md"
+    twin.write_text(twin.read_text().replace("source: claude\n", "source: claude\nassignee: me\n"))
+    assert apply_moves([move], root, "2026-11-11") == []
+    assert "Merged from" not in (root / "inbox" / "keep.md").read_text() and twin.exists()
+
+
+def test_a_close_on_pr_state_is_rechecked_against_the_runs_pr_states(tmp_path):
+    root = make_inbox(tmp_path, {"a": inbox_text("a", title="Merge o/r#7", context="o/r#7")})
+    move = Move("a", "Merge o/r#7", "inbox", Reason.EVIDENCE, "o/r#7 MERGED")
+    assert apply_moves([move], root, "2026-11-11") == []
+    merged = _states({("o/r", 7): PrState.MERGED})
+    assert apply_moves([move], root, "2026-11-11", merged) == [move]
+
+
+def test_fenced_code_in_a_merged_body_keeps_its_hashes():
+    body = "# One\n```bash\n# comment\n## also\n```\n## Two\n~~~\n# tilde\n~~~\n###### six"
+    assert _demoted(body) == (
+        "### One\n```bash\n# comment\n## also\n```\n### Two\n~~~\n# tilde\n~~~\n###### six"
+    )

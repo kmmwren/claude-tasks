@@ -188,6 +188,8 @@ def test_a_missing_alert_script_warns_on_stderr_and_reports_not_delivered(tmp_pa
         "x = 1\n",
         "def post(*a):\n    raise OSError('disk full')\n",
         "def post(*a):\n    raise ValueError('bad payload')\n",
+        "raise SystemExit(2)\n",
+        "import sys\ndef post(*a):\n    sys.exit('no credentials')\n",
     ],
 )
 def test_a_broken_alert_script_warns_instead_of_raising(tmp_path, capsys, body):

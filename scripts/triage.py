@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
 """
-triage.py — keep the queue clean: collapse bulk filings, promote what passes the gate, close what is done.
+triage.py: keep the queue clean by collapsing bulk filings, promoting what passes the gate and closing what is done.
 
-    triage.py promote                    # dry run: what would collapse and promote, no LLM, no writes
-    triage.py promote --llm              # dry run including enrichment of briefs missing fields
-    triage.py promote --dry-run          # the planned closes grouped by reason, nothing written
-    triage.py promote --apply --llm      # do it, then one commit for everything touched
-    triage.py reopen <id>                # put a brief triage closed back where it came from
-
-Every inbox brief also gets a class (ready, needs-info, duplicate or drop) and a reason, in the
-report; --apply logs them, and logs a correction when the owner has since moved a brief against
-its class. --apply then acts on evidence only (see triage_close): finished briefs in inbox/ and
-ready/ go to done/, and a duplicate goes to done/ after its body is appended to the survivor.
-Judgement never moves a brief: stale needs-info briefs and model-called drops stay where they are
-and raise one aggregated alert per run (see triage_alerts). Nothing is ever deleted: every move is
-logged in closed.jsonl and undone with `reopen`.
-
-Stdlib only.
+    triage.py promote [--llm] [--dry-run | --apply]    # default: dry run, no writes
+    triage.py reopen <id>                              # put a brief triage closed back
 """
 
 import argparse
@@ -41,6 +28,7 @@ from triage_alerts import (
     alerts_plan,
     session_alert_notifier,
     undelivered,
+    undelivered_text,
     verdict_alerts,
 )
 from triage_brief import InboxBrief, load_folder, load_inbox
@@ -92,6 +80,7 @@ class Report:
     alerts: list[Alert] = dataclasses.field(default_factory=list)
     alerts_held: int = 0
     alerts_delivered: bool = False
+    alert_notice: str = ""
     closes_deferred: int = 0
     closes_changed_underfoot: int = 0
     inbox_after: int = 0
@@ -203,7 +192,7 @@ def _record(log: ClassLog, verdicts: Sequence[Verdict], moved: Collection[str]) 
 def _close(opts: Options, report: Report, planned: Sequence[Move]) -> list[Move]:
     """Make up to the cap's worth of `planned` moves and return those made; a dry run makes none."""
     selected, report.closes_deferred = capped(planned, opts.rules.max_moves)
-    made = apply_moves(selected, opts.root, opts.today) if opts.apply else []
+    made = apply_moves(selected, opts.root, opts.today, opts.states) if opts.apply else []
     shown = made if opts.apply else selected
     report.moves = list(shown)
     report.closed = dict(collections.Counter(str(m.reason) for m in shown))
@@ -220,21 +209,35 @@ def _alert(opts: Options, report: Report, flagged: Sequence[Alert]) -> bool:
     if not (opts.apply and due):
         return False
     report.alerts_delivered = opts.notify(alert_text(due, opts.rules.stale_days))
-    if report.alerts_delivered:
-        ledger.save(flagged, {a.brief_id for a in due}, today)
-    return report.alerts_delivered
+    if not report.alerts_delivered:
+        report.alert_notice = undelivered_text(due)
+        return False
+    ledger.save(flagged, {a.brief_id for a in due}, today)
+    return True
 
 
-def run(opts: Options) -> Report:
-    log = opts.log or ClassLog(opts.root)
-    report = Report(_count(opts.root, "inbox"), _count(opts.root, "ready"))
-    report.corrections_logged = len(reconcile(opts.root, log)) if opts.apply else 0
+@dataclasses.dataclass(frozen=True)
+class Standing:
+    """What is left to act on once collapses and evidence closes are set aside."""
+
+    verdicts: list[Verdict]
+    inbox: dict[str, InboxBrief]
+    dupes: Mapping[str, str]
+    promoted: list[str]
+
+
+def _collapse(opts: Options, report: Report) -> tuple[list[str], set[str]]:
+    """Collapse bulk filings; returns the briefs written and the child ids now retired."""
     plans = _plan_collapses(opts, report)
     retired = {c.id for p in plans for c in p.children}
-    touched = (
-        [i for p in plans for i in apply_collapse(p, opts.root, opts.today)] if opts.apply else []
-    )
-    finished = _evidence(opts, retired)
+    plans_to_apply = plans if opts.apply else []
+    written = [i for p in plans_to_apply for i in apply_collapse(p, opts.root, opts.today)]
+    return written, retired
+
+
+def _classify_and_promote(
+    opts: Options, report: Report, log: ClassLog, retired: Collection[str], finished: Sequence[Move]
+) -> Standing:
     finished_inbox = {m.brief_id for m in finished if m.source == "inbox"}
     dupes = duplicate_map(index(opts.root))
     fixed = fixed_calls(dupes, log.sent_back())
@@ -243,18 +246,19 @@ def run(opts: Options) -> Report:
     inbox = [b for b in load_inbox(opts.root) if b.id not in finished_inbox]
     verdicts = _classify(opts, report, log, fixed, [*filed, *filled], inbox)
     moved = _promote_all([*filed, *filled], opts, report) if opts.apply else []
+    promoted = [p.original.id for p in moved]
     if opts.apply:
-        _record(log, verdicts, {p.original.id for p in moved})
-    touched += [p.original.id for p in moved]
+        _record(log, verdicts, promoted)
     standing = [v for v in verdicts if v.brief_id not in retired]
-    by_id = {b.id: b for b in inbox}
-    closed = _close(opts, report, [*finished, *verdict_moves(standing, by_id, dupes)])
-    alerted = _alert(
-        opts,
-        report,
-        verdict_alerts(standing, by_id, opts.rules, datetime.date.fromisoformat(opts.today)),
-    )
-    touched += touched_ids(closed)
+    return Standing(standing, {b.id: b for b in inbox}, dupes, promoted)
+
+
+def _alert_and_commit(
+    opts: Options, report: Report, touched: list[str], closed: Sequence[Move], standing: Standing
+) -> None:
+    today = datetime.date.fromisoformat(opts.today)
+    flagged = verdict_alerts(standing.verdicts, standing.inbox, opts.rules, today)
+    alerted = _alert(opts, report, flagged)
     report.committed = (bool(touched) or alerted) and sync_commit(
         f"triage: collapse {report.collapsed_children} into {report.collapsed_groups}, "
         f"promote {report.promoted_as_filed + report.promoted_enriched} inbox briefs to ready, "
@@ -263,6 +267,20 @@ def run(opts: Options) -> Report:
         ids=touched,
         paths=[*([MOVE_LOG] if closed else []), *([ALERT_STATE] if alerted else [])],
     )
+
+
+def run(opts: Options) -> Report:
+    log = opts.log or ClassLog(opts.root)
+    report = Report(_count(opts.root, "inbox"), _count(opts.root, "ready"))
+    report.corrections_logged = len(reconcile(opts.root, log)) if opts.apply else 0
+    touched, retired = _collapse(opts, report)
+    finished = _evidence(opts, retired)
+    standing = _classify_and_promote(opts, report, log, retired, finished)
+    touched += standing.promoted
+    dupe_moves = verdict_moves(standing.verdicts, standing.inbox, standing.dupes)
+    closed = _close(opts, report, [*finished, *dupe_moves])
+    touched += touched_ids(closed)
+    _alert_and_commit(opts, report, touched, closed, standing)
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report
 
@@ -292,36 +310,28 @@ def _reopen(ap: argparse.ArgumentParser, brief_id: str | None, root: pathlib.Pat
     print(f"{brief_id} -> {folder}/")
 
 
-def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(
-        description="Collapse bulk inbox filings and promote briefs that pass the gate."
-    )
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Collapse, promote and close inbox briefs.")
     ap.add_argument("command", choices=["promote", "reopen"])
     ap.add_argument("brief_id", nargs="?", help="the brief `reopen` puts back")
     ap.add_argument("--root", type=pathlib.Path)
     mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="write and commit (default: dry run)")
     mode.add_argument(
-        "--apply", action="store_true", help="write changes and commit (default: dry run)"
-    )
-    mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="print the planned closes grouped by reason instead of the JSON report; writes nothing",
+        "--dry-run", action="store_true", help="print the planned closes and alerts; writes nothing"
     )
     ap.add_argument("--llm", action="store_true", help="fill missing fields with claude -p")
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--batch-size", type=int, default=15)
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--limit", type=int, help="enrich at most this many briefs")
-    args = ap.parse_args(argv)
-    predict = _progress(claude_predict(args.model)) if args.llm else None
-    classifier = claude_classify(args.model) if args.llm else None
-    root = args.root or resolve_root()
-    if args.command == "reopen":
-        _reopen(ap, args.brief_id, root)
-        return
+    return ap
+
+
+def _options(args: argparse.Namespace, root: pathlib.Path) -> Options:
     states = PrStates()
-    opts = Options(
+    predict = _progress(claude_predict(args.model)) if args.llm else None
+    return Options(
         root,
         args.apply,
         Gate(LiveSources(root, prs=states)),
@@ -330,11 +340,20 @@ def main(argv: list[str] | None = None) -> None:
         args.jobs,
         args.limit,
         datetime.date.today().isoformat(),
-        classifier,
+        claude_classify(args.model) if args.llm else None,
         rules=CloseRules.load(root),
         states=states,
         notify=session_alert_notifier(),
     )
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = _parser()
+    args = ap.parse_args(argv)
+    root = args.root or resolve_root()
+    if args.command == "reopen":
+        return _reopen(ap, args.brief_id, root)
+    opts = _options(args, root)
     report = run(opts)
     if args.dry_run:
         print(plan_text(report.moves, report.closes_deferred, opts.rules.max_moves))

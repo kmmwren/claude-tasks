@@ -31,7 +31,11 @@
   21) and a model-called drop are never moved: one aggregated alert per run goes to the session-alerts
   channel (stderr warning when `~/.claude/scripts/session_alerts.py` is absent), and
   `.triage-alerts.json` in the queue stops the same brief being raised again for `stale_days`. Every
-  close is a line in `closed.jsonl`, and `triage.py reopen <id>` puts the brief back in the folder it came from and clears its closing fields;
+  close is a line in `closed.jsonl`, written as the move lands, and the brief records `closed_from` itself, so
+  `triage.py reopen <id>` puts it back in the folder it came from and clears its closing fields even when the log row is missing;
+  a duplicate merges only into a survivor still in `inbox/` or `ready/` and unclaimed, a brief edited since the run read it
+  (criterion unticked, assignee set) is not closed, and a move that times out on the queue lock is skipped while the run goes on;
+  an alert that could not be delivered shows in the report's `alert_notice`;
   a reopened brief, or one carrying a closing reason or an `assignee`, is never closed again. A run closes at most `[triage] max_moves`
   (default 200), evidence first. `--dry-run` prints the planned closes and alerts.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`

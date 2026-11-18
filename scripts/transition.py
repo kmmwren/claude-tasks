@@ -317,24 +317,11 @@ def move_brief(
     confirmed: list[str] | None = None,
     fields: Mapping[str, str] | None = None,
 ) -> pathlib.Path:
-    """Transition a brief to `new_status`: update frontmatter, log it, move the file.
+    """Move a brief to `new_status`, updating its frontmatter and log, atomically under repo_lock.
 
-    The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
-    the same brief serialize: whichever acquires the lock first moves the file; the second
-    finds the source path gone and raises ValueError (claimed by another actor).
-
-    Strategy: locate the source path BEFORE acquiring the lock (read-only, no contention),
-    then re-verify it still exists INSIDE the lock before writing. This makes the claim
-    atomic even across threads that both ran find_brief concurrently.
-
-    A non-empty `assignee` is also checked against the current one under the lock and
-    raises ValueError rather than stealing another actor's claim; `assignee=""` releases
-    whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
-    `external:<reason>`) so a blocked brief always says what it waits for; any other target
-    clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
-    left alone and ValueError is raised. `fields` sets extra frontmatter keys in the same write
-    (why it was closed, what it duplicates). Callers commit separately via sync_commit.
-    Returns the new path.
+    The source is re-verified under the lock, as are a non-empty `assignee` (never steals a claim;
+    `""` releases) and `only_if` (false raises ValueError); `blocked` needs `blocked_by`, and any
+    other target clears it. `fields` sets extra frontmatter keys. Callers commit via sync_commit.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")

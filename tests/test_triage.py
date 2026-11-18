@@ -311,7 +311,9 @@ def test_an_alert_that_was_not_delivered_is_not_recorded_so_the_next_run_retries
     report = triage.run(_judged_opts(root, classify, Bell(delivers=False)))
     assert not report.alerts_delivered and len(report.alerts) == 2
     assert not (root / ".triage-alerts.json").exists() and not report.committed
-    assert len(triage.run(_judged_opts(root, classify, Bell())).alerts) == 2
+    assert "2 alerts NOT delivered" in report.alert_notice
+    retried = triage.run(_judged_opts(root, classify, Bell()))
+    assert len(retried.alerts) == 2 and retried.alert_notice == ""
 
 
 def test_a_dry_run_lists_the_alerts_but_sends_and_records_nothing(tmp_path, committed):
@@ -347,7 +349,7 @@ def test_a_brief_restored_by_the_owner_is_not_closed_again(tmp_path, committed):
 
 def test_a_close_refused_by_the_move_is_counted_and_not_logged(tmp_path, committed, monkeypatch):
     root = make_inbox(tmp_path, {"d": inbox_text("d", **FINISHED)})
-    monkeypatch.setattr(triage, "apply_moves", lambda moves, root, today: [])
+    monkeypatch.setattr(triage, "apply_moves", lambda *args: [])
     report = triage.run(_opts(root, apply=True))
     assert (report.closes_changed_underfoot, report.committed) == (1, False)
 
