@@ -2,17 +2,11 @@
 """
 maintain.py: the one entry point that keeps a queue tidy, whatever triggers it.
 
-    maintain.py                          # run both tiers now
-    maintain.py --if-older-than 4h       # a trigger that costs nothing when a run is recent enough
-    maintain.py --runner cloud --dry-run # print what would run, change nothing
+    maintain.py [--if-older-than 4h] [--runner cloud] [--dry-run]
 
-Any timer, cloud routine or hook may call it. The last successful run of each tier is recorded in
-the queue's git repo (`maintain_state`), so a redundant trigger sees the record and exits after a
-fetch; a lease taken the same way keeps two runners from working at once. The deterministic tier
-makes no Claude calls and always runs; the judgement tier calls headless Claude, and is deferred
-untouched when no account has credits, so the next trigger retries it.
-
-Stdlib only.
+Runs the deterministic tier, then the judgement tier unless no account has credits. Each tier's last
+successful run is recorded, so a redundant trigger exits after a fetch; a lease stops two runners
+working at once. Stdlib only.
 """
 
 import argparse
@@ -31,8 +25,9 @@ from maintain_capacity import has_capacity, switch_home
 from maintain_state import (
     Counts,
     Exchange,
-    Held,
+    Lease,
     Outcome,
+    RunnerName,
     RunRecord,
     Tier,
     TierRun,
@@ -154,6 +149,12 @@ class Engine:
     def steps_of(self, tier: Tier) -> list[Step]:
         return [s for s in self.steps if s.tier is tier]
 
+    def can_run_skipped(self, tier: Tier, skipped: Sequence[str]) -> bool:
+        """Whether a step an earlier run skipped has its script here, so this environment can finish the job."""
+        return any(
+            s.name in skipped and s.command(self.where) is not None for s in self.steps_of(tier)
+        )
+
     def child_env(self) -> dict[str, str]:
         """Every step resolves the queue from the environment, so they all act on the same one."""
         return {**os.environ, "CLAUDE_TASKS_DIR": str(self.where.root)}
@@ -188,49 +189,61 @@ class TierResult:
     tier: Tier
     outcome: Outcome
     counts: Counts
+    skipped: tuple[str, ...]
     run: TierRun | None  # set only for a run worth recording
 
     def summary(self) -> str:
         c = self.counts
         return (
             f"{self.tier.value}: {self.outcome.value} "
-            f"({c.steps_ok} ok, {c.steps_failed} failed, {c.steps_skipped} skipped)"
+            f"({c.steps_ok} ok, {c.steps_failed} failed, {len(self.skipped)} skipped)"
         )
 
 
-def run_tier(tier: Tier, engine: Engine, runner: str, deadline: datetime.datetime) -> TierResult:
+def run_tier(
+    tier: Tier, engine: Engine, runner: RunnerName, deadline: datetime.datetime
+) -> TierResult:
     """Every step of `tier` in order; a failed step does not stop the rest, but the tier is not recorded."""
     started = engine.clock()
     print(f"{tier.value}: running")
-    outcomes = [_run_step(step, engine, deadline) for step in engine.steps_of(tier)]
-    counts = Counts(
-        steps_ok=outcomes.count(StepOutcome.OK),
-        steps_failed=outcomes.count(StepOutcome.FAILED),
-        steps_skipped=outcomes.count(StepOutcome.SKIPPED),
+    steps = engine.steps_of(tier)
+    outcomes = [_run_step(step, engine, deadline) for step in steps]
+    counts = Counts(outcomes.count(StepOutcome.OK), outcomes.count(StepOutcome.FAILED))
+    skipped = tuple(
+        s.name for s, o in zip(steps, outcomes, strict=True) if o is StepOutcome.SKIPPED
     )
     if counts.steps_failed:
-        return TierResult(tier, Outcome.FAILED, counts, None)
-    run = TierRun(tier, started, engine.clock(), runner, Outcome.OK, counts)
-    return TierResult(tier, Outcome.OK, counts, run)
+        return TierResult(tier, Outcome.FAILED, counts, skipped, None)
+    run = TierRun(tier, started, engine.clock(), runner, Outcome.OK, counts, skipped)
+    return TierResult(tier, Outcome.OK, counts, skipped, run)
 
 
 @dataclasses.dataclass(frozen=True)
 class Request:
-    runner: str
+    runner: RunnerName
     max_age: datetime.timedelta | None
     lease_ttl: datetime.timedelta
     dry_run: bool
 
 
+def _is_due(
+    tier: Tier,
+    record: RunRecord,
+    now: datetime.datetime,
+    max_age: datetime.timedelta | None,
+    engine: Engine,
+) -> bool:
+    """No run recent enough, or the last one skipped a step this environment can run."""
+    last = record.last(tier)
+    if max_age is None or last is None or not last.fresh(now, max_age):
+        return True
+    return engine.can_run_skipped(tier, last.skipped)
+
+
 def _stale(
-    record: RunRecord, now: datetime.datetime, max_age: datetime.timedelta | None
+    record: RunRecord, now: datetime.datetime, max_age: datetime.timedelta | None, engine: Engine
 ) -> list[Tier]:
-    """Tiers with no successful run recent enough; with no `max_age` every tier is due."""
-    return [
-        tier
-        for tier in Tier
-        if max_age is None or (last := record.last(tier)) is None or not last.fresh(now, max_age)
-    ]
+    return [tier for tier in Tier if _is_due(tier, record, now, max_age, engine)]
 
 
 def _announce_fresh(record: RunRecord, tiers: Sequence[Tier], now: datetime.datetime) -> None:
@@ -242,7 +255,9 @@ def _announce_fresh(record: RunRecord, tiers: Sequence[Tier], now: datetime.date
 
 def _with_capacity(due: Sequence[Tier], engine: Engine) -> list[Tier]:
     """The due tiers that can run now; a credit-hungry tier with none to spend is deferred untouched."""
-    usable = has_capacity(engine.where.switch_home, engine.clock())
+    usable = not any(t.needs_capacity for t in due) or has_capacity(
+        engine.where.switch_home, engine.clock()
+    )
     runnable = [t for t in due if usable or not t.needs_capacity]
     for tier in (t for t in due if t not in runnable):
         print(f"{tier.value}: {Outcome.DEFERRED.value}")
@@ -267,15 +282,32 @@ def _work(
 ) -> list[TierResult]:
     """Run the tiers still due once the lease is ours; a runner that finished first makes them fresh."""
     now, record = engine.clock(), exchange.record()
-    due = _stale(record, now, request.max_age)
+    due = _stale(record, now, request.max_age, engine)
     _announce_fresh(record, [t for t in runnable if t not in due], now)
     return [run_tier(t, engine, request.runner, deadline) for t in runnable if t in due]
+
+
+def _under_lease(
+    request: Request,
+    engine: Engine,
+    exchange: Exchange,
+    runnable: Sequence[Tier],
+    lease: Lease,
+) -> int:
+    results: list[TierResult] = []
+    try:
+        results = _work(request, engine, exchange, runnable, lease.expires)
+    finally:
+        exchange.finish(lease, [r.run for r in results if r.run is not None])
+    for result in results:
+        print(result.summary())
+    return int(any(r.outcome is Outcome.FAILED for r in results))
 
 
 def maintain(request: Request, engine: Engine, exchange: Exchange) -> int:
     """Exit status 1 when a tier failed; being fresh, leased elsewhere or deferred are all 0."""
     now, record = engine.clock(), exchange.record()
-    due = _stale(record, now, request.max_age)
+    due = _stale(record, now, request.max_age, engine)
     _announce_fresh(record, [t for t in Tier if t not in due], now)
     runnable = _with_capacity(due, engine)
     if request.dry_run:
@@ -284,17 +316,7 @@ def maintain(request: Request, engine: Engine, exchange: Exchange) -> int:
     if not runnable:
         return 0
     leased = exchange.acquire(request.runner, now, request.lease_ttl)
-    if isinstance(leased, Held):
-        print(f"leased by {leased.lease.runner} until {leased.lease.expires:%H:%M}Z")
-        return 0
-    results: list[TierResult] = []
-    try:
-        results = _work(request, engine, exchange, runnable, leased.lease.expires)
-    finally:
-        exchange.finish(leased.lease, [r.run for r in results if r.run is not None])
-    for result in results:
-        print(result.summary())
-    return int(any(r.outcome is Outcome.FAILED for r in results))
+    return leased.work(lambda lease: _under_lease(request, engine, exchange, runnable, lease))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -303,7 +325,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--root", type=pathlib.Path, help="the queue (default: the resolved queue)")
     ap.add_argument(
-        "--runner", default=socket.gethostname(), help="free-text label, e.g. laptop or cloud"
+        "--runner",
+        type=RunnerName,
+        default=socket.gethostname(),
+        help="free-text label, e.g. laptop or cloud",
     )
     ap.add_argument(
         "--if-older-than",

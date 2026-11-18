@@ -2,12 +2,8 @@
 """
 maintain_capacity.py: whether any Claude account can take a headless call right now.
 
-Usage-limit state has one store and one reader API, `limit_state.py` in claude-switch, so this asks
-it rather than parsing the store. A cloud runner has no claude-switch, and a store that was never
-read says nothing either way; both assume capacity, because a judgement tier run needlessly fails
-harmlessly while one deferred forever stalls the queue.
-
-Stdlib only.
+Asks the usage-limit reader (`limit_state.py`) rather than parsing its store. Where the reader is
+absent or its store was never read, capacity is assumed. Stdlib only.
 """
 
 import datetime

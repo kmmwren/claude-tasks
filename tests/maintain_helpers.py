@@ -53,4 +53,4 @@ def tier_run(
     finished: datetime.datetime = T0,
     runner: str = "laptop",
 ) -> TierRun:
-    return TierRun(tier, finished - HOUR / 60, finished, runner, Outcome.OK, Counts(2, 0, 1))
+    return TierRun(tier, finished - HOUR / 60, finished, runner, Outcome.OK, Counts(2, 0))

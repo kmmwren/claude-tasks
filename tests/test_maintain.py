@@ -8,7 +8,17 @@ from collections.abc import Mapping, Sequence
 
 import maintain as m
 import pytest
-from maintain_state import Counts, Lease, LocalExchange, RunRecord, Tier, open_exchange
+from maintain_state import (
+    LOCAL_LEASE,
+    Counts,
+    Lease,
+    LocalExchange,
+    RunnerName,
+    RunRecord,
+    Tier,
+    local_path,
+    open_exchange,
+)
 
 from tests.maintain_helpers import (  # noqa: F401
     HOUR,
@@ -121,9 +131,9 @@ def test_both_tiers_run_and_are_recorded_when_nothing_is_recorded(
     ]
     record = exchange.record()
     assert record.last(Tier.DETERMINISTIC) is not None
-    assert record.last(Tier.DETERMINISTIC).counts == Counts(4, 0, 2)  # type: ignore[union-attr]
+    assert record.last(Tier.DETERMINISTIC).counts == Counts(4, 0)  # type: ignore[union-attr]
     assert record.last(Tier.JUDGEMENT) is not None
-    assert not (queue / ".state" / "maintain.lease").exists()
+    assert not local_path(queue, LOCAL_LEASE).exists()
     out = capsys.readouterr().out
     assert "route: skipped (router.py is not available here)" in out
     assert "deterministic: ok (4 ok, 0 failed, 2 skipped)" in out
@@ -154,7 +164,7 @@ def test_a_recent_enough_run_makes_the_tier_fresh_and_nothing_runs(
     out = capsys.readouterr().out
     assert "deterministic: fresh, last run 2026-11-17 09:00Z (1h ago) by laptop" in out
     assert "judgement: fresh, last run 2026-11-17 09:00Z (1h ago) by cloud" in out
-    assert not (queue / ".state" / "maintain.lease").exists()
+    assert not local_path(queue, LOCAL_LEASE).exists()
 
 
 def test_only_the_stale_tier_runs(tmp_path: pathlib.Path, queue: pathlib.Path) -> None:
@@ -188,12 +198,12 @@ def test_deferring_the_only_due_tier_takes_no_lease_and_writes_nothing(
     clock = FakeClock(T0 + HOUR)
     exchange = LocalExchange(queue)
     exchange.finish(Lease.take("laptop", T0, TTL), [tier_run()])
-    state = sorted(p.name for p in (queue / ".state").iterdir())
+    state = sorted(p.name for p in local_path(queue, LOCAL_LEASE).parent.iterdir())
     runner = FakeRunner(clock)
     engine = m.Engine(where(tmp_path, switch=no_capacity(tmp_path)), runner, clock)
     assert m.maintain(request(4 * HOUR), engine, exchange) == 0
     assert runner.calls == []
-    assert sorted(p.name for p in (queue / ".state").iterdir()) == state
+    assert sorted(p.name for p in local_path(queue, LOCAL_LEASE).parent.iterdir()) == state
 
 
 def test_a_failed_step_fails_its_tier_without_stopping_the_rest_or_recording_it(
@@ -290,7 +300,7 @@ def test_a_runner_that_finished_while_this_one_waited_makes_the_tiers_fresh(
     assert m.maintain(request(4 * HOUR), m.Engine(where(tmp_path), runner, clock), exchange) == 0
     assert runner.calls == []
     assert "fresh, last run 2026-11-17 09:00Z (1h ago) by cloud" in capsys.readouterr().out
-    assert not (queue / ".state" / "maintain.lease").exists()
+    assert not local_path(queue, LOCAL_LEASE).exists()
 
 
 def test_a_crash_mid_run_still_releases_the_lease(
@@ -302,7 +312,7 @@ def test_a_crash_mid_run_still_releases_the_lease(
     engine = m.Engine(where(tmp_path), crash, FakeClock())
     with pytest.raises(RuntimeError, match="boom"):
         m.maintain(request(), engine, LocalExchange(queue))
-    assert not (queue / ".state" / "maintain.lease").exists()
+    assert not local_path(queue, LOCAL_LEASE).exists()
 
 
 def test_a_dry_run_prints_the_plan_and_changes_nothing(
@@ -316,7 +326,7 @@ def test_a_dry_run_prints_the_plan_and_changes_nothing(
     out = capsys.readouterr().out
     assert code == 0
     assert runner.calls == []
-    assert not (queue / ".state").exists()
+    assert not local_path(queue, LOCAL_LEASE).parent.exists()
     assert "deterministic: would run" in out
     assert "  unblock: unblock.py" in out
     assert "  triage-judge: triage.py promote --apply --llm" in out
@@ -544,3 +554,69 @@ def test_a_runner_that_starts_while_another_is_working_stands_down(
     )
     assert shown.returncode != 0
     assert after.last(Tier.JUDGEMENT) is not None
+
+
+def coordinator_with_router(tmp_path: pathlib.Path) -> m.Environment:
+    """An environment where the generic queue's coordinator scripts exist."""
+    queue = tmp_path / "queue"
+    coordinator = tmp_path / "coordinator"
+    coordinator.mkdir(exist_ok=True)
+    for script in ("blocker_recheck.py", "router.py"):
+        (coordinator / script).write_text("")
+    return m.Environment(queue, coordinator, queue, tmp_path / "no-switch")
+
+
+def test_a_tier_that_skipped_a_step_is_recorded_with_it(
+    tmp_path: pathlib.Path, queue: pathlib.Path
+) -> None:
+    clock = FakeClock()
+    exchange = LocalExchange(queue)
+    m.maintain(request(), m.Engine(where(tmp_path), FakeRunner(clock), clock), exchange)
+    last = exchange.record().last(Tier.DETERMINISTIC)
+    assert last is not None
+    assert last.skipped == ("blocker-recheck", "route")
+
+
+def test_a_fresh_tier_is_rerun_where_it_can_do_a_step_the_last_run_skipped(
+    tmp_path: pathlib.Path, queue: pathlib.Path
+) -> None:
+    clock = FakeClock()
+    exchange = LocalExchange(queue)
+    m.maintain(request(4 * HOUR), m.Engine(where(tmp_path), FakeRunner(clock), clock), exchange)
+    clock.advance(HOUR)
+    rich = FakeRunner(clock)
+    m.maintain(
+        request(4 * HOUR), m.Engine(coordinator_with_router(tmp_path), rich, clock), exchange
+    )
+    assert [
+        s
+        for s in rich.scripts()
+        if s in ("blocker_recheck.py run --all", "router.py tick --no-judge")
+    ] == [
+        "blocker_recheck.py run --all",
+        "router.py tick --no-judge",
+    ]
+    assert exchange.record().last(Tier.DETERMINISTIC).skipped == ()  # type: ignore[union-attr]
+
+
+def test_a_fresh_tier_stays_fresh_where_the_skipped_step_is_still_unavailable(
+    tmp_path: pathlib.Path, queue: pathlib.Path
+) -> None:
+    clock = FakeClock()
+    exchange = LocalExchange(queue)
+    m.maintain(request(4 * HOUR), m.Engine(where(tmp_path), FakeRunner(clock), clock), exchange)
+    clock.advance(HOUR)
+    again = FakeRunner(clock)
+    m.maintain(request(4 * HOUR), m.Engine(where(tmp_path), again, clock), exchange)
+    assert again.calls == []
+
+
+def test_capacity_is_only_asked_when_a_due_tier_needs_it(
+    tmp_path: pathlib.Path, queue: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = FakeClock(T0 + HOUR)
+    exchange = LocalExchange(queue)
+    exchange.finish(Lease.take(RunnerName("laptop"), T0, TTL), [tier_run(Tier.JUDGEMENT)])
+    monkeypatch.setattr(m, "has_capacity", lambda *a: pytest.fail("asked"))
+    engine = m.Engine(where(tmp_path), FakeRunner(clock), clock)
+    assert m.maintain(request(4 * HOUR), engine, exchange) == 0

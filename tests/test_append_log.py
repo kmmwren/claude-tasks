@@ -2,6 +2,7 @@ import pathlib
 import subprocess
 
 import append_log
+import origin_push
 import pytest
 
 ID = "demo-brief"
@@ -91,7 +92,7 @@ def test_cli_exit_codes(repos, capsys):
 
 
 def _failing(real, fragment):
-    """Wrap append_log._run so any git call whose args contain `fragment` fails."""
+    """Wrap origin_push._run so any git call whose args contain `fragment` fails."""
 
     def run(repo, *args, **kw):
         if fragment in args:
@@ -104,7 +105,7 @@ def _failing(real, fragment):
 @pytest.mark.parametrize("fragment, message", [("fetch", "fetch"), ("worktree", "worktree add")])
 def test_git_setup_failure_is_a_runtime_error(repos, monkeypatch, fragment, message):
     _, main = repos
-    monkeypatch.setattr(append_log, "_run", _failing(append_log._run, fragment))
+    monkeypatch.setattr(origin_push, "_run", _failing(origin_push._run, fragment))
     with pytest.raises(RuntimeError, match=message):
         append_log.append_log(ID, "x", root=main)
 
@@ -120,12 +121,16 @@ def test_commit_failure_is_a_runtime_error(repos):
 
 def test_push_that_always_loses_the_race_gives_up_naming_the_line(repos, capsys, monkeypatch):
     _, main = repos
-    monkeypatch.setattr(append_log, "_try_push", lambda *a: None)
-    monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
+    monkeypatch.setattr(origin_push, "_try_push", _always_lose)
+    monkeypatch.setattr(origin_push, "_backoff", lambda attempt: None)
     assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
     err = capsys.readouterr().err
-    assert f"still rejected after {append_log.PUSH_ATTEMPTS} attempts" in err and "keep me" in err
+    assert f"still rejected after {origin_push.PUSH_ATTEMPTS} attempts" in err and "keep me" in err
     assert git(main, "worktree", "list").count("\n") == 1
+
+
+def _always_lose(*args):
+    raise origin_push.RaceLost
 
 
 def _push_fails_with(real, stderr):
@@ -148,9 +153,9 @@ def _push_fails_with(real, stderr):
 )
 def test_a_push_that_lost_the_race_is_retried(repos, monkeypatch, stderr):
     _, main = repos
-    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
-    monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
-    with pytest.raises(RuntimeError, match=f"still rejected after {append_log.PUSH_ATTEMPTS}"):
+    monkeypatch.setattr(origin_push, "_run", _push_fails_with(origin_push._run, stderr))
+    monkeypatch.setattr(origin_push, "_backoff", lambda attempt: None)
+    with pytest.raises(RuntimeError, match=f"still rejected after {origin_push.PUSH_ATTEMPTS}"):
         append_log.append_log(ID, "x", root=main)
 
 
@@ -164,21 +169,21 @@ def test_a_push_that_lost_the_race_is_retried(repos, monkeypatch, stderr):
 )
 def test_a_push_the_server_declined_is_not_retried(repos, monkeypatch, stderr):
     _, main = repos
-    monkeypatch.setattr(append_log, "_run", _push_fails_with(append_log._run, stderr))
-    monkeypatch.setattr(append_log, "_backoff", lambda attempt: pytest.fail("retried"))
+    monkeypatch.setattr(origin_push, "_run", _push_fails_with(origin_push._run, stderr))
+    monkeypatch.setattr(origin_push, "_backoff", lambda attempt: pytest.fail("retried"))
     with pytest.raises(RuntimeError, match=r"(?s)push refused: .*hook declined"):
         append_log.append_log(ID, "x", root=main)
 
 
 def _hang_on(monkeypatch, verb):
-    real = append_log._git
+    real = origin_push._git
 
     def hung(root, *args, **kw):
         if args[:1] == (verb,):
             raise subprocess.TimeoutExpired(["git", *args], kw["timeout"])
         return real(root, *args, **kw)
 
-    monkeypatch.setattr(append_log, "_git", hung)
+    monkeypatch.setattr(origin_push, "_git", hung)
 
 
 @pytest.mark.parametrize("verb", ["fetch", "push"])
@@ -189,24 +194,24 @@ def test_a_hung_network_call_fails_the_append_naming_the_line(repos, capsys, mon
     assert append_log.main([ID, "keep me", "--root", str(main)]) == 2
 
     err = capsys.readouterr().err
-    assert f"git {verb} timed out after {append_log.NETWORK_TIMEOUT:.0f}s" in err
+    assert f"git {verb} timed out after {origin_push.NETWORK_TIMEOUT:.0f}s" in err
     assert "keep me" in err
     assert git(main, "worktree", "list").count("\n") == 1
 
 
 def test_every_network_call_carries_the_network_timeout(repos, monkeypatch):
     _, main = repos
-    real, timeouts = append_log._git, []
+    real, timeouts = origin_push._git, []
 
     def recording(root, *args, **kw):
         if args[:1] in (("push",), ("fetch",)):
             timeouts.append(kw["timeout"])
         return real(root, *args, **kw)
 
-    monkeypatch.setattr(append_log, "_git", recording)
+    monkeypatch.setattr(origin_push, "_git", recording)
     append_log.append_log(ID, "timed", root=main, today="2026-11-12")
 
-    assert timeouts == [append_log.NETWORK_TIMEOUT] * 2
+    assert timeouts == [origin_push.NETWORK_TIMEOUT] * 2
 
 
 PEER = "peer-memory-abc12345"
@@ -291,9 +296,9 @@ def test_busy_queue_lock_still_pushes_and_says_so(repos, capsys, monkeypatch):
 @pytest.mark.parametrize("attempt, cap", [(0, 0.25), (2, 1.0), (10, 4.0)])
 def test_backoff_sleeps_at_most_the_capped_doubling(monkeypatch, attempt, cap):
     slept = []
-    monkeypatch.setattr(append_log.random, "uniform", lambda lo, hi: (lo, hi)[1])
-    monkeypatch.setattr(append_log.time, "sleep", slept.append)
-    append_log._backoff(attempt)
+    monkeypatch.setattr(origin_push.random, "uniform", lambda lo, hi: (lo, hi)[1])
+    monkeypatch.setattr(origin_push.time, "sleep", slept.append)
+    origin_push._backoff(attempt)
     assert slept == [cap]
 
 
@@ -324,7 +329,7 @@ def test_main_checkout_behind_with_dirty_tree_still_logs(repos, tmp_path):
 
 def test_push_that_keeps_losing_races_still_lands_the_line(repos, tmp_path, monkeypatch):
     origin, main = repos
-    real, raced = append_log._run, []
+    real, raced = origin_push._run, []
 
     def racing(repo, *args, **kw):
         if args[:1] == ("push",) and len(raced) < 5:
@@ -332,8 +337,8 @@ def test_push_that_keeps_losing_races_still_lands_the_line(repos, tmp_path, monk
             raced.append(1)
         return real(repo, *args, **kw)
 
-    monkeypatch.setattr(append_log, "_run", racing)
-    monkeypatch.setattr(append_log, "_backoff", lambda attempt: None)
+    monkeypatch.setattr(origin_push, "_run", racing)
+    monkeypatch.setattr(origin_push, "_backoff", lambda attempt: None)
     sha = append_log.append_log(ID, "after five lost races", root=main, today="2026-11-10")
     assert "2026-11-10: after five lost races" in git(origin, "show", f"{sha}:ready/{ID}.md")
     assert git(origin, "log", "--format=%s", "main").count("racer") == 5
@@ -345,9 +350,9 @@ def test_push_declined_for_another_reason_fails_at_once_with_the_line(repos, cap
     hook.write_text("#!/bin/sh\necho 'policy says no' >&2\nexit 1\n")
     hook.chmod(0o755)
     pushes = []
-    real = append_log._run
+    real = origin_push._run
     monkeypatch.setattr(
-        append_log,
+        origin_push,
         "_run",
         lambda repo, *a, **kw: (a[:1] == ("push",) and pushes.append(1), real(repo, *a, **kw))[1],
     )

@@ -7,9 +7,11 @@ import subprocess
 from collections.abc import Callable
 
 import maintain_state as ms
+import origin_push
 import pytest
 from maintain_state import (
     Acquired,
+    Contended,
     Counts,
     ExchangeUnavailable,
     FallbackExchange,
@@ -18,6 +20,7 @@ from maintain_state import (
     Lease,
     LocalExchange,
     Outcome,
+    RunnerName,
     RunRecord,
     Tier,
 )
@@ -33,6 +36,12 @@ from tests.maintain_helpers import (  # noqa: F401
 )
 
 pytestmark = pytest.mark.usefixtures("isolated_git")
+
+
+@pytest.fixture(autouse=True)
+def no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(origin_push, "_backoff", lambda attempt: None)
+
 
 TTL = datetime.timedelta(minutes=30)
 
@@ -89,6 +98,10 @@ def test_a_run_is_fresh_until_it_is_max_age_old() -> None:
     assert not run.fresh(T0 + 3 * HOUR, 2 * HOUR)
 
 
+def test_a_run_finished_in_the_future_is_not_fresh() -> None:
+    assert not tier_run(finished=T0 + HOUR).fresh(T0, 2 * HOUR)
+
+
 def test_a_run_describes_when_and_by_whom() -> None:
     assert (
         tier_run(finished=T0).describe(T0 + HOUR) == "last run 2026-11-17 09:00Z (1h ago) by laptop"
@@ -114,6 +127,7 @@ def test_an_absent_record_is_empty_without_a_warning(capsys: pytest.CaptureFixtu
             }
         ),
         json.dumps({"tiers": {"deterministic": {**tier_run().to_json(), "outcome": "great"}}}),
+        json.dumps({"tiers": {"deterministic": {**tier_run().to_json(), "skipped": "route"}}}),
     ],
 )
 def test_a_corrupt_record_warns_and_counts_as_empty(
@@ -134,6 +148,16 @@ def test_a_lease_is_live_until_it_expires() -> None:
     assert lease.live(T0 + TTL / 2)
     assert not lease.live(T0 + TTL)
     assert Lease.parse(lease.to_text()) == lease
+
+
+def test_a_lease_from_a_clock_far_ahead_is_not_live() -> None:
+    ahead = Lease.take(RunnerName("cloud"), T0 + HOUR, TTL)
+    assert not ahead.live(T0)
+
+
+def test_a_lease_from_a_clock_slightly_ahead_is_live() -> None:
+    near = Lease.take(RunnerName("cloud"), T0 + ms.CLOCK_SKEW / 2, TTL)
+    assert near.live(T0)
 
 
 def test_leases_of_one_runner_carry_distinct_tokens() -> None:
@@ -161,8 +185,8 @@ def test_local_expired_lease_is_taken_over(tmp_path: pathlib.Path) -> None:
 
 
 def test_local_unreadable_lease_is_taken_over(tmp_path: pathlib.Path) -> None:
-    (tmp_path / ".state").mkdir()
-    (tmp_path / ms.LEASE_PATH).write_text("garbage")
+    ms.local_path(tmp_path, ms.LOCAL_LEASE).parent.mkdir(parents=True)
+    ms.local_path(tmp_path, ms.LOCAL_LEASE).write_text("garbage")
     assert isinstance(LocalExchange(tmp_path).acquire("cloud", T0, TTL), Acquired)
 
 
@@ -171,14 +195,14 @@ def test_local_finish_records_the_runs_and_releases_the_lease(tmp_path: pathlib.
     leased = local.acquire("laptop", T0, TTL)
     local.finish(leased.lease, [tier_run()])
     assert local.record().last(Tier.DETERMINISTIC) == tier_run()
-    assert not (tmp_path / ms.LEASE_PATH).exists()
+    assert not ms.local_path(tmp_path, ms.LOCAL_LEASE).exists()
 
 
 def test_local_finish_without_runs_leaves_the_record_alone(tmp_path: pathlib.Path) -> None:
     local = LocalExchange(tmp_path)
     local.finish(local.acquire("laptop", T0, TTL).lease, [])
-    assert not (tmp_path / ms.RECORD_PATH).exists()
-    assert not (tmp_path / ms.LEASE_PATH).exists()
+    assert not ms.local_path(tmp_path, ms.LOCAL_RECORD).exists()
+    assert not ms.local_path(tmp_path, ms.LOCAL_LEASE).exists()
 
 
 def test_local_finish_leaves_a_lease_another_runner_took_over(tmp_path: pathlib.Path) -> None:
@@ -186,7 +210,7 @@ def test_local_finish_leaves_a_lease_another_runner_took_over(tmp_path: pathlib.
     slow = local.acquire("laptop", T0, TTL).lease
     rival = local.acquire("cloud", T0 + 2 * TTL, TTL).lease
     local.finish(slow, [tier_run()])
-    assert Lease.parse((tmp_path / ms.LEASE_PATH).read_text()) == rival
+    assert Lease.parse(ms.local_path(tmp_path, ms.LOCAL_LEASE).read_text()) == rival
 
 
 def test_local_finish_with_no_lease_file_still_records(tmp_path: pathlib.Path) -> None:
@@ -218,15 +242,15 @@ def origin_commits(origin: pathlib.Path) -> int:
 
 def after_first_fetch(monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]) -> None:
     """Let origin change between a runner's fetch and its push, which is what a lost race looks like."""
-    real, fired = GitExchange._fetch, []
+    real, fired = origin_push.fetch_origin, []
 
-    def fetch(self: GitExchange) -> None:
-        real(self)
+    def fetch(root: pathlib.Path) -> None:
+        real(root)
         if not fired:
             fired.append(True)
             action()
 
-    monkeypatch.setattr(GitExchange, "_fetch", fetch)
+    monkeypatch.setattr(origin_push, "fetch_origin", fetch)
 
 
 def test_git_lease_is_pushed_to_origin_and_held_against_other_runners(
@@ -323,13 +347,33 @@ def test_git_losing_the_race_to_another_lease_stands_down(
     assert lost.lease == winner[0]
 
 
-def test_git_origin_that_never_holds_still_is_unavailable(
+def lose_every_race(monkeypatch: pytest.MonkeyPatch) -> None:
+    def lost(*args: object) -> str:
+        raise origin_push.RaceLost
+
+    monkeypatch.setattr(origin_push, "_try_push", lost)
+
+
+def test_git_origin_that_never_holds_still_stands_the_taker_down(
     tmp_path: pathlib.Path, origin: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mine = runner_on(tmp_path, origin, "a")
-    monkeypatch.setattr(GitExchange, "_publish", lambda self, worktree, message: False)
-    with pytest.raises(ExchangeUnavailable, match="moved 5 times"):
-        mine.acquire("laptop", T0, TTL)
+    lose_every_race(monkeypatch)
+    lost = mine.acquire(RunnerName("laptop"), T0, TTL)
+    assert isinstance(lost, Contended)
+    assert lost.claimed() is None
+    assert f"still rejected after {origin_push.PUSH_ATTEMPTS}" in lost.reason()
+
+
+def test_git_finish_on_an_origin_that_never_holds_still_is_unavailable(
+    tmp_path: pathlib.Path, origin: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = runner_on(tmp_path, origin, "a")
+    lease = mine.acquire(RunnerName("laptop"), T0, TTL).claimed()
+    assert lease is not None
+    lose_every_race(monkeypatch)
+    with pytest.raises(ExchangeUnavailable, match="still rejected"):
+        mine.finish(lease, [tier_run()])
 
 
 def test_git_record_merges_a_run_left_locally_while_origin_was_unreachable(
@@ -347,7 +391,7 @@ def test_git_unreachable_origin_is_unavailable(
 ) -> None:
     mine = runner_on(tmp_path, origin, "a")
     (tmp_path / "origin.git").rename(tmp_path / "gone.git")
-    with pytest.raises(ExchangeUnavailable, match="fetch failed"):
+    with pytest.raises(ExchangeUnavailable, match="fetch origin main failed"):
         mine.record()
 
 
@@ -359,24 +403,44 @@ def test_git_hung_remote_is_unavailable(
     def hang(*args: str, **kw: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired("git", 1)
 
-    monkeypatch.setattr(ms, "_git", hang)
+    monkeypatch.setattr(origin_push, "_git", hang)
     with pytest.raises(ExchangeUnavailable, match="timed out"):
         mine.record()
+
+
+def refuse_push(monkeypatch: pytest.MonkeyPatch, code: int, stderr: str) -> list[int]:
+    """Make every push exit `code` with `stderr`, and count the pushes."""
+    real, pushes = origin_push._network, []
+
+    def network(where: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+        if args[0] == "push":
+            pushes.append(1)
+            return subprocess.CompletedProcess(args, code, "", stderr)
+        return real(where, *args)
+
+    monkeypatch.setattr(origin_push, "_network", network)
+    return pushes
 
 
 def test_git_push_that_fails_for_another_reason_is_unavailable(
     tmp_path: pathlib.Path, origin: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mine, real = runner_on(tmp_path, origin, "a"), ms._network
+    mine = runner_on(tmp_path, origin, "a")
+    refuse_push(monkeypatch, 128, "fatal: unable to access")
+    with pytest.raises(ExchangeUnavailable, match="push refused"):
+        mine.acquire(RunnerName("laptop"), T0, TTL)
 
-    def network(where: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
-        if args[0] == "push":
-            return subprocess.CompletedProcess(args, 128, "", "fatal: unable to access")
-        return real(where, *args)
 
-    monkeypatch.setattr(ms, "_network", network)
-    with pytest.raises(ExchangeUnavailable, match="push failed"):
-        mine.acquire("laptop", T0, TTL)
+def test_git_push_declined_with_exit_1_is_unavailable_not_a_lost_race(
+    tmp_path: pathlib.Path, origin: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = runner_on(tmp_path, origin, "a")
+    pushes = refuse_push(
+        monkeypatch, 1, " ! [remote rejected] HEAD -> main (pre-receive hook declined)"
+    )
+    with pytest.raises(ExchangeUnavailable, match="hook declined"):
+        mine.acquire(RunnerName("laptop"), T0, TTL)
+    assert len(pushes) == 1
 
 
 def test_git_commit_that_fails_is_unavailable(tmp_path: pathlib.Path, origin: pathlib.Path) -> None:
@@ -385,7 +449,7 @@ def test_git_commit_that_fails_is_unavailable(tmp_path: pathlib.Path, origin: pa
     hook.write_text("#!/bin/sh\nexit 1\n")
     hook.chmod(0o755)
     with pytest.raises(ExchangeUnavailable, match="commit failed"):
-        mine.acquire("laptop", T0, TTL)
+        mine.acquire(RunnerName("laptop"), T0, TTL)
 
 
 def test_git_missing_origin_tip_is_unavailable(
@@ -393,19 +457,18 @@ def test_git_missing_origin_tip_is_unavailable(
 ) -> None:
     mine = runner_on(tmp_path, origin, "a")
     git(tmp_path / "a", "update-ref", "-d", "refs/remotes/origin/main")
-    monkeypatch.setattr(GitExchange, "_fetch", lambda self: None)
-    with pytest.raises(ExchangeUnavailable, match="no worktree"):
-        mine.acquire("laptop", T0, TTL)
+    monkeypatch.setattr(origin_push, "fetch_origin", lambda root: None)
+    with pytest.raises(ExchangeUnavailable, match="worktree add failed"):
+        mine.acquire(RunnerName("laptop"), T0, TTL)
 
 
-def test_git_commits_with_a_default_identity_when_none_is_configured(
+def test_git_commits_with_the_shared_identity_whatever_the_clone_configures(
     tmp_path: pathlib.Path, origin: pathlib.Path
 ) -> None:
     mine = runner_on(tmp_path, origin, "a")
-    git(tmp_path / "a", "config", "--unset", "user.email")
-    mine.acquire("laptop", T0, TTL)
+    mine.acquire(RunnerName("laptop"), T0, TTL)
     assert git(origin, "log", "-1", "--format=%an <%ae>", "main").strip() == (
-        "claude-tasks <claude-tasks@localhost>"
+        "claude-tasks <noreply@anthropic.com>"
     )
 
 
@@ -414,7 +477,7 @@ class Broken(ms.Exchange):
         raise ExchangeUnavailable("down")
 
     def acquire(
-        self, runner: str, now: datetime.datetime, ttl: datetime.timedelta
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
     ) -> ms.LeaseResult:
         raise ExchangeUnavailable("down")
 
@@ -469,4 +532,56 @@ def test_outcome_and_counts_survive_the_record(tmp_path: pathlib.Path) -> None:
     again = RunRecord.parse(RunRecord().with_runs([run]).to_text()).last(Tier.DETERMINISTIC)
     assert again is not None
     assert again.outcome is Outcome.OK
-    assert again.counts == Counts(2, 0, 1)
+    assert again.counts == Counts(2, 0)
+
+
+class Scripted(ms.Exchange):
+    """A shared exchange whose acquire result is fixed and whose finish fails."""
+
+    def __init__(self, leased: ms.LeaseResult) -> None:
+        self.leased = leased
+        self.finishes = 0
+
+    def record(self) -> RunRecord:
+        return RunRecord()
+
+    def acquire(
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
+    ) -> ms.LeaseResult:
+        return self.leased
+
+    def finish(self, lease: Lease, runs: ms.Sequence[ms.TierRun]) -> None:
+        self.finishes += 1
+        raise ExchangeUnavailable("origin went away")
+
+
+def test_fallback_stands_down_when_origin_is_contended_instead_of_leasing_locally(
+    tmp_path: pathlib.Path,
+) -> None:
+    local = LocalExchange(tmp_path)
+    exchange = FallbackExchange(Scripted(Contended("busy")), local)
+    assert isinstance(exchange.acquire(RunnerName("laptop"), T0, TTL), Contended)
+    assert not ms.local_path(tmp_path, ms.LOCAL_LEASE).exists()
+    assert exchange.record() == RunRecord()
+
+
+def test_fallback_keeps_the_run_remote_when_finish_fails_after_a_remote_lease(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lease = Lease.take(RunnerName("laptop"), T0, TTL)
+    shared, local = Scripted(Acquired(lease)), LocalExchange(tmp_path)
+    exchange = FallbackExchange(shared, local)
+    assert exchange.acquire(RunnerName("laptop"), T0, TTL).claimed() == lease
+    exchange.finish(lease, [tier_run()])
+    assert shared.finishes == 1
+    assert not ms.local_path(tmp_path, ms.LOCAL_LEASE).exists()
+    assert local.record().last(Tier.DETERMINISTIC) == tier_run()
+    assert "expires on its own" in capsys.readouterr().err
+    exchange.record()
+    assert "using local files" not in capsys.readouterr().err
+
+
+def test_a_lease_result_runs_the_job_only_when_the_lease_is_ours() -> None:
+    lease = Lease.take(RunnerName("laptop"), T0, TTL)
+    assert Acquired(lease).work(lambda taken: 7) == 7
+    assert Held(lease).work(lambda taken: 7) == 0

@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """
-maintain_state.py: the run record and the lease that let any trigger run the engine without racing.
+maintain_state.py: the run record (last successful run per tier) and the runner lease.
 
-The record (`<queue>/.state/maintain.json`) holds the last successful run per tier, and the lease
-(`<queue>/.state/maintain.lease`) names the runner currently working. Both are committed to the
-queue's git repo, so a laptop timer and a cloud routine, on any git host, read and write one truth.
-A queue with no remote keeps the same two files locally.
-
-Leases are taken and released in a scratch worktree cut from origin/main and pushed without
-rebasing: a rejected push means the tip moved, so the taker re-reads it and either finds a live
-lease (someone else won) or retries on the new tip. The queue's own checkout never carries a lease
-commit, so it can never be left diverged from origin by a lost race.
+Shared state is committed to origin/main under `.state/`. A runner that cannot reach origin keeps
+the same two files under the clone's git dir, and the record merges forward on the next read.
 
 Stdlib only.
 """
 
 import abc
-import contextlib
 import dataclasses
 import datetime
 import enum
@@ -24,28 +16,36 @@ import json
 import os
 import pathlib
 import re
-import subprocess
 import sys
-import tempfile
 import uuid
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from typing import TypeVar
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import NewType, TypeVar
 
-from _concurrency import atomic_write, require_lock
-from git_sync import NETWORK_TIMEOUT, owns_repo
+from _concurrency import atomic_write, clone_state_path, require_lock
+from git_sync import owns_repo
+from origin_push import (
+    OriginBusy,
+    PushError,
+    fetch_origin,
+    has_origin,
+    push_from_fresh_origin,
+    read_origin,
+)
 
 STATE_DIR = ".state"
 RECORD_PATH = f"{STATE_DIR}/maintain.json"
 LEASE_PATH = f"{STATE_DIR}/maintain.lease"
-REMOTE_REF = "origin/main"
-PUSH_ATTEMPTS = 5  # a busy origin can reject a few times before the tip holds still
+LOCAL_DIR = "maintain"
+LOCAL_RECORD = "record.json"
+LOCAL_LEASE = "lease.json"
 LOCAL_LOCK_WAIT = 5.0
-DEFAULT_IDENTITY = ("claude-tasks", "claude-tasks@localhost")
+CLOCK_SKEW = datetime.timedelta(minutes=1)  # slack for a peer whose clock runs a little ahead
 
 _DURATION = re.compile(r"(\d+)([smhd])")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 T = TypeVar("T")
+RunnerName = NewType("RunnerName", str)
 
 
 def parse_duration(text: str) -> datetime.timedelta:
@@ -84,6 +84,10 @@ def _field(data: Mapping[str, object], key: str, kind: type[T]) -> T:
     return value
 
 
+def _names(data: Mapping[str, object], key: str) -> tuple[str, ...]:
+    return tuple(str(item) for item in _field(data, key, list))
+
+
 def _moment(data: Mapping[str, object], key: str) -> datetime.datetime:
     moment = datetime.datetime.fromisoformat(_field(data, key, str))
     if moment.tzinfo is None:
@@ -112,7 +116,6 @@ class Outcome(enum.Enum):
 class Counts:
     steps_ok: int = 0
     steps_failed: int = 0
-    steps_skipped: int = 0
 
     def to_json(self) -> dict[str, object]:
         return dataclasses.asdict(self)
@@ -127,12 +130,14 @@ class TierRun:
     tier: Tier
     started: datetime.datetime
     finished: datetime.datetime
-    runner: str
+    runner: RunnerName
     outcome: Outcome
     counts: Counts
+    skipped: tuple[str, ...] = ()  # steps whose script this environment lacked
 
     def fresh(self, now: datetime.datetime, max_age: datetime.timedelta) -> bool:
-        return now - self.finished < max_age
+        """A finish time in the future is clock skew, not freshness."""
+        return datetime.timedelta(0) <= now - self.finished < max_age
 
     def describe(self, now: datetime.datetime) -> str:
         """`last run 2026-11-17 09:00Z (35m ago) by laptop`."""
@@ -146,6 +151,7 @@ class TierRun:
             "runner": self.runner,
             "outcome": self.outcome.value,
             "counts": self.counts.to_json(),
+            "skipped": list(self.skipped),
         }
 
     @classmethod
@@ -154,9 +160,10 @@ class TierRun:
             tier,
             _moment(data, "started"),
             _moment(data, "finished"),
-            _field(data, "runner", str),
+            RunnerName(_field(data, "runner", str)),
             Outcome(_field(data, "outcome", str)),
             Counts.from_json(_field(data, "counts", dict)),
+            _names(data, "skipped"),
         )
 
 
@@ -208,17 +215,19 @@ class RunRecord:
 class Lease:
     """One runner's claim on the queue. The token tells a lease apart from a takeover of the same runner."""
 
-    runner: str
+    runner: RunnerName
     token: str
     started: datetime.datetime
     expires: datetime.datetime
 
     @classmethod
-    def take(cls, runner: str, now: datetime.datetime, ttl: datetime.timedelta) -> "Lease":
+    def take(cls, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta) -> "Lease":
         return cls(runner, uuid.uuid4().hex, now, now + ttl)
 
     def live(self, now: datetime.datetime) -> bool:
-        return self.expires > now
+        """Unexpired, and not promising longer than its own ttl: a clock far ahead cannot hold it forever."""
+        remaining = self.expires - now
+        return datetime.timedelta(0) < remaining <= self.expires - self.started + CLOCK_SKEW
 
     def to_text(self) -> str:
         data = {
@@ -235,7 +244,7 @@ class Lease:
         try:
             data = _document(text)
             return cls(
-                _field(data, "runner", str),
+                RunnerName(_field(data, "runner", str)),
                 _field(data, "token", str),
                 _moment(data, "started"),
                 _moment(data, "expires"),
@@ -244,19 +253,59 @@ class Lease:
             return None
 
 
+class LeaseResult(abc.ABC):
+    """The outcome of asking for the lease: ours, or a reason this runner stands down."""
+
+    @abc.abstractmethod
+    def claimed(self) -> Lease | None:
+        """The lease when it is ours."""
+
+    @abc.abstractmethod
+    def work(self, job: Callable[[Lease], int]) -> int:
+        """Run `job` under the lease when it is ours; otherwise say why not, and succeed."""
+
+
 @dataclasses.dataclass(frozen=True)
-class LeaseResult:
-    """The outcome of asking for the lease: ours, or the live one that is someone else's."""
+class Acquired(LeaseResult):
+    lease: Lease
+
+    def claimed(self) -> Lease | None:
+        return self.lease
+
+    def work(self, job: Callable[[Lease], int]) -> int:
+        return job(self.lease)
+
+
+class StandDown(LeaseResult, abc.ABC):
+    def claimed(self) -> Lease | None:
+        return None
+
+    def work(self, job: Callable[[Lease], int]) -> int:
+        print(self.reason())
+        return 0
+
+    @abc.abstractmethod
+    def reason(self) -> str: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class Held(StandDown):
+    """Another runner's live lease."""
 
     lease: Lease
 
+    def reason(self) -> str:
+        return f"leased by {self.lease.runner} until {self.lease.expires:%H:%M}Z"
 
-class Acquired(LeaseResult):
-    pass
 
+@dataclasses.dataclass(frozen=True)
+class Contended(StandDown):
+    """Origin kept moving, so no runner can be told apart as the holder; the next trigger retries."""
 
-class Held(LeaseResult):
-    """Another runner's live lease, so this one stands down."""
+    detail: str
+
+    def reason(self) -> str:
+        return f"another runner is taking the lease ({self.detail})"
 
 
 class ExchangeUnavailable(Exception):
@@ -271,7 +320,7 @@ class Exchange(abc.ABC):
 
     @abc.abstractmethod
     def acquire(
-        self, runner: str, now: datetime.datetime, ttl: datetime.timedelta
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
     ) -> LeaseResult: ...
 
     @abc.abstractmethod
@@ -286,8 +335,13 @@ def _read(path: pathlib.Path) -> str:
         return ""
 
 
+def local_path(root: pathlib.Path, name: str) -> pathlib.Path:
+    """A local state file under the clone's git dir, so it is never committed or reset away."""
+    return clone_state_path(root, f"{LOCAL_DIR}/{name}")
+
+
 class LocalExchange(Exchange):
-    """The state as plain files under `<queue>/.state`, for a queue with no remote.
+    """The state as plain files in the clone's git dir, for a queue with no remote.
 
     The lease is created with O_EXCL under the queue lock, so two local processes cannot both
     take it, and an expired one is replaced inside that same lock.
@@ -296,14 +350,16 @@ class LocalExchange(Exchange):
     def __init__(self, root: pathlib.Path) -> None:
         self._root = root
 
-    def _path(self, relative: str) -> pathlib.Path:
-        return self._root / relative
+    def _path(self, name: str) -> pathlib.Path:
+        return local_path(self._root, name)
 
     def record(self) -> RunRecord:
-        return RunRecord.parse(_read(self._path(RECORD_PATH)))
+        return RunRecord.parse(_read(self._path(LOCAL_RECORD)))
 
-    def acquire(self, runner: str, now: datetime.datetime, ttl: datetime.timedelta) -> LeaseResult:
-        lease, path = Lease.take(runner, now, ttl), self._path(LEASE_PATH)
+    def acquire(
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
+    ) -> LeaseResult:
+        lease, path = Lease.take(runner, now, ttl), self._path(LOCAL_LEASE)
         path.parent.mkdir(parents=True, exist_ok=True)
         with require_lock(self._root, LOCAL_LOCK_WAIT):
             held = Lease.parse(_read(path))
@@ -315,37 +371,30 @@ class LocalExchange(Exchange):
                 handle.write(lease.to_text())
         return Acquired(lease)
 
+    def keep(self, runs: Sequence[TierRun]) -> None:
+        """Record `runs` here without touching the lease, so a later read of origin merges them in."""
+        with require_lock(self._root, LOCAL_LOCK_WAIT):
+            self._merge(runs)
+
+    def _merge(self, runs: Sequence[TierRun]) -> None:
+        if runs:
+            atomic_write(self._path(LOCAL_RECORD), self.record().with_runs(runs).to_text())
+
     def finish(self, lease: Lease, runs: Sequence[TierRun]) -> None:
         with require_lock(self._root, LOCAL_LOCK_WAIT):
-            if runs:
-                atomic_write(self._path(RECORD_PATH), self.record().with_runs(runs).to_text())
-            held = Lease.parse(_read(self._path(LEASE_PATH)))
+            self._merge(runs)
+            held = Lease.parse(_read(self._path(LOCAL_LEASE)))
             if held is not None and held.token == lease.token:
-                self._path(LEASE_PATH).unlink(missing_ok=True)
+                self._path(LOCAL_LEASE).unlink(missing_ok=True)
 
 
-def _git(
-    where: pathlib.Path, *args: str, timeout: float | None = None
-) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(
-        ["git", "-C", str(where), *args], capture_output=True, text=True, timeout=timeout
-    )
+def _unavailable(error: PushError) -> ExchangeUnavailable:
+    return ExchangeUnavailable(str(error))
 
 
-def _network(where: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":
-    """A git call that talks to origin; a hung remote is as unavailable as a refused one."""
-    try:
-        return _git(where, *args, timeout=NETWORK_TIMEOUT)
-    except subprocess.TimeoutExpired as e:
-        raise ExchangeUnavailable(f"git {args[0]} timed out after {NETWORK_TIMEOUT:.0f}s") from e
-
-
-def _identity(where: pathlib.Path) -> list[str]:
-    """`-c` overrides for a clone with no committer configured, as a fresh cloud checkout has."""
-    if _git(where, "config", "user.email").returncode == 0:
-        return []
-    name, email = DEFAULT_IDENTITY
-    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+def _live_lease(worktree: pathlib.Path, now: datetime.datetime) -> Lease | None:
+    held = Lease.parse(_read(worktree / LEASE_PATH))
+    return held if held is not None and held.live(now) else None
 
 
 class GitExchange(Exchange):
@@ -355,96 +404,71 @@ class GitExchange(Exchange):
         self._root = root
         self._local = local
 
-    def _fetch(self) -> None:
-        fetched = _network(self._root, "fetch", "-q", "origin", "main")
-        if fetched.returncode != 0:
-            raise ExchangeUnavailable(f"git fetch failed: {fetched.stderr.strip()}")
-
-    def _remote_text(self, relative: str) -> str:
-        shown = _git(self._root, "show", f"{REMOTE_REF}:{relative}")
-        return shown.stdout if shown.returncode == 0 else ""
-
     def record(self) -> RunRecord:
         """origin's record merged with any a run left in this checkout while origin was unreachable."""
-        self._fetch()
-        return RunRecord.parse(self._remote_text(RECORD_PATH)).merged(self._local.record())
+        try:
+            fetch_origin(self._root)
+        except PushError as e:
+            raise _unavailable(e) from e
+        return RunRecord.parse(read_origin(self._root, RECORD_PATH)).merged(self._local.record())
 
-    @contextlib.contextmanager
-    def _tip(self) -> Iterator[pathlib.Path]:
-        """A detached worktree at origin/main's tip, removed afterwards."""
-        with tempfile.TemporaryDirectory(prefix="maintain-") as tmp:
-            worktree = pathlib.Path(tmp) / "wt"
-            added = _git(self._root, "worktree", "add", "-q", "--detach", str(worktree), REMOTE_REF)
-            if added.returncode != 0:
-                raise ExchangeUnavailable(f"no worktree at {REMOTE_REF}: {added.stderr.strip()}")
-            try:
-                yield worktree
-            finally:
-                _git(self._root, "worktree", "remove", "--force", str(worktree))
+    def _publish(self, edit: Callable[[pathlib.Path], bool], message: str) -> None:
+        try:
+            push_from_fresh_origin(self._root, edit, message)
+        except OriginBusy:
+            raise
+        except PushError as e:
+            raise _unavailable(e) from e
 
-    def _publish(self, worktree: pathlib.Path, message: str) -> bool:
-        """Commit the state change and push it as a fast-forward; False when origin moved first."""
-        _git(worktree, "add", "--all", "--", STATE_DIR)
-        if not _git(worktree, "status", "--porcelain").stdout.strip():
-            return True
-        committed = _git(worktree, *_identity(worktree), "commit", "-q", "-m", message)
-        if committed.returncode != 0:
-            raise ExchangeUnavailable(f"git commit failed: {committed.stderr.strip()}")
-        pushed = _network(worktree, "push", "-q", "origin", "HEAD:main")
-        if pushed.returncode not in (
-            0,
-            1,
-        ):  # 1 is a rejected non-fast-forward; the rest are failures
-            raise ExchangeUnavailable(f"git push failed: {pushed.stderr.strip()}")
-        return pushed.returncode == 0
-
-    def _retry(self, attempt: Callable[[pathlib.Path], T | None]) -> T:
-        """Run `attempt` on a fresh origin tip until it yields a result, or origin never holds still."""
-        for _ in range(PUSH_ATTEMPTS):
-            self._fetch()
-            with self._tip() as worktree:
-                result = attempt(worktree)
-            if result is not None:
-                return result
-        raise ExchangeUnavailable(f"origin moved {PUSH_ATTEMPTS} times while publishing")
-
-    def acquire(self, runner: str, now: datetime.datetime, ttl: datetime.timedelta) -> LeaseResult:
+    def acquire(
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
+    ) -> LeaseResult:
         lease = Lease.take(runner, now, ttl)
+        rival: Lease | None = None
 
-        def attempt(worktree: pathlib.Path) -> LeaseResult | None:
-            held = Lease.parse(_read(worktree / LEASE_PATH))
-            if held is not None and held.live(now):
-                return Held(held)
+        def edit(worktree: pathlib.Path) -> bool:
+            nonlocal rival
+            rival = _live_lease(worktree, now)
+            if rival is not None:
+                return False
             (worktree / STATE_DIR).mkdir(exist_ok=True)
             (worktree / LEASE_PATH).write_text(lease.to_text())
-            if not self._publish(worktree, f"maintain: {runner} leases"):
-                return None
-            return Acquired(lease)
+            return True
 
-        return self._retry(attempt)
+        try:
+            self._publish(edit, f"maintain: {runner} leases")
+        except OriginBusy as e:
+            return Contended(str(e))
+        return Acquired(lease) if rival is None else Held(rival)
 
     def finish(self, lease: Lease, runs: Sequence[TierRun]) -> None:
-        def attempt(worktree: pathlib.Path) -> bool | None:
-            record = RunRecord.parse(_read(worktree / RECORD_PATH)).with_runs(runs)
+        def edit(worktree: pathlib.Path) -> bool:
             held = Lease.parse(_read(worktree / LEASE_PATH))
             if held is not None and held.token == lease.token:
                 (worktree / LEASE_PATH).unlink()
             if runs:
+                record = RunRecord.parse(_read(worktree / RECORD_PATH)).with_runs(runs)
                 (worktree / STATE_DIR).mkdir(exist_ok=True)
                 (worktree / RECORD_PATH).write_text(record.to_text())
-            return True if self._publish(worktree, f"maintain: {lease.runner} finished") else None
+            return True
 
-        self._retry(attempt)
+        try:
+            self._publish(edit, f"maintain: {lease.runner} finished")
+        except OriginBusy as e:
+            raise _unavailable(e) from e
 
 
 class FallbackExchange(Exchange):
     """Prefers the shared exchange, and keeps working from local files once it is unreachable.
 
-    An offline laptop still maintains its queue; the record it leaves is merged in later.
+    An offline laptop still maintains its queue; the record it leaves is merged in later. Once a
+    remote lease is held, the run stays remote: a failure then never swaps in a local lease.
     """
 
-    def __init__(self, shared: Exchange, local: Exchange) -> None:
-        self._active, self._local = shared, local
+    def __init__(self, shared: Exchange, local: LocalExchange) -> None:
+        self._active: Exchange = shared
+        self._local = local
+        self._remote_lease: Lease | None = None
 
     def _call(self, operation: Callable[[Exchange], T]) -> T:
         try:
@@ -459,20 +483,31 @@ class FallbackExchange(Exchange):
     def record(self) -> RunRecord:
         return self._call(lambda exchange: exchange.record())
 
-    def acquire(self, runner: str, now: datetime.datetime, ttl: datetime.timedelta) -> LeaseResult:
-        return self._call(lambda exchange: exchange.acquire(runner, now, ttl))
+    def acquire(
+        self, runner: RunnerName, now: datetime.datetime, ttl: datetime.timedelta
+    ) -> LeaseResult:
+        leased = self._call(lambda exchange: exchange.acquire(runner, now, ttl))
+        if self._active is not self._local:
+            self._remote_lease = leased.claimed()
+        return leased
 
     def finish(self, lease: Lease, runs: Sequence[TierRun]) -> None:
-        self._call(lambda exchange: exchange.finish(lease, runs))
+        if lease == self._remote_lease:
+            self._finish_remote(lease, runs)
+        else:
+            self._call(lambda exchange: exchange.finish(lease, runs))
 
-
-def _has_origin(root: pathlib.Path) -> bool:
-    return _git(root, "remote", "get-url", "origin").returncode == 0
+    def _finish_remote(self, lease: Lease, runs: Sequence[TierRun]) -> None:
+        try:
+            self._active.finish(lease, runs)
+        except ExchangeUnavailable as e:
+            print(f"maintain: lease not released ({e}); it expires on its own", file=sys.stderr)
+            self._local.keep(runs)
 
 
 def open_exchange(root: pathlib.Path) -> Exchange:
     """The git exchange for a queue that is its own repo with an origin, else plain local files."""
     local = LocalExchange(root)
-    if owns_repo(root) and _has_origin(root):
+    if owns_repo(root) and has_origin(root):
         return FallbackExchange(GitExchange(root, local), local)
     return local
