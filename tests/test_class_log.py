@@ -4,7 +4,9 @@ import class_log
 from class_log import BriefClass, ClassLog, Correction, Example, Verdict
 
 
-def verdict(cls=BriefClass.NEEDS_INFO, brief_id="a", at="2026-11-11T09:00:00+00:00", reason="no goal"):
+def verdict(
+    cls=BriefClass.NEEDS_INFO, brief_id="a", at="2026-11-11T09:00:00+00:00", reason="no goal"
+):
     return Verdict(brief_id, cls, reason, f"Title {brief_id}", at)
 
 

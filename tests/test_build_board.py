@@ -4,6 +4,7 @@ One rich fixture queue exercises the structural branches (epics, children, orpha
 children, loose cards, empty columns, raw inbox items, progress bars), plus targeted
 cases for the frontmatter/section parsers and the main() entrypoint.
 """
+
 import build_board
 import init_queue
 
@@ -12,9 +13,21 @@ def _write(root, folder, name, text):
     (root / folder / name).write_text(text)
 
 
-def _brief(bid, *, title="T", status="ready", btype="todo", autonomy="full",
-           importance="2", parent="", domain="", effort="", criteria=None, goal="A goal.",
-           assignee=None):
+def _brief(
+    bid,
+    *,
+    title="T",
+    status="ready",
+    btype="todo",
+    autonomy="full",
+    importance="2",
+    parent="",
+    domain="",
+    effort="",
+    criteria=None,
+    goal="A goal.",
+    assignee=None,
+):
     crit = "\n".join(criteria) if criteria else ""
     # assignee is omitted entirely unless given, so the default brief doubles as the
     # backwards-compatibility fixture for briefs written before the field existed.
@@ -43,6 +56,7 @@ parent: {parent}{claim}
 
 # ── parse_frontmatter / section ───────────────────────────────────────────────
 
+
 def test_parse_frontmatter_splits_body():
     fm, body = build_board.parse_frontmatter(_brief("x"))
     assert fm["id"] == "x"
@@ -68,6 +82,7 @@ def test_section_extracts_and_stops_at_next_heading():
 
 # ── load_briefs ───────────────────────────────────────────────────────────────
 
+
 def test_load_briefs_skips_non_inbox_file_without_id(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "ready", "no-id.md", "---\ntitle: headless\n---\n\nbody\n")
@@ -84,6 +99,7 @@ def test_load_briefs_synthesises_raw_inbox_item(tmp_path):
 
 
 # ── assignee (advisory claim) ─────────────────────────────────────────────────
+
 
 def test_load_briefs_reads_assignee(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
@@ -156,23 +172,52 @@ def test_card_data_text_includes_assignee(tmp_path):
 
 # ── build(): the structural fixture ───────────────────────────────────────────
 
+
 def _rich_queue(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="My Project")
     # an epic with a child in the same column (kids branch + progress bar)
     _write(root, "ready", "epic-a.md", _brief("epic-a", title="Epic A", btype="project"))
-    _write(root, "ready", "child-1.md", _brief(
-        "child-1", title="Child One", parent="epic-a", domain="work", effort="xs",
-        criteria=["- [x] done bit", "- [ ] todo bit"]))
+    _write(
+        root,
+        "ready",
+        "child-1.md",
+        _brief(
+            "child-1",
+            title="Child One",
+            parent="epic-a",
+            domain="work",
+            effort="xs",
+            criteria=["- [x] done bit", "- [ ] todo bit"],
+        ),
+    )
     # a loose card with non-checklist criteria text + an invalid importance + odd autonomy
-    _write(root, "ready", "loose-1.md", _brief(
-        "loose-1", title="Loose", autonomy="weird", importance="9",
-        goal="# TODO", criteria=["free text criterion"]))
+    _write(
+        root,
+        "ready",
+        "loose-1.md",
+        _brief(
+            "loose-1",
+            title="Loose",
+            autonomy="weird",
+            importance="9",
+            goal="# TODO",
+            criteria=["free text criterion"],
+        ),
+    )
     # an orphan child whose parent epic lives in a DIFFERENT column
-    _write(root, "ready", "orphan.md", _brief(
-        "orphan", title="Orphan", parent="epic-b", autonomy="needs-input"))
+    _write(
+        root,
+        "ready",
+        "orphan.md",
+        _brief("orphan", title="Orphan", parent="epic-b", autonomy="needs-input"),
+    )
     # the parent epic, in another column, with no children of its own → "no sub-tasks"
-    _write(root, "in-progress", "epic-b.md", _brief(
-        "epic-b", title="Epic B", status="in-progress", btype="project", autonomy="blocked"))
+    _write(
+        root,
+        "in-progress",
+        "epic-b.md",
+        _brief("epic-b", title="Epic B", status="in-progress", btype="project", autonomy="blocked"),
+    )
     return root
 
 
@@ -180,13 +225,13 @@ def test_build_writes_board_with_all_structures(tmp_path):
     root = _rich_queue(tmp_path)
     build_board.build(root, "My Project")
     page = (root / "view" / "board.html").read_text()
-    assert "My Project" in page                 # project name in the title
+    assert "My Project" in page  # project name in the title
     assert "Epic A" in page and "Child One" in page
-    assert "no sub-tasks" in page               # epic-b has none in its column
-    assert "Orphan" in page                     # orphan child still rendered
-    assert "nothing here" in page               # done/ and parked/ are empty
-    assert "1/2" in page                        # child-1 progress (1 of 2 criteria)
-    assert "free text criterion" in page        # non-checklist criterion rendered
+    assert "no sub-tasks" in page  # epic-b has none in its column
+    assert "Orphan" in page  # orphan child still rendered
+    assert "nothing here" in page  # done/ and parked/ are empty
+    assert "1/2" in page  # child-1 progress (1 of 2 criteria)
+    assert "free text criterion" in page  # non-checklist criterion rendered
 
 
 def test_build_counts_autonomy_in_header(tmp_path):
@@ -231,12 +276,18 @@ def test_parse_frontmatter_handles_the_shipped_template():
 
 # ── blocked column, waiting-on chips, optional milestone progress ──────────────
 
+
 def test_blocked_briefs_get_their_own_column_with_the_reason(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
-    _write(root, "blocked", "w.md", _brief("w").replace("parent: \n", "parent: \nblocked_by: [dep, external:login]\n"))
+    _write(
+        root,
+        "blocked",
+        "w.md",
+        _brief("w").replace("parent: \n", "parent: \nblocked_by: [dep, external:login]\n"),
+    )
     build_board.build(root, "demo")
     page = (root / "view" / "board.html").read_text()
-    assert "Blocked <span class=\"n\">1</span>" in page
+    assert 'Blocked <span class="n">1</span>' in page
     assert "waiting on: dep, external:login" in page
 
 
@@ -250,9 +301,16 @@ def test_queue_without_milestones_renders_no_milestone_strip(tmp_path):
 
 def test_configured_milestones_render_progress_and_card_chip(tmp_path):
     from tests.queue_helpers import MILESTONES, make_queue
-    root = make_queue(tmp_path, {"a": {"status": "done", "milestone": "M1"},
-                                 "b": {"milestone": "M1"}, "c": {"milestone": "M2"}},
-                      milestones=MILESTONES)
+
+    root = make_queue(
+        tmp_path,
+        {
+            "a": {"status": "done", "milestone": "M1"},
+            "b": {"milestone": "M1"},
+            "c": {"milestone": "M2"},
+        },
+        milestones=MILESTONES,
+    )
     build_board.build(root, "demo")
     page = (root / "view" / "board.html").read_text()
     assert '<span class="pct">1/2</span>' in page and '<span class="pct">0/1</span>' in page
@@ -261,6 +319,7 @@ def test_configured_milestones_render_progress_and_card_chip(tmp_path):
 
 def test_unreadable_milestones_file_degrades_to_a_notice(tmp_path):
     from tests.queue_helpers import make_queue
+
     root = make_queue(tmp_path, {"a": {}}, milestones="x = [")
     build_board.build(root, "demo")
     assert "cannot read milestones file" in (root / "view" / "board.html").read_text()
@@ -268,5 +327,6 @@ def test_unreadable_milestones_file_degrades_to_a_notice(tmp_path):
 
 def test_milestone_with_no_briefs_shows_zero_percent(tmp_path):
     from tests.queue_helpers import MILESTONES, make_queue
+
     root = make_queue(tmp_path, {}, milestones=MILESTONES)
     assert "width:0%" in build_board.milestone_strip(root)

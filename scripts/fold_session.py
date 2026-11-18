@@ -12,6 +12,7 @@ parent's done/. Safe to run twice.
 Usage:
   python scripts/fold_session.py ~/q/s1
 """
+
 import argparse
 import pathlib
 import re
@@ -64,9 +65,13 @@ class SessionQueue:
         binding = binding_path(self.id, env)
         with repo_lock(self.root) as acquired:
             if not acquired:
-                raise SystemExit(f"Could not take the queue lock for {self.root}; nothing was folded.")
+                raise SystemExit(
+                    f"Could not take the queue lock for {self.root}; nothing was folded."
+                )
             moves = [self._reserve(path) for path in self.open_briefs()]
-            renames = {_brief_id(m.source): m.dest.stem for m in moves if m.dest.stem != m.source.stem}
+            renames = {
+                _brief_id(m.source): m.dest.stem for m in moves if m.dest.stem != m.source.stem
+            }
             for move in moves:
                 self._move(move, renames)
             self._carry_done_prerequisites(moves)
@@ -85,7 +90,10 @@ class SessionQueue:
         if renames:
             text = _retarget(text, renames, renames.get(_brief_id(move.source)))
         atomic_write(move.dest, text)
-        atomic_write(move.source, f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n")
+        atomic_write(
+            move.source,
+            f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n",
+        )
 
     def _carry_done_prerequisites(self, moves: list[Move]) -> None:
         """Copy done briefs the moved ones depend on, since the parent only counts its own done/ as met."""
@@ -120,11 +128,12 @@ def _retarget(text: str, renames: Mapping[str, str], own_id: str | None) -> str:
     if not match:
         return text
     lines = [_retarget_line(line, renames, own_id) for line in match.group().split("\n")]
-    return "\n".join(lines) + text[match.end():]
+    return "\n".join(lines) + text[match.end() :]
 
 
 def _retarget_line(line: str, renames: Mapping[str, str], own_id: str | None) -> str:
     key, sep, value = line.partition(":")
+
     def swap(m: re.Match[str]) -> str:
         return renames.get(m.group(), m.group())
 

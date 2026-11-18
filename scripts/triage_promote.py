@@ -77,9 +77,7 @@ class Gate:
     ) -> list[Promotion]:
         """Fill every brief in batches of `size`, `jobs` batches at a time; keep the fills that pass."""
         with ThreadPoolExecutor(max_workers=jobs) as pool:
-            fills = [
-                f for batch in pool.map(predict, batches(briefs, size)) for f in batch.items()
-            ]
+            fills = [f for batch in pool.map(predict, batches(briefs, size)) for f in batch.items()]
         by_id = {b.id: b for b in briefs}
         found = (self.enriched(by_id[bid], fill) for bid, fill in fills)
         return [p for p in found if p is not None]

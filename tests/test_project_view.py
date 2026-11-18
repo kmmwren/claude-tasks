@@ -1,4 +1,5 @@
 """Project overview generator: derived states, the health floor, delta and rendering."""
+
 import datetime as dt
 
 import project_view as pv
@@ -7,6 +8,7 @@ import pytest
 from tests.project_fixtures import make_queue
 
 NOW = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)
+
 
 def model(q, **kw):
     sig = pv.Signals(now=kw.pop("now", NOW), **kw)
@@ -82,9 +84,14 @@ def test_pick_baseline_prefers_oldest_within_a_week():
     assert pv.pick_baseline([], NOW) is None
 
 
-@pytest.mark.parametrize("edit,message", [
-    ('colour = "green"', "colour"), ('reason = "Going to plan."', "reason"),
-    ('title = "Demo Project"', "title")])
+@pytest.mark.parametrize(
+    "edit,message",
+    [
+        ('colour = "green"', "colour"),
+        ('reason = "Going to plan."', "reason"),
+        ('title = "Demo Project"', "title"),
+    ],
+)
 def test_config_validation(tmp_path, edit, message):
     q = make_queue(tmp_path)
     text = (q / "project.toml").read_text()
@@ -102,6 +109,11 @@ def test_not_a_queue_is_refused(tmp_path):
 def test_render_has_header_and_stable_hash(tmp_path):
     m = model(make_queue(tmp_path))
     html = pv.render_fragment(m)
-    assert "Customers can do the demo thing." in html and "<title>Demo Project overview</title>" in html
+    assert (
+        "Customers can do the demo thing." in html
+        and "<title>Demo Project overview</title>" in html
+    )
     assert 'name="claude:viewport-fit-sides"' in html
-    assert pv.content_hash(m) == pv.content_hash(model(make_queue(tmp_path / "x"), now=NOW + dt.timedelta(minutes=5)))
+    assert pv.content_hash(m) == pv.content_hash(
+        model(make_queue(tmp_path / "x"), now=NOW + dt.timedelta(minutes=5))
+    )

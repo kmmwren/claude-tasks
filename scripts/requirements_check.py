@@ -16,6 +16,7 @@ there is no queue or register to check. It fails when:
 
 Stdlib only; vendor it with `_paths.py` and `requirements_register.py` to run it in CI.
 """
+
 import pathlib
 import re
 import sys
@@ -27,7 +28,9 @@ from requirements_register import ID_PATTERN, parse_register, register_path
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
 _ID = re.compile(ID_PATTERN)
 _CRITERION = re.compile(r"^\s*[-*] \[( |x|X)\]", re.MULTILINE)
-_CRITERIA_SECTION = re.compile(r"^##\s+Success criteria\s*\n(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
+_CRITERIA_SECTION = re.compile(
+    r"^##\s+Success criteria\s*\n(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE
+)
 
 
 @dataclass
@@ -54,7 +57,7 @@ def cited_ids(header: str) -> list[str]:
         if value:
             return _ID.findall(value)
         found: list[str] = []
-        for follower in lines[i + 1:]:
+        for follower in lines[i + 1 :]:
             item = re.match(r"^\s+-\s*(.*)$", follower)
             if not item:
                 break
@@ -73,10 +76,15 @@ def load_briefs(queue: pathlib.Path) -> list[Brief]:
             header, body = (match[1], match[2]) if match else (text, text)
             section = _CRITERIA_SECTION.search(body)
             marks = _CRITERION.findall(section[1] if section else body)
-            briefs.append(Brief(
-                path, folder, cited_ids(header),
-                criteria=len(marks), unticked=_CRITERION.findall(body).count(" "),
-            ))
+            briefs.append(
+                Brief(
+                    path,
+                    folder,
+                    cited_ids(header),
+                    criteria=len(marks),
+                    unticked=_CRITERION.findall(body).count(" "),
+                )
+            )
     return briefs
 
 
@@ -92,12 +100,19 @@ def check(queue: str | pathlib.Path) -> list[str]:
     problems: list[str] = []
     for r in requirements:
         if not r.withdrawn and not claimed.get(r.id):
-            problems.append(f"{r.id} has no brief: add `requirements: [{r.id}]` to a brief with criteria")
+            problems.append(
+                f"{r.id} has no brief: add `requirements: [{r.id}]` to a brief with criteria"
+            )
         if r.briefs is None:
             continue
         have = claimed.get(r.id, set())
-        problems += [f"{r.id} lists {n} but that brief does not name it" for n in sorted(set(r.briefs) - have)]
-        problems += [f"{n} names {r.id} but the register row omits it" for n in sorted(have - set(r.briefs))]
+        problems += [
+            f"{r.id} lists {n} but that brief does not name it"
+            for n in sorted(set(r.briefs) - have)
+        ]
+        problems += [
+            f"{n} names {r.id} but the register row omits it" for n in sorted(have - set(r.briefs))
+        ]
     for b in briefs:
         problems += [f"{b.name} names unknown requirement {i}" for i in b.cited if i not in known]
         if b.cited and not b.criteria:
@@ -121,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
         print(p)
     total = len(parse_register(register_path(queue).read_text()))
     if problems:
-        print(f"requirements check FAILED: {len(problems)} problem(s) across {total} requirement(s)")
+        print(
+            f"requirements check FAILED: {len(problems)} problem(s) across {total} requirement(s)"
+        )
         return 1
     print(f"requirements check ok: {total} requirement(s) covered")
     return 0

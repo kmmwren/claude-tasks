@@ -18,6 +18,7 @@ is ignored here.
 
   python scripts/milestones.py progress [--json]
 """
+
 import argparse
 import dataclasses
 import json
@@ -68,8 +69,9 @@ def milestone_titles(root: pathlib.Path) -> dict[str, str] | None:
         raise MilestonesError(f"cannot read milestones file {path}: {e}") from e
     if not isinstance(table, dict) or not table:
         raise MilestonesError(f"{path} has no [milestone.<id>] tables")
-    return {str(k): str(v.get("title", k)) if isinstance(v, dict) else str(k)
-            for k, v in table.items()}
+    return {
+        str(k): str(v.get("title", k)) if isinstance(v, dict) else str(k) for k, v in table.items()
+    }
 
 
 def progress(root: pathlib.Path, queue: list[Brief] | None = None) -> list[Milestone] | None:
@@ -103,8 +105,21 @@ def main(argv: list[str] | None = None) -> None:
         print("this queue does not use milestones (no `milestones` in tasks.toml)")
         return
     if a.json:
-        print(json.dumps([{"id": m.id, "title": m.title, "done": m.done, "total": m.total,
-                           "counts": m.counts} for m in rows], indent=2))
+        print(
+            json.dumps(
+                [
+                    {
+                        "id": m.id,
+                        "title": m.title,
+                        "done": m.done,
+                        "total": m.total,
+                        "counts": m.counts,
+                    }
+                    for m in rows
+                ],
+                indent=2,
+            )
+        )
         return
     for m in rows:
         print(f"{m.id:<8} {m.done}/{m.total}  {m.title}  {m.counts}")

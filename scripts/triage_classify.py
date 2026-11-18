@@ -56,7 +56,7 @@ For every brief return a class and a one-sentence reason:
 When unsure, choose needs-info: nothing is deleted either way.
 Return every brief id you were given, exactly once."""
 SENT_BACK = "moved back from ready by the owner"
-_FOLDERS_READY =("ready", "in-progress")
+_FOLDERS_READY = ("ready", "in-progress")
 _FOLDERS_NOT_READY = ("inbox", "parked")
 
 
@@ -71,12 +71,7 @@ ClassifyFn = Callable[[Sequence[InboxBrief], Sequence[Example]], Mapping[str, Ca
 
 def duplicate_map(groups: Mapping[Fingerprint, Sequence[Located]]) -> dict[str, str]:
     """Each inbox brief that repeats an earlier one, mapped to the brief it repeats."""
-    return {
-        m.id: keep.id
-        for keep, *rest in groups.values()
-        for m in rest
-        if m.folder == "inbox"
-    }
+    return {m.id: keep.id for keep, *rest in groups.values() for m in rest if m.folder == "inbox"}
 
 
 def fixed_calls(dupes: Mapping[str, str], held: Collection[str]) -> dict[str, Call]:
@@ -113,22 +108,34 @@ def _call(item: object) -> Call | None:
 def parse_calls(payload: Any, asked: set[str]) -> dict[str, Call]:
     """Schema-valid calls for the ids that were asked about; everything else is discarded."""
     items = payload.get("briefs") if isinstance(payload, dict) else None
-    pairs = [(i["id"], _call(i)) for i in items if isinstance(i, dict) and "id" in i] if isinstance(items, list) else []
+    pairs = (
+        [(i["id"], _call(i)) for i in items if isinstance(i, dict) and "id" in i]
+        if isinstance(items, list)
+        else []
+    )
     return {bid: call for bid, call in pairs if call is not None and bid in asked}
 
 
 def claude_classify(model: str = "sonnet", timeout: int = 600) -> ClassifyFn:
     """A ClassifyFn backed by one isolated `claude -p` call per batch; a failed call classifies nothing."""
 
-    def classify_batch(briefs: Sequence[InboxBrief], examples: Sequence[Example]) -> Mapping[str, Call]:
-        payload = ask_json(render_prompt(briefs, examples), CLASSIFY_SCHEMA, model, LOCAL_REASON, timeout)
+    def classify_batch(
+        briefs: Sequence[InboxBrief], examples: Sequence[Example]
+    ) -> Mapping[str, Call]:
+        payload = ask_json(
+            render_prompt(briefs, examples), CLASSIFY_SCHEMA, model, LOCAL_REASON, timeout
+        )
         return parse_calls(payload, {b.id for b in briefs})
 
     return classify_batch
 
 
 def calls_for(
-    briefs: Sequence[InboxBrief], call: ClassifyFn, examples: Sequence[Example], size: int, jobs: int
+    briefs: Sequence[InboxBrief],
+    call: ClassifyFn,
+    examples: Sequence[Example],
+    size: int,
+    jobs: int,
 ) -> dict[str, Call]:
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         answered = pool.map(lambda batch: call(batch, examples), batches(briefs, size))
@@ -137,7 +144,11 @@ def calls_for(
 
 def _unready(brief: InboxBrief) -> Call:
     """The deterministic call for a brief no model weighed in on."""
-    why = f"missing {', '.join(brief.missing)}" if brief.missing else "cites no source that exists now"
+    why = (
+        f"missing {', '.join(brief.missing)}"
+        if brief.missing
+        else "cites no source that exists now"
+    )
     return Call(BriefClass.NEEDS_INFO, why)
 
 

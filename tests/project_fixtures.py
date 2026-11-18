@@ -1,4 +1,5 @@
 """Queue fixture shared by the project view tests (no pytest import, so any interpreter can use it)."""
+
 import pathlib
 
 BRIEF = """---
@@ -62,11 +63,26 @@ def make_queue(root: pathlib.Path, colour="green", due="", updated="2026-10-22")
     for d in ("inbox", "ready", "in-progress", "done", "parked"):
         (q / d).mkdir(parents=True)
     (q / "tasks.toml").write_text('name = "Demo"\n')
-    (q / "done" / "b1.md").write_text(BRIEF.format(
-        id="b1", title="One", status="done", domain="demo", updated=updated, criteria="- [x] works"))
-    (q / "in-progress" / "b2.md").write_text(BRIEF.format(
-        id="b2", title="Two", status="in-progress", domain="demo", updated=updated,
-        criteria="- [x] a\n- [ ] b"))
+    (q / "done" / "b1.md").write_text(
+        BRIEF.format(
+            id="b1",
+            title="One",
+            status="done",
+            domain="demo",
+            updated=updated,
+            criteria="- [x] works",
+        )
+    )
+    (q / "in-progress" / "b2.md").write_text(
+        BRIEF.format(
+            id="b2",
+            title="Two",
+            status="in-progress",
+            domain="demo",
+            updated=updated,
+            criteria="- [x] a\n- [ ] b",
+        )
+    )
     (q / "project.toml").write_text(PROJECT.format(colour=colour, due=due))
     return q
 
@@ -235,21 +251,39 @@ def make_rich(root: pathlib.Path) -> pathlib.Path:
     for d in ("inbox", "ready", "in-progress", "done", "parked"):
         (q / d).mkdir(parents=True)
     (q / "tasks.toml").write_text('name = "Rich"\n')
-    spec = [("b-done", "done", "done", "- [x] ok"), ("b-unverified", "done", "done", "- [x] a\n- [ ] b"),
-            ("b-open", "ready", "ready", "- [ ] later"), ("b-active", "in-progress", "in-progress", "- [x] a\n- [ ] b"),
-            ("b-queued", "ready", "ready", "- [ ] q"), ("b-parked", "parked", "parked", "- [ ] p")]
+    spec = [
+        ("b-done", "done", "done", "- [x] ok"),
+        ("b-unverified", "done", "done", "- [x] a\n- [ ] b"),
+        ("b-open", "ready", "ready", "- [ ] later"),
+        ("b-active", "in-progress", "in-progress", "- [x] a\n- [ ] b"),
+        ("b-queued", "ready", "ready", "- [ ] q"),
+        ("b-parked", "parked", "parked", "- [ ] p"),
+    ]
     for bid, folder, status, crit in spec:
-        text = BRIEF.format(id=bid, title=bid.upper(), status=status, domain="demo", updated="2026-10-22",
-                            criteria=crit.replace("\\\n", "\n"))
+        text = BRIEF.format(
+            id=bid,
+            title=bid.upper(),
+            status=status,
+            domain="demo",
+            updated="2026-10-22",
+            criteria=crit.replace("\\\n", "\n"),
+        )
         if bid in ("b-done", "b-active"):
-            text = text.replace("domain: demo", "domain: demo\nrequirements: [RCH-R00%d]" % (1 if bid == "b-done" else 2))
+            text = text.replace(
+                "domain: demo",
+                "domain: demo\nrequirements: [RCH-R00%d]" % (1 if bid == "b-done" else 2),
+            )
         (q / folder / f"{bid}.md").write_text(text)
     (q / "project.toml").write_text(RICH)
     (q / "requirements.md").write_text(REGISTER)
     adr = root / "docs" / "adr"
     adr.mkdir(parents=True)
-    (adr / "0001-adr.md").write_text("# 1. Use an ADR\n\n| Date | 2026-09-30 |\n| Status | Proposed |\n\n### Option B, the thing (chosen)\n")
+    (adr / "0001-adr.md").write_text(
+        "# 1. Use an ADR\n\n| Date | 2026-09-30 |\n| Status | Proposed |\n\n### Option B, the thing (chosen)\n"
+    )
     dec = root / "decisions"
     dec.mkdir()
-    (dec / "2026-10-01-pick-a-thing.md").write_text("# Pick a thing\n\n**Decision:**\n- Take the first one\n")
+    (dec / "2026-10-01-pick-a-thing.md").write_text(
+        "# Pick a thing\n\n**Decision:**\n- Take the first one\n"
+    )
     return q

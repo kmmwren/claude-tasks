@@ -1,17 +1,23 @@
 """Tests for slack_links.py: permalink parsing and note grouping for Slack handoffs."""
+
 import json
 
 import slack_links
 
 TOP = "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179"
-REPLY = ("https://panaseer.slack.com/archives/C0999ZZZZ/p1773300000000002"
-         "?thread_ts=1773299999.000001&cid=C0999ZZZZ")
+REPLY = (
+    "https://panaseer.slack.com/archives/C0999ZZZZ/p1773300000000002"
+    "?thread_ts=1773299999.000001&cid=C0999ZZZZ"
+)
 
 
 def test_top_level_message_is_its_own_thread_root():
     link = slack_links.parse(TOP).links[0]
     assert (link.channel, link.message_ts, link.thread_ts) == (
-        "C0123ABCD", "1773265865.773179", "1773265865.773179")
+        "C0123ABCD",
+        "1773265865.773179",
+        "1773265865.773179",
+    )
 
 
 def test_reply_takes_thread_root_from_query():

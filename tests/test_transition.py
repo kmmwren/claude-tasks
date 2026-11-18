@@ -3,6 +3,7 @@
 These run against a temp queue root (never a real queue) and monkeypatch the git sync so
 no test ever touches git. Fixture briefs are neutral, illustrative examples.
 """
+
 import contextlib
 
 import pytest
@@ -12,8 +13,18 @@ import transition
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
-def _brief(status, bid, title, *, tags="[]", domain="", autonomy="full",
-           blockers="[]", body_extra="", enrichment=""):
+def _brief(
+    status,
+    bid,
+    title,
+    *,
+    tags="[]",
+    domain="",
+    autonomy="full",
+    blockers="[]",
+    body_extra="",
+    enrichment="",
+):
     return f"""---
 id: {bid}
 title: {title}
@@ -60,28 +71,41 @@ def root(tmp_path):
     for d in transition.VALID_STATUSES:
         (tmp_path / d).mkdir()
     (tmp_path / "ready" / "provision-and-harden-the-staging-server.md").write_text(
-        _brief("ready", "provision-and-harden-the-staging-server",
-               "Provision and harden the staging server",
-               tags="[infra, staging, vm]", domain="infra")
+        _brief(
+            "ready",
+            "provision-and-harden-the-staging-server",
+            "Provision and harden the staging server",
+            tags="[infra, staging, vm]",
+            domain="infra",
+        )
     )
     (tmp_path / "ready" / "rotate-the-api-key.md").write_text(
-        _brief("ready", "rotate-the-api-key",
-               "Rotate the leaked API key", domain="billing")
+        _brief("ready", "rotate-the-api-key", "Rotate the leaked API key", domain="billing")
     )
     (tmp_path / "in-progress" / "build-the-billing-checkout-app.md").write_text(
-        _brief("in-progress", "build-the-billing-checkout-app",
-               "Build the billing checkout app", domain="billing")
+        _brief(
+            "in-progress",
+            "build-the-billing-checkout-app",
+            "Build the billing checkout app",
+            domain="billing",
+        )
     )
     (tmp_path / "parked" / "decide-deploy-strategy.md").write_text(
-        _brief("parked", "decide-deploy-strategy",
-               "Decide the deployment strategy", autonomy="needs-input")
+        _brief(
+            "parked",
+            "decide-deploy-strategy",
+            "Decide the deployment strategy",
+            autonomy="needs-input",
+        )
     )
     # inbox items are NOT briefs and must never be resolved
     (tmp_path / "inbox" / "raw-staging-thought.md").write_text(
         _brief("inbox", "raw-staging-thought", "Random staging thought")
     )
     (tmp_path / "inbox" / "enriched-staging-thought.md").write_text(
-        _brief("inbox", "enriched-staging-thought", "Enriched staging thought", enrichment=ENRICHMENT)
+        _brief(
+            "inbox", "enriched-staging-thought", "Enriched staging thought", enrichment=ENRICHMENT
+        )
     )
     return tmp_path
 
@@ -104,7 +128,10 @@ def test_fm_empty_on_no_frontmatter():
 # find_brief()
 # --------------------------------------------------------------------------- #
 def test_update_probes_leaves_text_without_frontmatter_unchanged():
-    assert transition._update_probes("no frontmatter", "ready", ["1: human"], [], [], []) == "no frontmatter"
+    assert (
+        transition._update_probes("no frontmatter", "ready", ["1: human"], [], [], [])
+        == "no frontmatter"
+    )
 
 
 def test_find_brief_locates_across_folders(root):
@@ -117,12 +144,20 @@ def test_find_brief_returns_none_when_absent(root):
 
 
 def test_find_brief_locates_inbox_brief_by_exact_id(root):
-    assert transition.find_brief("raw-staging-thought", root) == root / "inbox" / "raw-staging-thought.md"
+    assert (
+        transition.find_brief("raw-staging-thought", root)
+        == root / "inbox" / "raw-staging-thought.md"
+    )
 
 
 def test_find_brief_prefers_brief_folder_over_inbox(root):
-    (root / "inbox" / "rotate-the-api-key.md").write_text(_brief("inbox", "rotate-the-api-key", "dup"))
-    assert transition.find_brief("rotate-the-api-key", root) == root / "ready" / "rotate-the-api-key.md"
+    (root / "inbox" / "rotate-the-api-key.md").write_text(
+        _brief("inbox", "rotate-the-api-key", "dup")
+    )
+    assert (
+        transition.find_brief("rotate-the-api-key", root)
+        == root / "ready" / "rotate-the-api-key.md"
+    )
 
 
 PLACEHOLDER_BRIEF = """---
@@ -175,7 +210,11 @@ def test_move_closes_an_unenriched_inbox_brief(root, target):
     assert transition.fm(newp.read_text())["status"] == target
 
 
-BLOCK_ARGS = {"blocked_by": ["external:vendor"], "probes": ["1: human"], "confirmed": ["1: 2026-06-02 me"]}
+BLOCK_ARGS = {
+    "blocked_by": ["external:vendor"],
+    "probes": ["1: human"],
+    "confirmed": ["1: 2026-06-02 me"],
+}
 
 
 def test_move_refuses_to_block_an_unenriched_inbox_brief(root):
@@ -199,7 +238,9 @@ def parked(root):
 
 @pytest.mark.parametrize("target", ["ready", "in-progress"])
 def test_move_refuses_to_promote_unenriched_parked_brief_naming_missing_fields(parked, target):
-    with pytest.raises(ValueError, match="still in parked/ and cannot move to .* without criteria, context"):
+    with pytest.raises(
+        ValueError, match="still in parked/ and cannot move to .* without criteria, context"
+    ):
         transition.move_brief("parked-raw", target, parked)
     assert (parked / "parked" / "parked-raw.md").exists()
     assert not (parked / target / "parked-raw.md").exists()
@@ -236,7 +277,9 @@ def test_move_closes_an_unenriched_parked_brief(parked):
 
 
 def test_move_prefers_brief_folder_over_inbox_duplicate(root):
-    (root / "inbox" / "rotate-the-api-key.md").write_text(_brief("inbox", "rotate-the-api-key", "dup"))
+    (root / "inbox" / "rotate-the-api-key.md").write_text(
+        _brief("inbox", "rotate-the-api-key", "dup")
+    )
     newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
     assert newp == root / "in-progress" / "rotate-the-api-key.md"
     assert (root / "inbox" / "rotate-the-api-key.md").exists()
@@ -304,9 +347,7 @@ def test_resolve_drops_one_char_tokens(root):
 # _update_frontmatter()
 # --------------------------------------------------------------------------- #
 def test_update_frontmatter_sets_status_and_updated():
-    out = transition._update_frontmatter(
-        _brief("ready", "x", "T"), "in-progress", "2026-06-02"
-    )
+    out = transition._update_frontmatter(_brief("ready", "x", "T"), "in-progress", "2026-06-02")
     fm = transition.fm(out)
     assert fm["status"] == "in-progress"
     assert fm["updated"] == "2026-06-02"
@@ -361,11 +402,12 @@ def test_update_frontmatter_writes_exactly_one_assignee_line():
 
 def test_update_frontmatter_rewrites_only_the_first_assignee_line():
     # a hand-edited brief can end up with a duplicate key; rewrite the first, leave the rest
-    text = _brief("ready", "x", "T").replace(
-        "parent:", "assignee: alice\nassignee: stray\nparent:")
+    text = _brief("ready", "x", "T").replace("parent:", "assignee: alice\nassignee: stray\nparent:")
     out = transition._update_frontmatter(text, "done", "2026-06-02", assignee="bob")
     assert [ln for ln in out.splitlines() if ln.startswith("assignee")] == [
-        "assignee: bob", "assignee: stray"]
+        "assignee: bob",
+        "assignee: stray",
+    ]
 
 
 def test_update_frontmatter_assignee_does_not_touch_body():
@@ -393,9 +435,7 @@ def test_append_log_adds_header_when_missing():
 # move_brief()
 # --------------------------------------------------------------------------- #
 def test_move_ready_to_in_progress(root):
-    newp = transition.move_brief(
-        "rotate-the-api-key", "in-progress", root, today="2026-06-02"
-    )
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
     assert newp == root / "in-progress" / "rotate-the-api-key.md"
     assert not (root / "ready" / "rotate-the-api-key.md").exists()
     fm = transition.fm(newp.read_text())
@@ -411,8 +451,11 @@ def test_move_default_log_per_status(root):
 
 def test_move_custom_log_message(root):
     p = transition.move_brief(
-        "rotate-the-api-key", "parked", root,
-        log="ESCALATED — need the API provider login", today="2026-06-02"
+        "rotate-the-api-key",
+        "parked",
+        root,
+        log="ESCALATED — need the API provider login",
+        today="2026-06-02",
     )
     assert "ESCALATED — need the API provider login" in p.read_text()
 
@@ -453,6 +496,7 @@ def test_move_same_status_updates_in_place(root):
 
 def test_move_uses_today_by_default(root):
     import datetime
+
     p = transition.move_brief("rotate-the-api-key", "in-progress", root)
     assert transition.fm(p.read_text())["updated"] == datetime.date.today().isoformat()
 
@@ -476,7 +520,9 @@ def test_move_default_log_to_inbox(root):
 # find_brief / resolve cover every brief folder (not just ready/in-progress)
 # --------------------------------------------------------------------------- #
 def test_find_brief_locates_in_done(root):
-    (root / "done" / "shipped-thing.md").write_text(_brief("done", "shipped-thing", "Shipped thing"))
+    (root / "done" / "shipped-thing.md").write_text(
+        _brief("done", "shipped-thing", "Shipped thing")
+    )
     assert transition.find_brief("shipped-thing", root) == root / "done" / "shipped-thing.md"
 
 
@@ -526,6 +572,7 @@ def test_main_resolve_prints_candidates(root, capsys):
 def test_main_resolve_json(root, capsys):
     transition.main(["resolve", "staging", "--root", str(root), "--json"])
     import json
+
     data = json.loads(capsys.readouterr().out)
     assert data[0]["id"] == "provision-and-harden-the-staging-server"
 
@@ -543,8 +590,9 @@ def test_main_move_commits(root, monkeypatch, capsys):
         return True
 
     monkeypatch.setattr(transition, "sync_commit", fake_sync)
-    transition.main(["move", "rotate-the-api-key", "in-progress",
-                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(
+        ["move", "rotate-the-api-key", "in-progress", "--root", str(root), "--today", "2026-06-02"]
+    )
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
     assert "brief(rotate-the-api-key)" in calls["msg"]
     assert calls["ids"] == ["rotate-the-api-key"]
@@ -552,8 +600,19 @@ def test_main_move_commits(root, monkeypatch, capsys):
 
 def test_main_move_accepts_assignee_flag(root, monkeypatch):
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
-    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
-                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "in-progress",
+            "--assignee",
+            "alice",
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-02",
+        ]
+    )
     text = (root / "in-progress" / "rotate-the-api-key.md").read_text()
     assert transition.fm(text)["assignee"] == "alice"
 
@@ -561,20 +620,32 @@ def test_main_move_accepts_assignee_flag(root, monkeypatch):
 def test_main_move_without_assignee_preserves_the_claim(root, monkeypatch):
     # guards the CLI default: a plain move must never silently release an existing claim
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
-    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
-                     "--root", str(root), "--today", "2026-06-02"])
-    transition.main(["move", "rotate-the-api-key", "done",
-                     "--root", str(root), "--today", "2026-06-03"])
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "in-progress",
+            "--assignee",
+            "alice",
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-02",
+        ]
+    )
+    transition.main(
+        ["move", "rotate-the-api-key", "done", "--root", str(root), "--today", "2026-06-03"]
+    )
     text = (root / "done" / "rotate-the-api-key.md").read_text()
     assert transition.fm(text)["assignee"] == "alice"
 
 
 def test_main_move_no_sync_skips_git(root, monkeypatch):
     called = {"n": 0}
-    monkeypatch.setattr(transition, "sync_commit",
-                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
-    transition.main(["move", "rotate-the-api-key", "done",
-                     "--root", str(root), "--no-sync"])
+    monkeypatch.setattr(
+        transition, "sync_commit", lambda *a, **k: called.__setitem__("n", called["n"] + 1)
+    )
+    transition.main(["move", "rotate-the-api-key", "done", "--root", str(root), "--no-sync"])
     assert called["n"] == 0
 
 
@@ -617,8 +688,10 @@ def test_move_brief_concurrent_only_one_wins(root, monkeypatch):
     def claim():
         try:
             p = transition.move_brief(
-                "provision-and-harden-the-staging-server", "in-progress",
-                root, today="2026-06-02",
+                "provision-and-harden-the-staging-server",
+                "in-progress",
+                root,
+                today="2026-06-02",
             )
             results.append(p)
         except ValueError:
@@ -689,84 +762,97 @@ def test_fm_parses_the_shipped_template_without_comment_pollution():
 # Claim conflicts — serialising claims within a checkout
 # --------------------------------------------------------------------------- #
 def test_move_rejects_claiming_a_brief_someone_else_holds(root):
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
     with pytest.raises(ValueError, match="already claimed by 'alice'"):
-        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
-                              today="2026-06-03")
+        transition.move_brief(
+            "rotate-the-api-key", "in-progress", root, assignee="bob", today="2026-06-03"
+        )
 
 
 def test_move_rejected_claim_leaves_the_brief_untouched(root):
-    claimed = transition.move_brief("rotate-the-api-key", "in-progress", root,
-                                    assignee="alice", today="2026-06-02")
+    claimed = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
     before = claimed.read_text()
     with contextlib.suppress(ValueError):
-        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
-                              today="2026-06-03")
+        transition.move_brief(
+            "rotate-the-api-key", "done", root, assignee="bob", today="2026-06-03"
+        )
     assert claimed.read_text() == before
     assert not (root / "done" / "rotate-the-api-key.md").exists()
 
 
 def test_move_allows_the_same_assignee_to_reclaim(root):
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
-    p = transition.move_brief("rotate-the-api-key", "done", root, assignee="alice",
-                              today="2026-06-03")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    p = transition.move_brief(
+        "rotate-the-api-key", "done", root, assignee="alice", today="2026-06-03"
+    )
     assert transition.fm(p.read_text())["assignee"] == "alice"
     assert transition.fm(p.read_text())["status"] == "done"
 
 
 def test_move_allows_claiming_an_unclaimed_brief(root):
-    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
-                              today="2026-06-02")
+    p = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="bob", today="2026-06-02"
+    )
     assert transition.fm(p.read_text())["assignee"] == "bob"
 
 
 def test_move_allows_releasing_someone_elses_claim(root):
     """Releasing is the documented way to free a brief stuck under a dead claim."""
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
-    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
-                              today="2026-06-03")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="", today="2026-06-03")
     assert transition.fm(p.read_text())["assignee"] == ""
 
 
 def test_move_can_claim_after_a_release(root):
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
-    transition.move_brief("rotate-the-api-key", "ready", root, assignee="",
-                          today="2026-06-03")
-    p = transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
-                              today="2026-06-04")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    transition.move_brief("rotate-the-api-key", "ready", root, assignee="", today="2026-06-03")
+    p = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="bob", today="2026-06-04"
+    )
     assert transition.fm(p.read_text())["assignee"] == "bob"
 
 
 def test_move_conflict_names_both_claimants(root):
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
     with pytest.raises(ValueError) as exc:
-        transition.move_brief("rotate-the-api-key", "done", root, assignee="bob",
-                              today="2026-06-03")
+        transition.move_brief(
+            "rotate-the-api-key", "done", root, assignee="bob", today="2026-06-03"
+        )
     msg = str(exc.value)
-    assert "rotate-the-api-key" in msg      # which brief
-    assert "'alice'" in msg                 # who holds it
-    assert "'bob'" in msg                   # who was refused
-    assert '--assignee ""' in msg           # how to force it free
+    assert "rotate-the-api-key" in msg  # which brief
+    assert "'alice'" in msg  # who holds it
+    assert "'bob'" in msg  # who was refused
+    assert '--assignee ""' in msg  # how to force it free
 
 
 def test_move_ignores_a_claim_conflict_when_no_assignee_is_passed(root):
     """A plain move must keep preserving the claim silently, not raise."""
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
     p = transition.move_brief("rotate-the-api-key", "done", root, today="2026-06-03")
     assert transition.fm(p.read_text())["assignee"] == "alice"
 
 
 def test_move_treats_a_whitespace_only_claim_as_a_release(root):
-    transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="alice",
-                          today="2026-06-02")
-    p = transition.move_brief("rotate-the-api-key", "ready", root, assignee="   ",
-                              today="2026-06-03")
+    transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, assignee="alice", today="2026-06-02"
+    )
+    p = transition.move_brief(
+        "rotate-the-api-key", "ready", root, assignee="   ", today="2026-06-03"
+    )
     assert transition.fm(p.read_text())["assignee"] == ""
 
 
@@ -788,8 +874,9 @@ def test_move_claim_conflict_is_checked_under_the_lock(root, monkeypatch):
 
     monkeypatch.setattr(transition, "repo_lock", racing_lock)
     with pytest.raises(ValueError, match="already claimed by 'alice'"):
-        transition.move_brief("rotate-the-api-key", "in-progress", root, assignee="bob",
-                              today="2026-06-03")
+        transition.move_brief(
+            "rotate-the-api-key", "in-progress", root, assignee="bob", today="2026-06-03"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -798,8 +885,17 @@ def test_move_claim_conflict_is_checked_under_the_lock(root, monkeypatch):
 def test_main_move_rejects_a_newline_in_assignee(root, monkeypatch, capsys):
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
     with pytest.raises(SystemExit) as exc:
-        transition.main(["move", "rotate-the-api-key", "in-progress",
-                         "--assignee", "alice\nstatus: done", "--root", str(root)])
+        transition.main(
+            [
+                "move",
+                "rotate-the-api-key",
+                "in-progress",
+                "--assignee",
+                "alice\nstatus: done",
+                "--root",
+                str(root),
+            ]
+        )
     assert exc.value.code == 1
     assert "must be a single line" in capsys.readouterr().err
     # the injection never reached the file
@@ -810,19 +906,50 @@ def test_main_move_rejects_a_newline_in_assignee(root, monkeypatch, capsys):
 def test_main_move_rejects_a_carriage_return_in_assignee(root, monkeypatch, capsys):
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
     with pytest.raises(SystemExit) as exc:
-        transition.main(["move", "rotate-the-api-key", "in-progress",
-                         "--assignee", "alice\rbob", "--root", str(root)])
+        transition.main(
+            [
+                "move",
+                "rotate-the-api-key",
+                "in-progress",
+                "--assignee",
+                "alice\rbob",
+                "--root",
+                str(root),
+            ]
+        )
     assert exc.value.code == 1
     assert "must be a single line" in capsys.readouterr().err
 
 
 def test_main_move_reports_a_claim_conflict_and_exits_nonzero(root, monkeypatch, capsys):
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
-    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
-                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "in-progress",
+            "--assignee",
+            "alice",
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-02",
+        ]
+    )
     with pytest.raises(SystemExit) as exc:
-        transition.main(["move", "rotate-the-api-key", "done", "--assignee", "bob",
-                         "--root", str(root), "--today", "2026-06-03"])
+        transition.main(
+            [
+                "move",
+                "rotate-the-api-key",
+                "done",
+                "--assignee",
+                "bob",
+                "--root",
+                str(root),
+                "--today",
+                "2026-06-03",
+            ]
+        )
     assert exc.value.code == 1
     assert "already claimed by 'alice'" in capsys.readouterr().err
     assert (root / "in-progress" / "rotate-the-api-key.md").exists()
@@ -830,10 +957,32 @@ def test_main_move_reports_a_claim_conflict_and_exits_nonzero(root, monkeypatch,
 
 def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
     monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: True)
-    transition.main(["move", "rotate-the-api-key", "in-progress", "--assignee", "alice",
-                     "--root", str(root), "--today", "2026-06-02"])
-    transition.main(["move", "rotate-the-api-key", "ready", "--assignee", "",
-                     "--root", str(root), "--today", "2026-06-03"])
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "in-progress",
+            "--assignee",
+            "alice",
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-02",
+        ]
+    )
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "ready",
+            "--assignee",
+            "",
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-03",
+        ]
+    )
     text = (root / "ready" / "rotate-the-api-key.md").read_text()
     assert transition.fm(text)["assignee"] == ""
 
@@ -842,12 +991,20 @@ def test_main_move_release_frees_a_claim_through_the_cli(root, monkeypatch):
 # blocked state
 # --------------------------------------------------------------------------- #
 def test_move_to_blocked_records_blockers_and_moves_the_file(root):
-    new = transition.move_brief("rotate-the-api-key", "blocked", root,
-                                blocked_by=["build-the-billing-checkout-app", "external:key vault access"],
-                                probes=["2: exit 10"], today="2026-06-02")
+    new = transition.move_brief(
+        "rotate-the-api-key",
+        "blocked",
+        root,
+        blocked_by=["build-the-billing-checkout-app", "external:key vault access"],
+        probes=["2: exit 10"],
+        today="2026-06-02",
+    )
     assert new == root / "blocked" / "rotate-the-api-key.md"
     text = new.read_text()
-    assert transition.fm(text)["blocked_by"] == "[build-the-billing-checkout-app, external:key vault access]"
+    assert (
+        transition.fm(text)["blocked_by"]
+        == "[build-the-billing-checkout-app, external:key vault access]"
+    )
     assert transition.fm(text)["status"] == "blocked"
     assert "2026-06-02: blocked" in text
 
@@ -860,14 +1017,17 @@ def test_move_to_blocked_needs_a_reason(root):
 
 def test_move_to_blocked_rejects_self_and_unknown_ids(root):
     with pytest.raises(ValueError, match="by itself"):
-        transition.move_brief("rotate-the-api-key", "blocked", root,
-                              blocked_by=["rotate-the-api-key"])
+        transition.move_brief(
+            "rotate-the-api-key", "blocked", root, blocked_by=["rotate-the-api-key"]
+        )
     with pytest.raises(ValueError, match="unknown blocker"):
         transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["nope"])
 
 
 def test_leaving_blocked_clears_blocked_by(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
+    transition.move_brief(
+        "rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"]
+    )
     new = transition.move_brief("rotate-the-api-key", "ready", root)
     assert transition.fm(new.read_text())["blocked_by"] == "[]"
     assert "blocked_probe" not in new.read_text()
@@ -882,31 +1042,58 @@ def test_move_to_blocked_without_a_probe_is_refused(root):
 
 def test_a_second_external_blocker_needs_its_own_probe(root):
     with pytest.raises(ValueError, match=r"\[2\]"):
-        transition.move_brief("rotate-the-api-key", "blocked", root,
-                              blocked_by=["external:a", "external:b"], probes=["1: exit 10"])
+        transition.move_brief(
+            "rotate-the-api-key",
+            "blocked",
+            root,
+            blocked_by=["external:a", "external:b"],
+            probes=["1: exit 10"],
+        )
 
 
 def test_probes_survive_the_move_and_dropping_a_blocker_renumbers_them(root):
     import unblock
-    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:a", "external:b"],
-                                probes=["1: exit 0", "2: exit 10"])
+
+    new = transition.move_brief(
+        "rotate-the-api-key",
+        "blocked",
+        root,
+        blocked_by=["external:a", "external:b"],
+        probes=["1: exit 0", "2: exit 10"],
+    )
     assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 0", "2: exit 10"]
     assert unblock.resolve_external(root, "rotate-the-api-key", "a") is False
     assert transition.fm_repeated(new.read_text())["blocked_probe"] == ["1: exit 10"]
 
 
 def test_blocked_briefs_are_resolvable(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"])
+    transition.move_brief(
+        "rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: exit 10"]
+    )
     assert [h["status"] for h in transition.resolve_brief("rotate api key", root)] == ["blocked"]
 
 
 def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
     msgs, named = [], []
-    monkeypatch.setattr(transition, "sync_commit",
-                        lambda msg, r=None, ids=(): (msgs.append(msg), named.append(list(ids))))
+    monkeypatch.setattr(
+        transition,
+        "sync_commit",
+        lambda msg, r=None, ids=(): (msgs.append(msg), named.append(list(ids))),
+    )
     dep = "build-the-billing-checkout-app"
-    transition.main(["move", "rotate-the-api-key", "blocked", "--blocked-by", dep,
-                     "--root", str(root), "--today", "2026-06-02"])
+    transition.main(
+        [
+            "move",
+            "rotate-the-api-key",
+            "blocked",
+            "--blocked-by",
+            dep,
+            "--root",
+            str(root),
+            "--today",
+            "2026-06-02",
+        ]
+    )
     assert (root / "blocked" / "rotate-the-api-key.md").exists()
     transition.main(["move", dep, "done", "--root", str(root), "--today", "2026-06-03"])
     assert "unblocked rotate-the-api-key" in capsys.readouterr().out
@@ -918,36 +1105,62 @@ def test_cli_blocked_by_flag_then_done_auto_unblocks(root, monkeypatch, capsys):
 
 def test_cli_move_to_blocked_without_reason_exits_nonzero(root, capsys):
     with pytest.raises(SystemExit):
-        transition.main(["move", "rotate-the-api-key", "blocked", "--root", str(root),
-                         "--no-sync"])
+        transition.main(["move", "rotate-the-api-key", "blocked", "--root", str(root), "--no-sync"])
     assert "needs --blocked-by" in capsys.readouterr().err
 
 
 def test_a_human_probe_needs_a_dated_confirmation(root):
     with pytest.raises(ValueError, match=r"\[1\]"):
-        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: human"])
-    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:x"],
-                                probes=["1: human"], confirmed=["1: 2026-06-02 katherine"])
-    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == ["1: 2026-06-02 katherine"]
+        transition.move_brief(
+            "rotate-the-api-key", "blocked", root, blocked_by=["external:x"], probes=["1: human"]
+        )
+    new = transition.move_brief(
+        "rotate-the-api-key",
+        "blocked",
+        root,
+        blocked_by=["external:x"],
+        probes=["1: human"],
+        confirmed=["1: 2026-06-02 katherine"],
+    )
+    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == [
+        "1: 2026-06-02 katherine"
+    ]
 
 
 def test_dropping_a_middle_blocker_renumbers_later_probes_and_confirmations():
     block = "id: a\nblocked_probe: 1: exit 10\nblocked_probe: 2: exit 10\nblocked_probe: 3: human\nblocked_confirmed: 3: 2026-06-02 k"
     assert transition.drop_blocker_lines(block, 2).splitlines()[1:] == [
-        "blocked_probe: 1: exit 10", "blocked_probe: 2: human", "blocked_confirmed: 2: 2026-06-02 k"]
+        "blocked_probe: 1: exit 10",
+        "blocked_probe: 2: human",
+        "blocked_confirmed: 2: 2026-06-02 k",
+    ]
 
 
 def test_replacing_a_blocker_drops_the_old_blockers_probe_and_confirmation(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:old"],
-                          probes=["1: human"], confirmed=["1: 2026-06-02 alice"])
+    transition.move_brief(
+        "rotate-the-api-key",
+        "blocked",
+        root,
+        blocked_by=["external:old"],
+        probes=["1: human"],
+        confirmed=["1: 2026-06-02 alice"],
+    )
     with pytest.raises(ValueError, match=r"\[1\]"):
         transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:new"])
 
 
 def test_reordering_blockers_carries_each_probe_with_its_blocker(root):
-    transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:a", "external:b"],
-                          probes=["1: exit 10", "2: human"], confirmed=["2: 2026-06-02 alice"])
-    new = transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["external:b", "external:a"])
+    transition.move_brief(
+        "rotate-the-api-key",
+        "blocked",
+        root,
+        blocked_by=["external:a", "external:b"],
+        probes=["1: exit 10", "2: human"],
+        confirmed=["2: 2026-06-02 alice"],
+    )
+    new = transition.move_brief(
+        "rotate-the-api-key", "blocked", root, blocked_by=["external:b", "external:a"]
+    )
     repeated = transition.fm_repeated(new.read_text())
     assert repeated["blocked_probe"] == ["1: human", "2: exit 10"]
     assert repeated["blocked_confirmed"] == ["1: 2026-06-02 alice"]
@@ -955,11 +1168,19 @@ def test_reordering_blockers_carries_each_probe_with_its_blocker(root):
 
 def _reblock(root, blocked_by, **kw):
     return transition.fm_repeated(
-        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=blocked_by, **kw).read_text())
+        transition.move_brief(
+            "rotate-the-api-key", "blocked", root, blocked_by=blocked_by, **kw
+        ).read_text()
+    )
 
 
 def test_an_unchanged_list_keeps_probes_and_a_new_probe_wins_for_its_number(root):
     _reblock(root, ["external:a", "external:b"], probes=["1: exit 10", "2: exit 10"])
-    assert _reblock(root, ["external:a", "external:b"])["blocked_probe"] == ["1: exit 10", "2: exit 10"]
+    assert _reblock(root, ["external:a", "external:b"])["blocked_probe"] == [
+        "1: exit 10",
+        "2: exit 10",
+    ]
     assert _reblock(root, ["external:a", "external:b"], probes=["2: exit 0"])["blocked_probe"] == [
-        "1: exit 10", "2: exit 0"]
+        "1: exit 10",
+        "2: exit 0",
+    ]

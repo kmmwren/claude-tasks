@@ -8,6 +8,7 @@ the briefs are the source of truth, so it is regenerated, never hand-edited.
 
 Usage: python scripts/build_board.py
 """
+
 import datetime
 import html
 import pathlib
@@ -23,8 +24,14 @@ from readiness import section
 from requirements_check import cited_ids
 
 DIRS = ["inbox", "ready", "in-progress", "blocked", "done", "parked"]
-COL_TITLE = {"inbox": "Inbox (raw)", "ready": "Ready", "in-progress": "In progress",
-             "blocked": "Blocked", "done": "Done", "parked": "Parked"}
+COL_TITLE = {
+    "inbox": "Inbox (raw)",
+    "ready": "Ready",
+    "in-progress": "In progress",
+    "blocked": "Blocked",
+    "done": "Done",
+    "parked": "Parked",
+}
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -50,8 +57,13 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
             if not fm.get("id"):
                 if d == "inbox":
                     # raw capture: synthesise minimal fields, preview the body
-                    fm = {"id": f.stem, "title": fm.get("title", f.stem.replace("-", " ")),
-                          "type": "todo", "autonomy": "needs-input", "importance": "3"}
+                    fm = {
+                        "id": f.stem,
+                        "title": fm.get("title", f.stem.replace("-", " ")),
+                        "type": "todo",
+                        "autonomy": "needs-input",
+                        "importance": "3",
+                    }
                 else:
                     continue
             header = re.match(r"^---\n(.*?)\n---", raw, re.DOTALL)
@@ -61,18 +73,28 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
             crit = section(body, "Success criteria")
             done = len(re.findall(r"^\s*-\s*\[[xX]\]", crit, re.MULTILINE))
             total = len(re.findall(r"^\s*-\s*\[[ xX]\]", crit, re.MULTILINE))
-            briefs.append({
-                "dir": d, "id": fm["id"], "title": fm.get("title", fm["id"]),
-                "type": fm.get("type", "todo"), "importance": fm.get("importance", "3"),
-                "autonomy": fm.get("autonomy", "needs-input"), "effort": fm.get("estimated-effort", ""),
-                "domain": fm.get("domain", ""), "parent": fm.get("parent", "") or "",
-                "assignee": fm.get("assignee", ""), "milestone": fm.get("milestone", ""),
-                "updated": fm.get("updated", ""),
-                "blocked_by": parse_list(fm.get("blocked_by", "")),
-                "requirements": cited_ids(header[1]) if header else [],
-                "goal": goal if goal != "# TODO" else "", "crit": crit,
-                "crit_done": done, "crit_total": total,
-            })
+            briefs.append(
+                {
+                    "dir": d,
+                    "id": fm["id"],
+                    "title": fm.get("title", fm["id"]),
+                    "type": fm.get("type", "todo"),
+                    "importance": fm.get("importance", "3"),
+                    "autonomy": fm.get("autonomy", "needs-input"),
+                    "effort": fm.get("estimated-effort", ""),
+                    "domain": fm.get("domain", ""),
+                    "parent": fm.get("parent", "") or "",
+                    "assignee": fm.get("assignee", ""),
+                    "milestone": fm.get("milestone", ""),
+                    "updated": fm.get("updated", ""),
+                    "blocked_by": parse_list(fm.get("blocked_by", "")),
+                    "requirements": cited_ids(header[1]) if header else [],
+                    "goal": goal if goal != "# TODO" else "",
+                    "crit": crit,
+                    "crit_done": done,
+                    "crit_total": total,
+                }
+            )
     return briefs
 
 
@@ -110,17 +132,22 @@ def card_html(b: dict[str, Any], child_of_epic: bool = False) -> str:
     goal = f'<p class="goal">{html.escape(b["goal"])}</p>' if b["goal"] else ""
     body = ""
     if goal or crit_html:
-        body = f'<div class="body">{goal}{("<ul class=crit>"+crit_html+"</ul>") if crit_html else ""}</div>'
-    effort = f'<span class="chip eff">{html.escape(b["effort"])}</span>' if b["effort"].strip() else ""
+        body = f'<div class="body">{goal}{("<ul class=crit>" + crit_html + "</ul>") if crit_html else ""}</div>'
+    effort = (
+        f'<span class="chip eff">{html.escape(b["effort"])}</span>' if b["effort"].strip() else ""
+    )
     domain = f'<span class="chip dom">{html.escape(b["domain"])}</span>' if b["domain"] else ""
     who = f'<span class="chip who">{html.escape(b["assignee"])}</span>' if b["assignee"] else ""
-    waits = (f'<span class="chip wait">waiting on: {html.escape(", ".join(b["blocked_by"]))}</span>'
-             if b["blocked_by"] else "")
+    waits = (
+        f'<span class="chip wait">waiting on: {html.escape(", ".join(b["blocked_by"]))}</span>'
+        if b["blocked_by"]
+        else ""
+    )
     ms = f'<span class="chip ms">{html.escape(b["milestone"])}</span>' if b["milestone"] else ""
-    return f'''<div class="card {('child' if child_of_epic else '')}" data-autonomy="{b['autonomy']}" data-text="{html.escape(search_text(b))}">
+    return f'''<div class="card {("child" if child_of_epic else "")}" data-autonomy="{b["autonomy"]}" data-text="{html.escape(search_text(b))}">
   <div class="head" onclick="this.parentNode.classList.toggle('open')">
     <span class="pri p{p}">P{p}</span>
-    <span class="title">{html.escape(b['title'])}</span>
+    <span class="title">{html.escape(b["title"])}</span>
     <span class="auto {a_cls}" title="{a_tip}">{a_label}</span>
   </div>
   <div class="meta"><span class="chip id">{pid}</span>{ms}{who}{domain}{effort}{prog}</div>
@@ -140,9 +167,11 @@ def milestone_strip(root: pathlib.Path) -> str:
     cells = ""
     for m in rows:
         pct = round(100 * m.done / m.total) if m.total else 0
-        cells += (f'<div class="ms"><b>{html.escape(m.id)}</b> {html.escape(m.title)} '
-                  f'<span class="pct">{m.done}/{m.total}</span>'
-                  f'<div class="prog"><div class="bar" style="width:{pct}%"></div></div></div>')
+        cells += (
+            f'<div class="ms"><b>{html.escape(m.id)}</b> {html.escape(m.title)} '
+            f'<span class="pct">{m.done}/{m.total}</span>'
+            f'<div class="prog"><div class="bar" style="width:{pct}%"></div></div></div>'
+        )
     return f'<div class="ms-strip">{cells}</div>'
 
 
@@ -162,20 +191,37 @@ def build(root: pathlib.Path, project: str = "tasks") -> None:
         for b in loose:
             cards += card_html(b)
         # children whose parent epic lives in a different column (shown here, not nested)
-        orphan_children = [b for b in col if b["parent"] and b["parent"] not in epic_ids and b["type"] != "project"]
+        orphan_children = [
+            b for b in col if b["parent"] and b["parent"] not in epic_ids and b["type"] != "project"
+        ]
         for b in orphan_children:
             cards += card_html(b)
         cols += f'<section class="col"><h2>{COL_TITLE[d]} <span class="n">{len(col)}</span></h2>{cards or "<p class=empty>nothing here</p>"}</section>'
 
-    n_auto = sum(1 for b in briefs if b["autonomy"] == "full" and b["dir"] in {"ready", "in-progress"})
-    n_needs = sum(1 for b in briefs if b["autonomy"] == "needs-input" and b["dir"] in {"ready", "in-progress"})
+    n_auto = sum(
+        1 for b in briefs if b["autonomy"] == "full" and b["dir"] in {"ready", "in-progress"}
+    )
+    n_needs = sum(
+        1 for b in briefs if b["autonomy"] == "needs-input" and b["dir"] in {"ready", "in-progress"}
+    )
     stamp = datetime.date.today().isoformat()
     out_dir = root / "view"
     out_dir.mkdir(exist_ok=True)
-    atomic_write(out_dir / "board.html", PAGE.format(
-        strip=milestone_strip(root), cols=cols, stamp=stamp, total=len(briefs), n_auto=n_auto, n_needs=n_needs,
-        project=html.escape(project)))
-    print(f"Wrote {out_dir/'board.html'} — {len(briefs)} briefs, {n_auto} autonomy:full open, {n_needs} need you")
+    atomic_write(
+        out_dir / "board.html",
+        PAGE.format(
+            strip=milestone_strip(root),
+            cols=cols,
+            stamp=stamp,
+            total=len(briefs),
+            n_auto=n_auto,
+            n_needs=n_needs,
+            project=html.escape(project),
+        ),
+    )
+    print(
+        f"Wrote {out_dir / 'board.html'} — {len(briefs)} briefs, {n_auto} autonomy:full open, {n_needs} need you"
+    )
 
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>

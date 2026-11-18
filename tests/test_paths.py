@@ -4,6 +4,7 @@ The scripts live in the plugin; the queue is the user's data elsewhere. resolve_
 decides where, from (1) an env var, (2) a project-local .tasks/ found by walking up, or
 (3) the ~/tasks default. require_queue refuses to operate on an uninitialised directory.
 """
+
 import _paths
 import pytest
 
@@ -163,13 +164,18 @@ def test_bound_session_queue_is_used(tmp_path):
 
 def test_env_override_beats_the_binding(tmp_path):
     env = _bound(tmp_path, f'root = "{tmp_path}"\n')
-    assert _paths.resolve_root(env={**env, _paths.ENV_VAR: "/x"}, cwd=tmp_path) == _paths.pathlib.Path("/x")
+    assert _paths.resolve_root(
+        env={**env, _paths.ENV_VAR: "/x"}, cwd=tmp_path
+    ) == _paths.pathlib.Path("/x")
 
 
 @pytest.mark.parametrize("root_line", ['root = "/no/such/queue"\n', "root = [\n", "root = 3\n"])
 def test_unusable_binding_falls_through(tmp_path, root_line):
     env = _bound(tmp_path, root_line)
-    assert _paths.resolve_root(env=env, cwd=tmp_path) == _paths.pathlib.Path(_paths.DEFAULT_ROOT).expanduser()
+    assert (
+        _paths.resolve_root(env=env, cwd=tmp_path)
+        == _paths.pathlib.Path(_paths.DEFAULT_ROOT).expanduser()
+    )
 
 
 def test_invalid_session_id_is_ignored(tmp_path):

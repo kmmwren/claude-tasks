@@ -49,19 +49,30 @@ def test_omitting_blocks_writes_an_empty_list(queue):
 
 
 def test_an_open_brief_a_blocker_blocks_counts_as_an_unlock(queue):
-    queue_with(queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("ready", "ship", brief("ship"))])
+    queue_with(
+        queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("ready", "ship", brief("ship"))]
+    )
     assert prioritise.index_queue(queue)[1] == {"fix": 1}
 
 
 def test_a_done_brief_a_blocker_blocks_adds_no_unlock(queue):
-    queue_with(queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("done", "ship", brief("ship", status="done"))])
+    queue_with(
+        queue,
+        [
+            ("ready", "fix", brief("fix", blocks="[ship]")),
+            ("done", "ship", brief("ship", status="done")),
+        ],
+    )
     assert prioritise.index_queue(queue)[1] == {}
 
 
 def test_blocks_and_the_waiters_blockers_naming_the_same_pair_count_once(queue):
     queue_with(
         queue,
-        [("ready", "fix", brief("fix", blocks="[ship]")), ("ready", "ship", brief("ship", blockers="[fix]"))],
+        [
+            ("ready", "fix", brief("fix", blocks="[ship]")),
+            ("ready", "ship", brief("ship", blockers="[fix]")),
+        ],
     )
     assert prioritise.index_queue(queue)[1] == {"fix": 1}
 
@@ -69,11 +80,16 @@ def test_blocks_and_the_waiters_blockers_naming_the_same_pair_count_once(queue):
 def test_the_wait_graph_has_a_blocks_edge_once(queue):
     queue_with(
         queue,
-        [("ready", "fix", brief("fix", blocks="[ship]")), ("ready", "ship", brief("ship", blockers="[fix]"))],
+        [
+            ("ready", "fix", brief("fix", blocks="[ship]")),
+            ("ready", "ship", brief("ship", blockers="[fix]")),
+        ],
     )
     assert prioritise.WaitGraph.build(load_queue(queue)).waiters == {"fix": ("ship",)}
 
 
 def test_the_wait_graph_ignores_a_blocks_edge_to_a_parked_brief(queue):
-    queue_with(queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("parked", "ship", brief("ship"))])
+    queue_with(
+        queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("parked", "ship", brief("ship"))]
+    )
     assert prioritise.WaitGraph.build(load_queue(queue)).waiters == {}

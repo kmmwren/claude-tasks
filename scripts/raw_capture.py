@@ -6,6 +6,7 @@ Writes inbox/YYYY-MM-DD-HHMM-<slug>.md with title + raw body, no enrichment. The
 possible capture: no domain, importance, or structure to decide. The `enrich` skill turns
 inbox items into full briefs later.
 """
+
 import argparse
 import datetime
 import re

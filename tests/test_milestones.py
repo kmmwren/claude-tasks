@@ -1,4 +1,5 @@
 """milestones.py — optional, project-owned; inert unless tasks.toml names a file."""
+
 import json
 
 import milestones
@@ -25,7 +26,9 @@ def test_progress_counts_by_status_in_file_order(tmp_path):
     root = make_queue(tmp_path, BRIEFS, milestones=MILESTONES)
     rows = milestones.progress(root)
     assert [(m.id, m.title, m.done, m.total) for m in rows] == [
-        ("M1", "First", 1, 2), ("M2", "Second", 0, 1)]
+        ("M1", "First", 1, 2),
+        ("M2", "Second", 0, 1),
+    ]
     assert rows[0].counts == {"done": 1, "in-progress": 1}
 
 

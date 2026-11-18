@@ -1,4 +1,5 @@
 """Tests for init_queue.py — scaffolding a fresh queue (backs the /tasks-init command)."""
+
 import _paths
 import config
 import init_queue
@@ -74,6 +75,7 @@ def test_creates_the_blocked_folder_and_template_fields(tmp_path):
 
 def test_config_documents_milestones_but_leaves_them_off(tmp_path):
     import config
+
     root = init_queue.init_queue(tmp_path / "q")
     assert "# milestones =" in (root / "tasks.toml").read_text()
     assert "milestones" not in config.load_config(root)
@@ -81,7 +83,9 @@ def test_config_documents_milestones_but_leaves_them_off(tmp_path):
 
 def _session(tmp_path):
     parent = init_queue.init_queue(tmp_path / "parent")
-    return init_queue.SessionLink("s1", parent.resolve()), {_paths.SESSIONS_ENV: str(tmp_path / "sessions")}
+    return init_queue.SessionLink("s1", parent.resolve()), {
+        _paths.SESSIONS_ENV: str(tmp_path / "sessions")
+    }
 
 
 def test_session_writes_the_session_table(tmp_path):
@@ -94,7 +98,9 @@ def test_session_writes_the_session_table(tmp_path):
 def test_session_binds_the_queue(tmp_path):
     link, env = _session(tmp_path)
     root = init_queue.init_queue(tmp_path / "child", session=link, env=env)
-    assert _paths.resolve_root(env={**env, _paths.SESSION_ENV: "s1"}, cwd=tmp_path) == root.resolve()
+    assert (
+        _paths.resolve_root(env={**env, _paths.SESSION_ENV: "s1"}, cwd=tmp_path) == root.resolve()
+    )
 
 
 def test_fold_to_must_be_a_queue(tmp_path):

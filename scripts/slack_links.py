@@ -7,6 +7,7 @@ note. Text before the first permalink is a direction shared by the whole batch. 
 flagged parked when the direction or its own note mentions parking.
 Prints JSON: {"direction": str, "links": [{url, channel, message_ts, thread_ts, note, parked}]}.
 """
+
 import argparse
 import json
 import re
@@ -59,9 +60,11 @@ def parse(text: str) -> Batch:
     matches = list(PERMALINK.finditer(text))
     if not matches:
         return Batch(tidy(text), [])
-    direction = tidy(text[:matches[0].start()])
+    direction = tidy(text[: matches[0].start()])
     ends = [m.start() for m in matches[1:]] + [len(text)]
-    links = [parse_link(m.group(1), text[m.end():end], direction) for m, end in zip(matches, ends)]
+    links = [
+        parse_link(m.group(1), text[m.end() : end], direction) for m, end in zip(matches, ends)
+    ]
     return Batch(direction, links)
 
 
@@ -70,8 +73,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("text", nargs="?", default=None, help="pasted block (default: stdin)")
     a = ap.parse_args(argv)
     batch = parse(a.text if a.text is not None else sys.stdin.read())
-    print(json.dumps({"direction": batch.direction, "links": [asdict(x) for x in batch.links]},
-                     indent=2))
+    print(
+        json.dumps(
+            {"direction": batch.direction, "links": [asdict(x) for x in batch.links]}, indent=2
+        )
+    )
     return 0 if batch.links else 2
 
 

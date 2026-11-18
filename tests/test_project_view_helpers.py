@@ -15,17 +15,23 @@ def test_since_line_rewords_one_change_as_a_sentence():
 
 
 def test_since_line_lists_several_changes_in_plain_words():
-    lines = ["3 more acceptance criteria met (12 of 20)", "1 acceptance criteria no longer met (x)",
-             "Health moved from green to amber"]
+    lines = [
+        "3 more acceptance criteria met (12 of 20)",
+        "1 acceptance criteria no longer met (x)",
+        "Health moved from green to amber",
+    ]
     got = pv._since_line({"delta": {"since": "2026-10-05", "lines": lines}})
-    assert got == ('<div class="since"><p>Since 5 Oct:</p><ul><li>3 more checks done</li>'
-                   "<li>1 checks reopened</li><li>Health moved from On track to At risk</li></ul></div>")
+    assert got == (
+        '<div class="since"><p>Since 5 Oct:</p><ul><li>3 more checks done</li>'
+        "<li>1 checks reopened</li><li>Health moved from On track to At risk</li></ul></div>"
+    )
 
 
 def test_signal_text_names_the_late_milestones():
     m = {"milestones": [{"plain": "Beta", "missed": True}, {"plain": "GA", "missed": False}]}
     assert pv._signal_text({"signal": "missed milestone date", "detail": "x"}, m) == (
-        "milestones past their date: Beta")
+        "milestones past their date: Beta"
+    )
 
 
 def test_group_state_is_done_only_when_every_milestone_is():
@@ -42,8 +48,14 @@ def test_recommended_prefers_the_decision_then_its_recommended_option():
 
 
 def test_decision_lists_its_options_in_the_full_text():
-    d = {"status": "decided", "question": "Which?", "chosen": "A", "why": "", "date": "",
-         "options": [{"label": "A", "effect": "fast"}]}
+    d = {
+        "status": "decided",
+        "question": "Which?",
+        "chosen": "A",
+        "why": "",
+        "date": "",
+        "options": [{"label": "A", "effect": "fast"}],
+    }
     got = pv._decision(d, {"ask": {}})
     assert "<ul><li><b>A</b> fast</li></ul>" in got
     assert '<p class="answer">A</p>' in got
@@ -56,4 +68,6 @@ def test_since_line_says_nothing_changed():
 
 def test_decided_full_text_carries_the_reason_after_the_choice():
     d = {"status": "decided", "question": "Which?", "chosen": "A", "why": "it is fast", "date": ""}
-    assert "<summary>Full text</summary><p>A</p><p>it is fast</p></details>" in pv._decision(d, {"ask": {}})
+    assert "<summary>Full text</summary><p>A</p><p>it is fast</p></details>" in pv._decision(
+        d, {"ask": {}}
+    )

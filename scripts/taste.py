@@ -18,6 +18,7 @@
 
 The ranker hands it to the judge as the rubric; learn.py proposes versioned goal-weight edits.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -55,7 +56,9 @@ class Goal:
         match = next((f[6:] for f in fields if f.startswith("match ")), "")
         note = " | ".join(f for f in fields if not f.startswith(("weight ", "match ")))
         try:
-            return cls(name, float(weight), tuple(t.strip() for t in match.split(",") if t.strip()), note)
+            return cls(
+                name, float(weight), tuple(t.strip() for t in match.split(",") if t.strip()), note
+            )
         except ValueError:
             raise ProfileError(f"goal {name!r}: weight {weight!r} is not a number") from None
 
@@ -89,7 +92,9 @@ class Profile:
         return {goal.name: goal.weight for goal in self.goals}
 
     def with_weights(self, weights: Mapping[str, float], updated: str) -> Profile:
-        goals = tuple(dataclasses.replace(g, weight=weights.get(g.name, g.weight)) for g in self.goals)
+        goals = tuple(
+            dataclasses.replace(g, weight=weights.get(g.name, g.weight)) for g in self.goals
+        )
         return dataclasses.replace(self, goals=goals, updated=updated)
 
     def matched_goals(self, tags: frozenset[str], text: str) -> tuple[str, ...]:
@@ -98,8 +103,9 @@ class Profile:
     def rubric(self) -> str:
         """The profile as the judge reads it: goals heaviest first, then the plain lists."""
         goals = sorted(self.goals, key=lambda g: -g.weight)
-        lines = ["Goals (weight = importance):"] + [f"- {g.name} (weight {g.weight:g}) {g.note}".rstrip()
-                                                     for g in goals]
+        lines = ["Goals (weight = importance):"] + [
+            f"- {g.name} (weight {g.weight:g}) {g.note}".rstrip() for g in goals
+        ]
         for title, items in zip(LISTS, (self.values, self.dislikes, self.patterns)):
             lines += [f"{title}:"] + [f"- {item}" for item in items]
         return "\n".join(lines)
@@ -124,14 +130,22 @@ def _sections(text: str) -> dict[str, list[str]]:
 
 
 def render(profile: Profile) -> str:
-    head = f"---\ndraft: {str(profile.draft).lower()}\nupdated: {profile.updated}\n---\n# Priorities\n"
+    head = (
+        f"---\ndraft: {str(profile.draft).lower()}\nupdated: {profile.updated}\n---\n# Priorities\n"
+    )
     if profile.draft:
-        head += ("\n> DRAFT seeded by seed_profile.py. Edit freely: reweight, cut, add dislikes,"
-                 " then set `draft: false`.\n")
+        head += (
+            "\n> DRAFT seeded by seed_profile.py. Edit freely: reweight, cut, add dislikes,"
+            " then set `draft: false`.\n"
+        )
     body = [("Goals", [g.render() for g in profile.goals])]
-    body += [(title, [f"- {item}" for item in items])
-             for title, items in zip(LISTS, (profile.values, profile.dislikes, profile.patterns))]
-    return head + "".join(f"\n## {title}\n" + "".join(f"{line}\n" for line in lines) for title, lines in body)
+    body += [
+        (title, [f"- {item}" for item in items])
+        for title, items in zip(LISTS, (profile.values, profile.dislikes, profile.patterns))
+    ]
+    return head + "".join(
+        f"\n## {title}\n" + "".join(f"{line}\n" for line in lines) for title, lines in body
+    )
 
 
 def profile_path(root: pathlib.Path) -> pathlib.Path:

@@ -5,6 +5,7 @@ descriptions that broke YAML parsing (unquoted values containing ': '), an unrec
 key in plugin.json, and a missing marketplace.json. Every skill/command frontmatter must
 parse as YAML; the manifests must be valid JSON with the required shape.
 """
+
 import json
 import pathlib
 import re

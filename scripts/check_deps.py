@@ -15,6 +15,7 @@ Finds, in one pass:
 
   python scripts/check_deps.py [--json]
 """
+
 import argparse
 import dataclasses
 import json
@@ -44,7 +45,7 @@ def find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
         path.append(node)
         for nxt in sorted(graph.get(node, ())):
             if state.get(nxt) == 1:
-                loop = path[path.index(nxt):]
+                loop = path[path.index(nxt) :]
                 i = loop.index(min(loop))
                 rotated = loop[i:] + loop[:i]
                 cycles[tuple(rotated)] = rotated
@@ -76,19 +77,30 @@ def check(root: pathlib.Path) -> list[Problem]:
 def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
     out = [Problem("dangling", b.id, d) for d in sorted(b.declared_ids - known)]
     if b.status == "in-progress":
-        waiting = sorted(d for d in dependency_edges(b, known) | set(b.external_blockers)
-                         if d not in done)
+        waiting = sorted(
+            d for d in dependency_edges(b, known) | set(b.external_blockers) if d not in done
+        )
         if waiting:
             out.append(Problem("in-progress-unmet", b.id, ", ".join(waiting)))
     if b.status == "blocked":
         if not (b.blocked_by or b.declared_ids or b.legacy_tokens):
             out.append(Problem("blocked-no-reason", b.id, "blocked/ brief has no blocked_by"))
         elif awaits_release(b, done):
-            out.append(Problem("releasable", b.id,
-                               ", ".join(b.blocked_by or sorted(b.declared_ids | b.legacy_tokens))))
-        out += [Problem("blocked-no-probe", b.id,
-                        f"blocker {n} ({b.blocked_by[n - 1]}) has no `blocked_probe: {n}: <command>` line")
-                for n in b.probe_gaps]
+            out.append(
+                Problem(
+                    "releasable",
+                    b.id,
+                    ", ".join(b.blocked_by or sorted(b.declared_ids | b.legacy_tokens)),
+                )
+            )
+        out += [
+            Problem(
+                "blocked-no-probe",
+                b.id,
+                f"blocker {n} ({b.blocked_by[n - 1]}) has no `blocked_probe: {n}: <command>` line",
+            )
+            for n in b.probe_gaps
+        ]
     return out
 
 
@@ -99,8 +111,11 @@ def _milestone_problems(root: pathlib.Path, queue: list[Brief]) -> list[Problem]
         return [Problem("milestones-file", "-", str(e))]
     if titles is None:
         return []
-    return [Problem("unknown-milestone", b.id, b.milestone)
-            for b in queue if b.milestone and b.milestone not in titles]
+    return [
+        Problem("unknown-milestone", b.id, b.milestone)
+        for b in queue
+        if b.milestone and b.milestone not in titles
+    ]
 
 
 def main(argv: list[str] | None = None) -> None:

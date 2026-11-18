@@ -26,13 +26,18 @@ def test_a_repeat_capture_merges_into_the_existing_brief_and_says_which(queue, c
     capture(queue, "--source", "user")
     assert capsys.readouterr().out.strip() == "merged into inbox/rotate-the-leaked-key.md"
     assert files(queue) == ["rotate-the-leaked-key.md"]
-    log = (queue / "inbox" / "rotate-the-leaked-key.md").read_text().rsplit("## Execution log", 1)[1]
+    log = (
+        (queue / "inbox" / "rotate-the-leaked-key.md").read_text().rsplit("## Execution log", 1)[1]
+    )
     assert "repeat capture by user merged here" in log
 
 
 def test_a_repeat_with_new_context_adds_it_as_a_note(queue):
     capture(queue)
-    capture(queue, args=["--title", "Rotate the LEAKED key!", "--context", "Leaked in o/r#4. Vault is v2."])
+    capture(
+        queue,
+        args=["--title", "Rotate the LEAKED key!", "--context", "Leaked in o/r#4. Vault is v2."],
+    )
     text = (queue / "inbox" / "rotate-the-leaked-key.md").read_text()
     assert "Leaked in o/r#4. Vault is v2." in text.split("## Notes / open questions")[1]
     assert "_none_" not in text.split("## Notes / open questions")[1].split("## Execution log")[0]
@@ -42,8 +47,15 @@ def test_a_repeat_with_context_the_brief_already_holds_adds_no_note(queue):
     capture(queue)
     before = (queue / "inbox" / "rotate-the-leaked-key.md").read_text()
     capture(queue)
-    notes = (queue / "inbox" / "rotate-the-leaked-key.md").read_text().split("## Notes / open questions")[1]
-    assert notes.split("## Execution log")[0] == before.split("## Notes / open questions")[1].split("## Execution log")[0]
+    notes = (
+        (queue / "inbox" / "rotate-the-leaked-key.md")
+        .read_text()
+        .split("## Notes / open questions")[1]
+    )
+    assert (
+        notes.split("## Execution log")[0]
+        == before.split("## Notes / open questions")[1].split("## Execution log")[0]
+    )
 
 
 def test_refuse_files_nothing_and_exits_nonzero(queue):
@@ -84,4 +96,7 @@ def test_a_merge_is_committed_against_the_existing_brief(queue, monkeypatch):
 
 
 def test_a_brief_without_a_notes_section_gains_one():
-    assert add_task.add_note("# T\n\nbody\n", "extra") == "# T\n\nbody\n\n## Notes / open questions\n\nextra\n"
+    assert (
+        add_task.add_note("# T\n\nbody\n", "extra")
+        == "# T\n\nbody\n\n## Notes / open questions\n\nextra\n"
+    )

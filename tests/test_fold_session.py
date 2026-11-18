@@ -1,4 +1,5 @@
 """Tests for fold_session.py — a session-linked queue folds its open briefs into its parent."""
+
 import contextlib
 import subprocess
 
@@ -18,7 +19,9 @@ def queues(tmp_path):
     link = init_queue.SessionLink("s1", parent.resolve())
     child = init_queue.init_queue(tmp_path / "child", session=link, env=env)
     for status, name in (("ready", "a"), ("blocked", "b"), ("done", "c")):
-        (child / status / f"{name}.md").write_text(f"---\nid: {name}\nstatus: {status}\n---\nbody {name}\n")
+        (child / status / f"{name}.md").write_text(
+            f"---\nid: {name}\nstatus: {status}\n---\nbody {name}\n"
+        )
     return parent, child, env
 
 
@@ -32,7 +35,9 @@ def test_open_briefs_keep_their_status(queues):
 def test_a_pointer_stub_stays_behind(queues):
     parent, child, env = queues
     fold_session.SessionQueue.load(child).fold(env)
-    assert f"moved_to: {parent.resolve() / 'ready' / 'a.md'}" in (child / "ready" / "a.md").read_text()
+    assert (
+        f"moved_to: {parent.resolve() / 'ready' / 'a.md'}" in (child / "ready" / "a.md").read_text()
+    )
 
 
 def test_done_briefs_stay(queues):
@@ -74,7 +79,9 @@ def test_a_body_line_naming_moved_to_is_still_a_brief(queues):
 def test_a_hand_edited_lifecycle_still_folds(queues):
     _, child, env = queues
     config_path = child / "tasks.toml"
-    config_path.write_text(config_path.read_text().replace('lifecycle = "session"', 'lifecycle="session"'))
+    config_path.write_text(
+        config_path.read_text().replace('lifecycle = "session"', 'lifecycle="session"')
+    )
     fold_session.SessionQueue.load(child).fold(env)
     assert config.load_config(child)["session"]["lifecycle"] == "folded"
 
@@ -105,7 +112,11 @@ def test_each_queue_that_owns_its_repo_is_committed(queues, monkeypatch):
     parent, child, env = queues
     subprocess.run(["git", "init", "-q", str(parent)], check=True)
     commits = []
-    monkeypatch.setattr(fold_session, "sync_commit", lambda message, root, paths: commits.append((message, root, paths)))
+    monkeypatch.setattr(
+        fold_session,
+        "sync_commit",
+        lambda message, root, paths: commits.append((message, root, paths)),
+    )
     fold_session.SessionQueue.load(child).fold(env)
     assert commits == [("fold session s1: 2 brief(s) into parent", parent.resolve(), (".",))]
 

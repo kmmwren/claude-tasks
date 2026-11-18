@@ -18,6 +18,8 @@ jobs:
         run: pip install pytest pytest-cov ruff mypy pyyaml
       - name: ruff lint
         run: ruff check scripts/ tests/
+      - name: ruff format
+        run: ruff format --check scripts/ tests/
       - name: mypy --strict
         run: mypy scripts/
       - name: pytest + 100% coverage gate

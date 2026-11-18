@@ -5,6 +5,7 @@ Append-only JSONL under a per-queue state dir outside the queue repo, so showing
 git write. Each `shown` event keeps the list, the filter order, the profile version and the raw judge
 output, so learn.py can replay any display against a candidate profile.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -62,8 +63,16 @@ class Shown:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Shown:
         items = tuple(ShownItem(i["id"], tuple(i.get("goals", ()))) for i in d["items"])
-        return cls(d["scope"], d["profile_version"], d["source"], items, tuple(d["filter_order"]),
-                   tuple(d.get("judge_output", ())), d["impression"], d["at"])
+        return cls(
+            d["scope"],
+            d["profile_version"],
+            d["source"],
+            items,
+            tuple(d["filter_order"]),
+            tuple(d.get("judge_output", ())),
+            d["impression"],
+            d["at"],
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -87,7 +96,9 @@ class PickLog:
     def append(self, event: Shown | Choice) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)  # a shown line can exceed PIPE_BUF, so O_APPEND alone may interleave
+            fcntl.flock(
+                fh, fcntl.LOCK_EX
+            )  # a shown line can exceed PIPE_BUF, so O_APPEND alone may interleave
             fh.write(json.dumps(dataclasses.asdict(event), sort_keys=True) + "\n")
 
     def events(self) -> Iterator[Shown | Choice]:
@@ -104,19 +115,34 @@ class PickLog:
     def choices(self) -> list[Choice]:
         return [e for e in self.events() if isinstance(e, Choice)]
 
-    def latest_showing(self, brief_id: str, now: datetime.datetime, window_hours: float) -> Shown | None:
+    def latest_showing(
+        self, brief_id: str, now: datetime.datetime, window_hours: float
+    ) -> Shown | None:
         cutoff = now - datetime.timedelta(hours=window_hours)
-        hits = [s for s in self.shown()
-                if s.position(brief_id) is not None and datetime.datetime.fromisoformat(s.at) >= cutoff]
+        hits = [
+            s
+            for s in self.shown()
+            if s.position(brief_id) is not None and datetime.datetime.fromisoformat(s.at) >= cutoff
+        ]
         return hits[-1] if hits else None
 
-    def record_choice(self, kind: ChoiceKind, brief_id: str, now: datetime.datetime | None = None,
-                      window_hours: float = DEFAULT_WINDOW_HOURS) -> Choice:
+    def record_choice(
+        self,
+        kind: ChoiceKind,
+        brief_id: str,
+        now: datetime.datetime | None = None,
+        window_hours: float = DEFAULT_WINDOW_HOURS,
+    ) -> Choice:
         """Log a choice, linked to the latest list that showed the brief within the window, if any."""
         now = now or datetime.datetime.now(datetime.timezone.utc)
         shown = self.latest_showing(brief_id, now, window_hours)
-        choice = Choice(kind, brief_id, shown.impression if shown else None,
-                        shown.position(brief_id) if shown else None, now.isoformat(timespec="seconds"))
+        choice = Choice(
+            kind,
+            brief_id,
+            shown.impression if shown else None,
+            shown.position(brief_id) if shown else None,
+            now.isoformat(timespec="seconds"),
+        )
         self.append(choice)
         return choice
 

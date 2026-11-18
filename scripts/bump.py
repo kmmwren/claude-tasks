@@ -6,6 +6,7 @@
 A ref like `product-ingest#3809` matches the tag `pr:product-ingest#3809`; anything else is matched as a
 literal tag. Importance is only ever raised (a lower number), never lowered, so sessions can bump freely.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,12 @@ def tag_for(ref: str) -> str:
 
 
 def find(root: pathlib.Path, tag: str) -> pathlib.Path | None:
-    tagged = [path for folder in FOLDERS for path in sorted((root / folder).glob("*.md")) if tag in tags(path)]
+    tagged = [
+        path
+        for folder in FOLDERS
+        for path in sorted((root / folder).glob("*.md"))
+        if tag in tags(path)
+    ]
     return next((p for p in tagged if owned_by_pr_queue(p, tag)), tagged[0] if tagged else None)
 
 
@@ -39,10 +45,14 @@ def tags(path: pathlib.Path) -> set[str]:
 
 def owned_by_pr_queue(path: pathlib.Path, tag: str) -> bool:
     """The PR-queue sync titles its own brief `PR <ref>: ...`; a session's brief on the same PR copies the tag, not the title."""
-    return tag.startswith("pr:") and fm(path.read_text()).get("title", "").strip('"').startswith(f"PR {tag[3:]}: ")
+    return tag.startswith("pr:") and fm(path.read_text()).get("title", "").strip('"').startswith(
+        f"PR {tag[3:]}: "
+    )
 
 
-def bump(root: pathlib.Path, ref: str, importance: int, reason: str, now: datetime.datetime | None = None) -> str:
+def bump(
+    root: pathlib.Path, ref: str, importance: int, reason: str, now: datetime.datetime | None = None
+) -> str:
     path = find(root, tag_for(ref))
     if path is None:
         raise SystemExit(f"no open brief tagged {tag_for(ref)}")
@@ -52,9 +62,12 @@ def bump(root: pathlib.Path, ref: str, importance: int, reason: str, now: dateti
         return f"unchanged: importance {current} is already as high as {importance} or higher"
     stamp = (now or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M")
     text = re.sub(r"(?m)^importance:.*$", f"importance: {importance}", text, count=1)
-    path.write_text(text.rstrip("\n") + f"\n\n## Bump\n- {stamp}: importance {current} -> {importance}. {reason}\n"
-                    if "\n## Bump\n" not in text else
-                    text.rstrip("\n") + f"\n- {stamp}: importance {current} -> {importance}. {reason}\n")
+    path.write_text(
+        text.rstrip("\n")
+        + f"\n\n## Bump\n- {stamp}: importance {current} -> {importance}. {reason}\n"
+        if "\n## Bump\n" not in text
+        else text.rstrip("\n") + f"\n- {stamp}: importance {current} -> {importance}. {reason}\n"
+    )
     sync_commit(f"brief({path.stem}): importance {current} -> {importance}", root, ids=[path.stem])
     note_choice(root, "bump", path.stem)
     return f"bumped {path.stem}: importance {current} -> {importance}"

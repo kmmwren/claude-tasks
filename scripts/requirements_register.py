@@ -16,6 +16,7 @@ registered is skipped, so re-running extraction on the same messages changes not
 
 Stdlib only, so a repo can vendor it with `_paths.py` and `requirements_check.py`.
 """
+
 import argparse
 import json
 import pathlib
@@ -55,7 +56,9 @@ class Requirement:
     quote: str
     source: str
     withdrawn: str = ""
-    briefs: tuple[str, ...] | None = None  # table registers list their briefs; entry registers do not
+    briefs: tuple[str, ...] | None = (
+        None  # table registers list their briefs; entry registers do not
+    )
 
     @property
     def number(self) -> int:
@@ -94,7 +97,9 @@ def _table_requirement(line: str) -> Requirement | None:
         return None
     quote = cells[2].strip('"')
     briefs = tuple(b.strip() for b in cells[-1].split(",") if b.strip())
-    return Requirement(cells[0], cells[-2] if len(cells) > 4 else "", quote, quote, cells[1], briefs=briefs)
+    return Requirement(
+        cells[0], cells[-2] if len(cells) > 4 else "", quote, quote, cells[1], briefs=briefs
+    )
 
 
 def parse_register(text: str) -> list[Requirement]:
@@ -119,7 +124,11 @@ def parse_register(text: str) -> list[Requirement]:
             entries[-1][field[1]] = value
     return rows + [
         Requirement(
-            e["id"], e["kind"], e["title"], e.get("quote", ""), e.get("source", ""),
+            e["id"],
+            e["kind"],
+            e["title"],
+            e.get("quote", ""),
+            e.get("source", ""),
             e.get("withdrawn", ""),
         )
         for e in entries
@@ -139,7 +148,9 @@ def _clean_item(item: dict[str, str]) -> dict[str, str]:
         raise SystemExit(f"unknown kind {kind!r}; use one of {', '.join(KINDS)}")
     quote = " ".join(item["quote"].split())
     if len(quote) > MAX_QUOTE:
-        raise SystemExit(f"quote over {MAX_QUOTE} characters; quote the shortest verbatim span: {quote[:60]!r}")
+        raise SystemExit(
+            f"quote over {MAX_QUOTE} characters; quote the shortest verbatim span: {quote[:60]!r}"
+        )
     return {
         "kind": kind,
         "title": " ".join(item["title"].split()),
@@ -177,7 +188,9 @@ def append_items(
     """
     path = register_path(queue)
     if not path.is_file():
-        raise SystemExit(f"No register at {path}. Run /tasks-init, or create it with a prefix line.")
+        raise SystemExit(
+            f"No register at {path}. Run /tasks-init, or create it with a prefix line."
+        )
     text = path.read_text()
     existing = parse_register(text)
     lines = text.splitlines()
@@ -205,7 +218,7 @@ def append_items(
         new_lines.append(_table_row(req_id, item, columns) if by_quote else _entry(req_id, item))
         added.append(req_id)
     if added and last_row is not None:
-        lines[last_row + 1:last_row + 1] = new_lines
+        lines[last_row + 1 : last_row + 1] = new_lines
         path.write_text("\n".join(lines) + "\n")
     elif added:
         path.write_text((text if text.endswith("\n") else text + "\n") + "".join(new_lines))

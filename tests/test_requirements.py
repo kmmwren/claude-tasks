@@ -1,4 +1,5 @@
 """Tests for requirements_register.py and requirements_check.py (the requirements-extract mechanism)."""
+
 import json
 
 import init_queue
@@ -7,7 +8,12 @@ import requirements_check
 import requirements_register as reg
 
 
-def item(quote="build one feature at a time", source="2026-10-23T10:09:21Z", kind="constraint", title="One feature at a time"):
+def item(
+    quote="build one feature at a time",
+    source="2026-10-23T10:09:21Z",
+    kind="constraint",
+    title="One feature at a time",
+):
     return {"kind": kind, "title": title, "quote": quote, "source": source}
 
 
@@ -27,6 +33,7 @@ def brief(queue, folder, name, ids, criteria):
 
 # --- register -----------------------------------------------------------------
 
+
 def test_stub_scaffolded_with_default_prefix(queue):
     text = (queue / "requirements.md").read_text()
     assert reg.parse_prefix(text) == "PL"
@@ -39,7 +46,10 @@ def test_force_never_clobbers_an_existing_register(queue):
     assert len(reg.parse_register((queue / "requirements.md").read_text())) == 1
 
 
-@pytest.mark.parametrize("name,expected", [("panaseer-lite", "PL"), ("tasks", "TASK"), ("3d-app", "A"), ("---", "REQ"), ("x", "X")])
+@pytest.mark.parametrize(
+    "name,expected",
+    [("panaseer-lite", "PL"), ("tasks", "TASK"), ("3d-app", "A"), ("---", "REQ"), ("x", "X")],
+)
 def test_default_prefix(name, expected):
     assert init_queue.default_prefix(name) == expected
 
@@ -53,10 +63,26 @@ def test_explicit_prefix_and_invalid_prefix(tmp_path):
 
 
 def test_append_assigns_sequential_ids_with_verbatim_quote_and_source(queue):
-    added, skipped = reg.append_items(queue, [item(), item(quote="never share credentials", source="2026-10-23T10:10:00Z", kind="never", title="No shared creds")])
+    added, skipped = reg.append_items(
+        queue,
+        [
+            item(),
+            item(
+                quote="never share credentials",
+                source="2026-10-23T10:10:00Z",
+                kind="never",
+                title="No shared creds",
+            ),
+        ],
+    )
     assert added == ["PL-R001", "PL-R002"] and skipped == []
     first, second = reg.parse_register((queue / "requirements.md").read_text())
-    assert (first.id, first.kind, first.quote, first.source) == ("PL-R001", "constraint", "build one feature at a time", "2026-10-23T10:09:21Z")
+    assert (first.id, first.kind, first.quote, first.source) == (
+        "PL-R001",
+        "constraint",
+        "build one feature at a time",
+        "2026-10-23T10:09:21Z",
+    )
     assert second.kind == "never" and second.number == 2
 
 
@@ -73,7 +99,11 @@ def test_rerun_on_new_messages_appends_and_never_renumbers(queue):
     path = queue / "requirements.md"
     text = path.read_text()
     # delete R001 by hand: R002 keeps its id and the next new one is R003, not R002
-    path.write_text(text.replace("## PL-R001", "<!-- gone -->\n## XX", 1).replace("## XX [constraint] One feature at a time", ""))
+    path.write_text(
+        text.replace("## PL-R001", "<!-- gone -->\n## XX", 1).replace(
+            "## XX [constraint] One feature at a time", ""
+        )
+    )
     added, _ = reg.append_items(queue, [item(quote="three", source="s3")])
     assert added == ["PL-R003"]
     assert [r.id for r in reg.parse_register(path.read_text())] == ["PL-R002", "PL-R003"]
@@ -101,11 +131,14 @@ def test_append_without_register_fails(tmp_path):
         reg.append_items(tmp_path, [item()])
 
 
-@pytest.mark.parametrize("bad,match", [
-    ({"kind": "constraint", "title": "t", "quote": "", "source": "s"}, "missing quote"),
-    ({"kind": "wish", "title": "t", "quote": "q", "source": "s"}, "unknown kind"),
-    ({"kind": "never", "title": "t", "quote": "q" * 241, "source": "s"}, "over 240"),
-])
+@pytest.mark.parametrize(
+    "bad,match",
+    [
+        ({"kind": "constraint", "title": "t", "quote": "", "source": "s"}, "missing quote"),
+        ({"kind": "wish", "title": "t", "quote": "q", "source": "s"}, "unknown kind"),
+        ({"kind": "never", "title": "t", "quote": "q" * 241, "source": "s"}, "over 240"),
+    ],
+)
 def test_invalid_items_rejected_and_nothing_written(queue, bad, match):
     before = (queue / "requirements.md").read_text()
     with pytest.raises(SystemExit, match=match):
@@ -132,6 +165,7 @@ def test_cli_appends_from_file_and_stdin(queue, tmp_path, capsys, monkeypatch):
     reg.main(["append", str(queue), "--json", str(f)])
     assert "added 1: PL-R001" in capsys.readouterr().out
     import io
+
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([item()])))
     reg.main(["append", str(queue)])
     assert "already registered 1: PL-R001" in capsys.readouterr().out
@@ -141,6 +175,7 @@ def test_cli_appends_from_file_and_stdin(queue, tmp_path, capsys, monkeypatch):
 
 
 # --- coverage check -----------------------------------------------------------
+
 
 def two_requirements(queue):
     reg.append_items(queue, [item(), item(quote="two", source="s2")])
@@ -192,7 +227,9 @@ def test_unticked_checkbox_anywhere_in_a_done_brief_fails(queue):
 
 def test_brief_with_requirements_but_no_criteria_fails(queue):
     reg.append_items(queue, [item()])
-    (queue / "ready" / "a.md").write_text("---\nid: a\nrequirements: [PL-R001]\n---\n\n## Goal\nx\n")
+    (queue / "ready" / "a.md").write_text(
+        "---\nid: a\nrequirements: [PL-R001]\n---\n\n## Goal\nx\n"
+    )
     assert requirements_check.check(queue) == ["a cites requirements but has no `- [ ]` criteria"]
 
 
@@ -214,8 +251,12 @@ def test_block_list_requirements_and_briefs_without_frontmatter(queue):
 
 def test_brief_without_requirements_field_cites_nothing(queue):
     reg.append_items(queue, [item()])
-    (queue / "ready" / "x.md").write_text("---\nid: x\ntitle: y\n---\n\n## Success criteria\n- [ ] c\n")
-    assert requirements_check.check(queue) == ["PL-R001 has no brief: add `requirements: [PL-R001]` to a brief with criteria"]
+    (queue / "ready" / "x.md").write_text(
+        "---\nid: x\ntitle: y\n---\n\n## Success criteria\n- [ ] c\n"
+    )
+    assert requirements_check.check(queue) == [
+        "PL-R001 has no brief: add `requirements: [PL-R001]` to a brief with criteria"
+    ]
 
 
 def test_main_exit_codes(queue, tmp_path, capsys):
@@ -256,39 +297,59 @@ def test_table_register_beside_the_queue_agrees(tmp_path):
 
 
 def test_table_requirement_with_no_brief_fails(tmp_path):
-    assert "LITE-R001 has no brief: add `requirements: [LITE-R001]` to a brief with criteria" in requirements_check.check(project(tmp_path, "no field\n"))
+    assert (
+        "LITE-R001 has no brief: add `requirements: [LITE-R001]` to a brief with criteria"
+        in requirements_check.check(project(tmp_path, "no field\n"))
+    )
 
 
 def test_table_done_brief_with_unticked_criterion_fails(tmp_path):
-    problems = requirements_check.check(project(tmp_path, "requirements: [LITE-R001]\n- [ ] x\n", folder="done"))
+    problems = requirements_check.check(
+        project(tmp_path, "requirements: [LITE-R001]\n- [ ] x\n", folder="done")
+    )
     assert problems == ["one is in done/ with 1 unticked criteria"]
 
 
 def test_table_unknown_requirement_fails(tmp_path):
-    problems = requirements_check.check(project(tmp_path, "requirements: [LITE-R001, LITE-R999]\n- [ ] x\n"))
+    problems = requirements_check.check(
+        project(tmp_path, "requirements: [LITE-R001, LITE-R999]\n- [ ] x\n")
+    )
     assert problems == ["one names unknown requirement LITE-R999"]
 
 
 def test_table_row_and_briefs_must_name_each_other(tmp_path):
     register = TABLE.replace("| one |", "| one, two |")
-    problems = requirements_check.check(project(tmp_path, "requirements: [LITE-R001]\n- [ ] x\n", register=register))
+    problems = requirements_check.check(
+        project(tmp_path, "requirements: [LITE-R001]\n- [ ] x\n", register=register)
+    )
     assert problems == ["LITE-R001 lists two but that brief does not name it"]
     other = tmp_path / "b"
     other.mkdir()
-    problems = requirements_check.check(project(other, "requirements: [LITE-R001]\n- [ ] x\n", register=TABLE.replace("| one |", "|  |")))
+    problems = requirements_check.check(
+        project(
+            other, "requirements: [LITE-R001]\n- [ ] x\n", register=TABLE.replace("| one |", "|  |")
+        )
+    )
     assert problems == ["one names LITE-R001 but the register row omits it"]
 
 
 def test_table_append_adds_a_row_after_the_last_one_with_no_brief_and_skips_duplicates(tmp_path):
     register = TABLE + "\n## Notes\nstays below the table\n"
     queue = project(tmp_path, "requirements: [LITE-R001]\n- [ ] x\n", register=register)
-    added, skipped = reg.append_items(queue, [item(quote="a"), item(quote="new ask", source="2026-10-24T09:00:00Z")])
+    added, skipped = reg.append_items(
+        queue, [item(quote="a"), item(quote="new ask", source="2026-10-24T09:00:00Z")]
+    )
     assert (added, skipped) == (["LITE-R002"], ["LITE-R001"])
     text = (tmp_path / "requirements.md").read_text()
     assert text.index("LITE-R002") < text.index("## Notes")
     assert '| LITE-R002 | 2026-10-24T09:00:00Z | "new ask" | UNTRACKED |  |' in text
-    assert requirements_check.check(queue) == ["LITE-R002 has no brief: add `requirements: [LITE-R002]` to a brief with criteria"]
-    assert reg.append_items(queue, [item(quote="new ask", source="2026-10-24T09:00:00Z")]) == ([], ["LITE-R002"])
+    assert requirements_check.check(queue) == [
+        "LITE-R002 has no brief: add `requirements: [LITE-R002]` to a brief with criteria"
+    ]
+    assert reg.append_items(queue, [item(quote="new ask", source="2026-10-24T09:00:00Z")]) == (
+        [],
+        ["LITE-R002"],
+    )
 
 
 def test_table_row_too_short_to_hold_a_briefs_column_is_not_a_requirement():
@@ -297,14 +358,30 @@ def test_table_row_too_short_to_hold_a_briefs_column_is_not_a_requirement():
 
 # --- add_task writes the link the check reads ---------------------------------
 
+
 def test_add_task_requirements_flag_covers_the_register(queue, capsys):
     import add_task
 
     reg.append_items(queue, [item()])
     assert requirements_check.main([str(queue)]) == 1
-    add_task.main(["--root", str(queue), "--title", "Cover it", "--status", "ready",
-                   "--criteria", "a test proves it", "--requirements", "PL-R001",
-                   "--goal", "PL-R001 holds", "--context", "from the register"])
+    add_task.main(
+        [
+            "--root",
+            str(queue),
+            "--title",
+            "Cover it",
+            "--status",
+            "ready",
+            "--criteria",
+            "a test proves it",
+            "--requirements",
+            "PL-R001",
+            "--goal",
+            "PL-R001 holds",
+            "--context",
+            "from the register",
+        ]
+    )
     assert "requirements: [PL-R001]" in next((queue / "ready").glob("*.md")).read_text()
     assert requirements_check.main([str(queue)]) == 0
 

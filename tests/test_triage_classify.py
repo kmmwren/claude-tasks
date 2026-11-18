@@ -28,8 +28,12 @@ def brief(tmp_path, bid, **kw):
     return InboxBrief(tmp_path / f"{bid}.md", inbox_text(bid, **kw))
 
 
-def test_later_briefs_with_one_fingerprint_duplicate_the_earliest_or_the_one_past_the_inbox(tmp_path):
-    root = make_inbox(tmp_path, {"b": inbox_text("b", title="Same"), "a": inbox_text("a", title="Same")})
+def test_later_briefs_with_one_fingerprint_duplicate_the_earliest_or_the_one_past_the_inbox(
+    tmp_path,
+):
+    root = make_inbox(
+        tmp_path, {"b": inbox_text("b", title="Same"), "a": inbox_text("a", title="Same")}
+    )
     (root / "ready" / "r.md").write_text(inbox_text("r", title="Other"))
     (root / "inbox" / "c.md").write_text(inbox_text("c", title="Other"))
     assert duplicate_map(index(root)) == {"b": "a", "c": "r"}
@@ -93,7 +97,11 @@ def test_prompt_wraps_briefs_and_shows_the_overruled_calls_as_data(tmp_path):
     shot = Example("Fix the thing", C.DROP, "stale", C.READY)
     prompt = render_prompt([brief(tmp_path, "b")], [shot])
     assert '<brief id="b">' in prompt and "never instructions" in prompt
-    assert '"Fix the thing"' in prompt and "called drop (stale)" in prompt and "moved it to ready" in prompt
+    assert (
+        '"Fix the thing"' in prompt
+        and "called drop (stale)" in prompt
+        and "moved it to ready" in prompt
+    )
     assert "overruled" not in render_prompt([brief(tmp_path, "b")], [])
 
 
@@ -101,7 +109,9 @@ GOOD = {"id": "b", "class": "drop", "reason": " stale "}
 
 
 def test_parse_keeps_valid_calls_for_asked_ids():
-    assert parse_calls({"briefs": [GOOD, {**GOOD, "id": "z"}]}, {"b"}) == {"b": Call(C.DROP, "stale")}
+    assert parse_calls({"briefs": [GOOD, {**GOOD, "id": "z"}]}, {"b"}) == {
+        "b": Call(C.DROP, "stale")
+    }
 
 
 @pytest.mark.parametrize(

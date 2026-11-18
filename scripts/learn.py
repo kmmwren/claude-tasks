@@ -12,6 +12,7 @@ proposal is trained on older picks and replayed on the newest: a reorder must or
 than the current weights do, a nudge must order them no worse. Applying snapshots the old profile first, so every change is revertible.
 Auto-apply stays off until `[learn] auto_apply = true` and the log holds `min_runs` lists.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,8 +34,14 @@ from picks import Choice, PickLog, Shown, state_dir  # noqa: E402
 from taste import PROFILE_FILE, Profile, load_profile, profile_path, render  # noqa: E402
 
 DEFAULTS: dict[str, Any] = {
-    "step": 0.05, "max_change": 0.2, "max_goals": 3, "floor": 0.05, "holdout": 0.3, "min_pairs": 10,
-    "auto_apply": False, "min_runs": 25,
+    "step": 0.05,
+    "max_change": 0.2,
+    "max_goals": 3,
+    "floor": 0.05,
+    "holdout": 0.3,
+    "min_pairs": 10,
+    "auto_apply": False,
+    "min_runs": 25,
 }
 
 
@@ -60,7 +67,12 @@ def pairs_for(choice: Choice, shown: Shown) -> list[Pair]:
 
 def pairs(log: PickLog) -> list[Pair]:
     shown = {s.impression: s for s in log.shown()}
-    return [pair for c in log.choices() if c.impression in shown for pair in pairs_for(c, shown[c.impression])]
+    return [
+        pair
+        for c in log.choices()
+        if c.impression in shown
+        for pair in pairs_for(c, shown[c.impression])
+    ]
 
 
 def score(weights: Mapping[str, float], goals: frozenset[str]) -> float:
@@ -69,9 +81,11 @@ def score(weights: Mapping[str, float], goals: frozenset[str]) -> float:
 
 def accuracy(weights: Mapping[str, float], held_out: Sequence[Pair]) -> float:
     """Share of pairs the weights order as chosen; a tie counts half."""
+
     def credit(pair: Pair) -> float:
         won, lost = score(weights, pair.winner), score(weights, pair.loser)
         return 1.0 if won > lost else 0.5 if won == lost else 0.0
+
     return sum(credit(p) for p in held_out) / len(held_out)
 
 
@@ -85,13 +99,20 @@ def net_preference(train: Sequence[Pair]) -> dict[str, int]:
     return net
 
 
-def nudged(weights: Mapping[str, float], train: Sequence[Pair], config: Mapping[str, Any]) -> dict[str, float]:
+def nudged(
+    weights: Mapping[str, float], train: Sequence[Pair], config: Mapping[str, Any]
+) -> dict[str, float]:
     """Move the most-preferred and most-avoided goals, each by at most `max_change` of its weight."""
     net = {g: n for g, n in net_preference(train).items() if g in weights and n}
     strongest = sorted(net, key=lambda g: (-abs(net[g]), g))[: int(config["max_goals"])]
     cap, step, floor = float(config["max_change"]), float(config["step"]), float(config["floor"])
-    return {**weights, **{g: max(floor, round(weights[g] * (1 + max(-cap, min(cap, step * net[g]))), 3))
-                          for g in strongest}}
+    return {
+        **weights,
+        **{
+            g: max(floor, round(weights[g] * (1 + max(-cap, min(cap, step * net[g]))), 3))
+            for g in strongest
+        },
+    }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -116,20 +137,32 @@ class Proposal:
         return {c.goal: c.new for c in self.changes}
 
     def describe(self) -> str:
-        head = (f"proposal {self.id} ({self.kind}; held-out accuracy {self.old_accuracy:.2f} -> "
-                f"{self.new_accuracy:.2f} over {self.held_out} pairs; {self.status})")
+        head = (
+            f"proposal {self.id} ({self.kind}; held-out accuracy {self.old_accuracy:.2f} -> "
+            f"{self.new_accuracy:.2f} over {self.held_out} pairs; {self.status})"
+        )
         return "\n".join([head] + [f"  {c.goal}: {c.old:g} -> {c.new:g}" for c in self.changes])
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Proposal:
-        return cls(d["id"], d["from_version"], tuple(Change(**c) for c in d["changes"]), d["kind"],
-                   d["old_accuracy"], d["new_accuracy"], d["held_out"], d["status"])
+        return cls(
+            d["id"],
+            d["from_version"],
+            tuple(Change(**c) for c in d["changes"]),
+            d["kind"],
+            d["old_accuracy"],
+            d["new_accuracy"],
+            d["held_out"],
+            d["status"],
+        )
 
 
 def ordering(weights: Mapping[str, float]) -> dict[tuple[str, str], int]:
     """Which goal of each pair outranks the other; splitting a tie counts as a change of order."""
-    return {(a, b): (weights[a] > weights[b]) - (weights[a] < weights[b])
-            for a, b in itertools.combinations(sorted(weights), 2)}
+    return {
+        (a, b): (weights[a] > weights[b]) - (weights[a] < weights[b])
+        for a, b in itertools.combinations(sorted(weights), 2)
+    }
 
 
 def validated(kind: str, before: float, after: float) -> bool:
@@ -137,8 +170,9 @@ def validated(kind: str, before: float, after: float) -> bool:
     return after > before or (kind == "nudge" and after == before)
 
 
-def propose(profile: Profile, all_pairs: Sequence[Pair], config: Mapping[str, Any],
-            today: str) -> Proposal | str:
+def propose(
+    profile: Profile, all_pairs: Sequence[Pair], config: Mapping[str, Any], today: str
+) -> Proposal | str:
     """A validated proposal, or the reason there is none."""
     if len(all_pairs) < int(config["min_pairs"]):
         return f"only {len(all_pairs)} preference pairs; learning starts at {config['min_pairs']}"
@@ -152,9 +186,13 @@ def propose(profile: Profile, all_pairs: Sequence[Pair], config: Mapping[str, An
     kind = "reorder" if ordering(new) != ordering(old) else "nudge"
     before, after = accuracy(old, held_out), accuracy(new, held_out)
     if not validated(kind, before, after):
-        return f"the {kind} did not replay well enough on held-out picks ({before:.2f} -> {after:.2f})"
+        return (
+            f"the {kind} did not replay well enough on held-out picks ({before:.2f} -> {after:.2f})"
+        )
     version = profile.with_weights(new, today).version
-    return Proposal(f"{today}-{version}", profile.version, changes, kind, before, after, len(held_out))
+    return Proposal(
+        f"{today}-{version}", profile.version, changes, kind, before, after, len(held_out)
+    )
 
 
 class ProposalStore:
@@ -165,7 +203,9 @@ class ProposalStore:
         self.dir = state_dir(root) / "learn"
 
     def save(self, proposal: Proposal) -> None:
-        atomic_write(self.dir / f"{proposal.id}.json", json.dumps(dataclasses.asdict(proposal), indent=2))
+        atomic_write(
+            self.dir / f"{proposal.id}.json", json.dumps(dataclasses.asdict(proposal), indent=2)
+        )
 
     def load(self, proposal_id: str) -> Proposal:
         path = self.dir / f"{proposal_id}.json"
@@ -198,7 +238,9 @@ def write_profile(root: pathlib.Path, text: str, message: str) -> None:
 def apply(root: pathlib.Path, proposal: Proposal, today: str) -> Proposal:
     profile = current(root)
     if profile.version != proposal.from_version:
-        raise SystemExit(f"profile is now {profile.version}, not {proposal.from_version}; re-run learn.py")
+        raise SystemExit(
+            f"profile is now {profile.version}, not {proposal.from_version}; re-run learn.py"
+        )
     store = ProposalStore(root)
     store.snapshot(profile)
     updated = profile.with_weights(proposal.weights(), today)
@@ -218,7 +260,9 @@ def revert(root: pathlib.Path, version: str) -> str:
 
 def auto_applies(proposal: Proposal, runs: int, config: Mapping[str, Any]) -> bool:
     """Only small nudges, only once enough lists have been shown, only when the owner switched it on."""
-    return bool(config["auto_apply"]) and runs >= int(config["min_runs"]) and proposal.kind == "nudge"
+    return (
+        bool(config["auto_apply"]) and runs >= int(config["min_runs"]) and proposal.kind == "nudge"
+    )
 
 
 def learn(root: pathlib.Path, today: str) -> str:

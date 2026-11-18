@@ -75,6 +75,8 @@ def test_find_duplicate_returns_the_canonical_member_or_none(tmp_path):
 def test_created_date_orders_members_of_one_folder(tmp_path):
     root = make_inbox(tmp_path, {})
     for bid, created in (("z", "2026-01-01"), ("a", "2026-02-01")):
-        text = inbox_text(bid, title="Same").replace("status: inbox", f"created: {created}\nstatus: inbox")
+        text = inbox_text(bid, title="Same").replace(
+            "status: inbox", f"created: {created}\nstatus: inbox"
+        )
         (root / "inbox" / f"{bid}.md").write_text(text)
     assert [m.id for m in index(root)[_fp("Same")]] == ["z", "a"]

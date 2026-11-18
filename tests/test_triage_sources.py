@@ -148,7 +148,9 @@ def test_a_number_that_is_not_a_pr_falls_back_to_the_issue_check(queue):
     prs = FakePrs({("o/r", 7): PrState.NOT_A_PR})
     assert LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)("o/r#7")
     assert not LiveSources(queue, FakeGh(set()), prs)("o/r#7")
-    assert not LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)("https://github.com/o/r/pull/7")
+    assert not LiveSources(queue, FakeGh({"repos/o/r/issues/7"}), prs)(
+        "https://github.com/o/r/pull/7"
+    )
 
 
 def _gh_answers(monkeypatch, returncode, out="", err=""):
@@ -169,7 +171,9 @@ def test_pr_state_reads_the_state_gh_prints(monkeypatch, out, state):
 
 
 def test_pr_state_tells_a_plain_issue_from_a_failure(monkeypatch):
-    _gh_answers(monkeypatch, 1, err="GraphQL: Could not resolve to a PullRequest with the number of 7.")
+    _gh_answers(
+        monkeypatch, 1, err="GraphQL: Could not resolve to a PullRequest with the number of 7."
+    )
     assert pr_state("o/r", 7) is PrState.NOT_A_PR
     _gh_answers(monkeypatch, 1, err="error connecting to api.github.com")
     assert pr_state("o/r", 7) is None

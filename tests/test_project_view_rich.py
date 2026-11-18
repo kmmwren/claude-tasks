@@ -1,4 +1,5 @@
 """Every optional section of the project page, driven from one rich fixture."""
+
 import datetime as dt
 
 import project_view as pv
@@ -27,10 +28,23 @@ def test_brief_states_and_rollups(tmp_path):
 def test_rollout_cells_cover_every_evidence_kind(tmp_path):
     merged = pv.PrState("Panaseer/demo#1", "MERGED", "green", NOW)
     open_pr = pv.PrState("Panaseer/demo#2", "OPEN", "green", NOW)
-    cells = {t["id"]: t["cells"] for t in build(tmp_path, prs={merged.key: merged, open_pr.key: open_pr})["rollout"]["targets"]}
-    assert cells["env"]["built"]["state"] == "verified" and cells["env"]["live"]["state"] == "verified"
-    assert cells["other"]["built"]["state"] == "pending" and cells["other"]["live"]["state"] == "claimed"
-    assert cells["third"]["built"]["state"] == "unchecked" and cells["third"]["live"]["state"] == "pending"
+    cells = {
+        t["id"]: t["cells"]
+        for t in build(tmp_path, prs={merged.key: merged, open_pr.key: open_pr})["rollout"][
+            "targets"
+        ]
+    }
+    assert (
+        cells["env"]["built"]["state"] == "verified" and cells["env"]["live"]["state"] == "verified"
+    )
+    assert (
+        cells["other"]["built"]["state"] == "pending"
+        and cells["other"]["live"]["state"] == "claimed"
+    )
+    assert (
+        cells["third"]["built"]["state"] == "unchecked"
+        and cells["third"]["live"]["state"] == "pending"
+    )
     unknown = {t["id"]: t["cells"] for t in build(tmp_path / "u")["rollout"]["targets"]}
     assert unknown["env"]["live"]["state"] == "unchecked"
 
@@ -38,36 +52,66 @@ def test_rollout_cells_cover_every_evidence_kind(tmp_path):
 def test_architecture_tree_and_decisions(tmp_path):
     m = build(tmp_path)
     assert m["architecture"][0]["children"][0]["children"][0]["id"] == "part"
-    assert m["architecture"][0]["status"] == "done" and m["architecture"][0]["children"][0]["status"] == "unmapped"
+    assert (
+        m["architecture"][0]["status"] == "done"
+        and m["architecture"][0]["children"][0]["status"] == "unmapped"
+    )
     dec = {d["question"]: d for d in m["decisions"]}
-    assert dec["Pick a thing"]["chosen"] == "Take the first one" and dec["Pick a thing"]["status"] == "decided"
+    assert (
+        dec["Pick a thing"]["chosen"] == "Take the first one"
+        and dec["Pick a thing"]["status"] == "decided"
+    )
     assert dec["Use an ADR"]["status"] == "open" and dec["Use an ADR"]["date"] == "2026-09-30"
     assert dec["Inline question?"]["status"] == "open"
 
 
 def test_requirements_register_states(tmp_path):
     rq = build(tmp_path)["requirements"]
-    assert {i["id"]: i["state"] for i in rq["items"]} == {"RCH-R001": "done", "RCH-R002": "active", "RCH-R003": "uncovered"}
+    assert {i["id"]: i["state"] for i in rq["items"]} == {
+        "RCH-R001": "done",
+        "RCH-R002": "active",
+        "RCH-R003": "uncovered",
+    }
     assert rq["problems"]
 
 
 def test_floor_inside_owner_colour_is_noted_not_overriding(tmp_path):
     pr = pv.PrState("Panaseer/demo#1", "OPEN", "red", NOW)
     m = build(tmp_path, prs={pr.key: pr})
-    assert m["health"]["effective"] == "amber" and not m["health"]["overridden"] and m["health"]["owner_stale"]
+    assert (
+        m["health"]["effective"] == "amber"
+        and not m["health"]["overridden"]
+        and m["health"]["owner_stale"]
+    )
     html = pv.render_fragment(m)
     assert "Automatic checks also flagged" in html and "not reconfirmed recently" in html
 
 
 def test_full_render_sections(tmp_path):
     pr = pv.PrState("Panaseer/demo#1", "OPEN", "red", NOW, "https://x.test/1", "Real title")
-    m = build(tmp_path, prs={pr.key: pr}, sessions={"abc12345-full": NOW - dt.timedelta(days=2)},
-              activity=NOW - dt.timedelta(days=1))
+    m = build(
+        tmp_path,
+        prs={pr.key: pr},
+        sessions={"abc12345-full": NOW - dt.timedelta(days=2)},
+        activity=NOW - dt.timedelta(days=1),
+    )
     html = pv.render_fragment(m)
-    for text in ("Needs your decision", "Rollout", "All requirements",
-                 "No work is planned for this yet", "Real title", "2 days ago", "last active",
-                 "Check results could not be read for", "Live environments", "Repo", "Fallback title",
-                 'role="tablist"', 'id="panel-plan"', 'id="panel-decisions" aria-labelledby="tab-decisions" hidden'):
+    for text in (
+        "Needs your decision",
+        "Rollout",
+        "All requirements",
+        "No work is planned for this yet",
+        "Real title",
+        "2 days ago",
+        "last active",
+        "Check results could not be read for",
+        "Live environments",
+        "Repo",
+        "Fallback title",
+        'role="tablist"',
+        'id="panel-plan"',
+        'id="panel-decisions" aria-labelledby="tab-decisions" hidden',
+    ):
         assert text in html, text
     assert pv.render_document(m).startswith("<!doctype html>")
 
@@ -77,11 +121,17 @@ def test_empty_sections_say_so(tmp_path):
     for d in ("inbox", "ready", "in-progress", "done", "parked"):
         (q / d).mkdir(parents=True)
     (q / "tasks.toml").write_text('name = "E"\n')
-    (q / "project.toml").write_text('[project]\ntitle = "E"\noutcome = "o"\n[health]\ncolour = "green"\nreason = "r"\n')
+    (q / "project.toml").write_text(
+        '[project]\ntitle = "E"\noutcome = "o"\n[health]\ncolour = "green"\nreason = "r"\n'
+    )
     m = pv.build_model(q, pv.Signals(now=NOW))
     html = pv.render_fragment(m)
-    for text in ("No milestones are defined", "No architecture has been described", "No decisions are recorded",
-                 "No links have been added"):
+    for text in (
+        "No milestones are defined",
+        "No architecture has been described",
+        "No decisions are recorded",
+        "No links have been added",
+    ):
         assert text.lower() in html.lower(), text
     assert m["health"]["effective"] == "green"
 
@@ -94,6 +144,7 @@ def test_cli_renders_a_queue(tmp_path, capsys):
 
 def test_config_errors_and_date_forms(tmp_path):
     import pytest
+
     q = make_rich(tmp_path)
     with pytest.raises(pv.ProjectConfigError, match="does not exist"):
         pv.load_project(tmp_path)
@@ -101,7 +152,9 @@ def test_config_errors_and_date_forms(tmp_path):
     (q / "project.toml").write_text(good.replace("[health]", "[nothealth]"))
     with pytest.raises(pv.ProjectConfigError, match=r"\[health\] is required"):
         pv.load_project(q)
-    (q / "project.toml").write_text(good.replace("[ask]\n", "").replace("[[ask.options]]", "[[ask]]\n[[ask.options]]"))
+    (q / "project.toml").write_text(
+        good.replace("[ask]\n", "").replace("[[ask.options]]", "[[ask]]\n[[ask.options]]")
+    )
     with pytest.raises(pv.ProjectConfigError, match="single table"):
         pv.load_project(q)
     assert pv._date(dt.datetime(2026, 1, 2, 3)) == dt.date(2026, 1, 2)
@@ -123,7 +176,9 @@ def test_unreadable_register_entry_and_untouched_workstream(tmp_path):
 def test_delta_covers_every_line_kind(tmp_path):
     m = build(tmp_path)
     base = pv.snapshot(m)
-    base.update(criteria=[m["totals"]["ticked"] + 2, m["totals"]["total"]], prs_merged=[], health="red")
+    base.update(
+        criteria=[m["totals"]["ticked"] + 2, m["totals"]["total"]], prs_merged=[], health="red"
+    )
     now = dict(m, prs=[{"key": "Panaseer/demo#1", "state": "MERGED"}])
     lines = pv.delta(now, base)["lines"]
     assert any("no longer met" in x for x in lines) and any(x.startswith("Merged:") for x in lines)
@@ -141,10 +196,14 @@ def test_queued_only_is_not_started_and_withdrawn_requirements_are_skipped(tmp_p
     assert pv._rollup([brief])["status"] == "not-started"
     q = make_rich(tmp_path)
     reg = q / "requirements.md"
-    reg.write_text(reg.read_text().replace('"Nobody covers this"', '"Nobody covers this (withdrawn)"'))
+    reg.write_text(
+        reg.read_text().replace('"Nobody covers this"', '"Nobody covers this (withdrawn)"')
+    )
     monkey = pv.parse_register(reg.read_text())
     assert monkey
-    w = type("W", (), {"withdrawn": True, "id": "RCH-R003", "quote": "q", "title": "t", "kind": "k"})()
+    w = type(
+        "W", (), {"withdrawn": True, "id": "RCH-R003", "quote": "q", "title": "t", "kind": "k"}
+    )()
     real = pv.parse_register
     pv.parse_register = lambda text: [w]
     try:
@@ -153,12 +212,24 @@ def test_queued_only_is_not_started_and_withdrawn_requirements_are_skipped(tmp_p
         pv.parse_register = real
 
 
-BANNED = ("brief", "criteria met", "layer", "machine-checked", "pending", "not set", "unknown", "no target date")
+BANNED = (
+    "brief",
+    "criteria met",
+    "layer",
+    "machine-checked",
+    "pending",
+    "not set",
+    "unknown",
+    "no target date",
+)
 
 
 def test_rendered_page_avoids_internal_vocabulary_and_ids(tmp_path):
     import re
-    m = build(tmp_path, prs={"Panaseer/demo#1": pv.PrState("Panaseer/demo#1", "OPEN", "green", NOW)})
+
+    m = build(
+        tmp_path, prs={"Panaseer/demo#1": pv.PrState("Panaseer/demo#1", "OPEN", "green", NOW)}
+    )
     html = pv.render_fragment(m)
     visible = re.sub(r"<(style|script)\b.*?</\1>", "", html, flags=re.S)
     visible = re.sub(r"<[^>]+>", " ", visible).lower()
@@ -179,17 +250,27 @@ def test_tabs_render_every_panel_and_the_status_words_are_the_three(tmp_path):
 
 def test_milestone_shows_date_only_when_set_and_check_count_only_inside(tmp_path):
     from tests.project_fixtures import make_queue
-    dated = pv.render_fragment(pv.build_model(make_queue(tmp_path / "d", due='due = "2026-12-01"\n'), pv.Signals(now=NOW)))
+
+    dated = pv.render_fragment(
+        pv.build_model(make_queue(tmp_path / "d", due='due = "2026-12-01"\n'), pv.Signals(now=NOW))
+    )
     plain = pv.render_fragment(pv.build_model(make_queue(tmp_path / "p"), pv.Signals(now=NOW)))
     assert "Due 1 Dec 2026" in dated and "Due " not in plain
-    assert "checks done" in plain.split('role="tabpanel"', 1)[1] and "checks done" not in plain.split('role="tabpanel"', 1)[0]
+    assert (
+        "checks done" in plain.split('role="tabpanel"', 1)[1]
+        and "checks done" not in plain.split('role="tabpanel"', 1)[0]
+    )
 
 
 def test_proposed_adr_yields_its_recommendation(tmp_path):
     heading = tmp_path / "0034-a.md"
-    heading.write_text("# 34. Score feedback\n\n| Status | Proposed |\n\n"
-                       "### Option A, score each artifact per tenant (proposed)\n\n### Option B, weight requesters\n")
+    heading.write_text(
+        "# 34. Score feedback\n\n| Status | Proposed |\n\n"
+        "### Option A, score each artifact per tenant (proposed)\n\n### Option B, weight requesters\n"
+    )
     prose = tmp_path / "0055-b.md"
-    prose.write_text("# 55. Extraction\n\n| Status | Proposed |\n\nRecommended, not yet decided: a hybrid of dlt and tasks.\n")
+    prose.write_text(
+        "# 55. Extraction\n\n| Status | Proposed |\n\nRecommended, not yet decided: a hybrid of dlt and tasks.\n"
+    )
     assert pv._read_decision(heading)["recommended"] == "score each artifact per tenant"
     assert pv._read_decision(prose)["recommended"] == "a hybrid of dlt and tasks."

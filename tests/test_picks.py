@@ -1,4 +1,5 @@
 """Tests for picks.py and log_pick.py: the pick log lives outside the repo and links choices to lists."""
+
 import datetime
 import pathlib
 
@@ -14,8 +15,16 @@ NOW = datetime.datetime(2026, 11, 11, 12, 0, tzinfo=datetime.timezone.utc)
 
 
 def shown(ids, impression="imp1", at="2026-11-11T11:00:00+00:00"):
-    return Shown("all", "v1", "judge", tuple(ShownItem(i, ("G",)) for i in ids), tuple(ids), ("raw",),
-                 impression, at)
+    return Shown(
+        "all",
+        "v1",
+        "judge",
+        tuple(ShownItem(i, ("G",)) for i in ids),
+        tuple(ids),
+        ("raw",),
+        impression,
+        at,
+    )
 
 
 def test_state_dir_is_one_per_queue_under_the_env_override(tmp_path, monkeypatch):
@@ -26,7 +35,10 @@ def test_state_dir_is_one_per_queue_under_the_env_override(tmp_path, monkeypatch
 
 def test_state_dir_defaults_to_the_home_state_tree(monkeypatch):
     monkeypatch.delenv(picks.STATE_ENV)
-    assert picks.state_dir(pathlib.Path("/q")).parent == pathlib.Path("~/.claude-tasks/predictor").expanduser()
+    assert (
+        picks.state_dir(pathlib.Path("/q")).parent
+        == pathlib.Path("~/.claude-tasks/predictor").expanduser()
+    )
 
 
 def test_events_round_trip_in_order(tmp_path):
@@ -54,13 +66,18 @@ def test_a_choice_links_to_the_latest_list_that_showed_the_brief(tmp_path):
     log = PickLog(tmp_path)
     log.append(shown(["a", "b"], impression="old", at="2026-11-11T09:00:00+00:00"))
     log.append(shown(["c", "b"], impression="new"))
-    assert log.record_choice("pick", "b", NOW) == Choice("pick", "b", "new", 1, "2026-11-11T12:00:00+00:00")
+    assert log.record_choice("pick", "b", NOW) == Choice(
+        "pick", "b", "new", 1, "2026-11-11T12:00:00+00:00"
+    )
 
 
 def test_a_choice_outside_the_window_or_never_shown_is_off_list(tmp_path):
     log = PickLog(tmp_path)
     log.append(shown(["a"], at="2026-11-10T09:00:00+00:00"))
-    assert (log.record_choice("pick", "a", NOW).impression, log.record_choice("skip", "z", NOW).position) == (None, None)
+    assert (
+        log.record_choice("pick", "a", NOW).impression,
+        log.record_choice("skip", "z", NOW).position,
+    ) == (None, None)
     assert len(log.choices()) == 2
 
 
@@ -82,7 +99,9 @@ def test_note_choice_warns_instead_of_failing_the_move(tmp_path, monkeypatch, ca
 
 def test_moving_a_brief_to_in_progress_logs_a_pick(tmp_path):
     root = make_queue(tmp_path, {"a": {}, "b": {}})
-    PickLog(root).append(shown(["b", "a"], at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
+    PickLog(root).append(
+        shown(["b", "a"], at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    )
     transition.main(["move", "a", "in-progress", "--root", str(root), "--no-sync"])
     transition.main(["move", "b", "parked", "--root", str(root), "--no-sync"])
     assert [(c.kind, c.brief_id, c.position) for c in PickLog(root).choices()] == [("pick", "a", 1)]
@@ -98,7 +117,13 @@ def test_bumping_a_brief_logs_a_bump(tmp_path):
 
 def test_log_pick_cli_reports_the_position(tmp_path, capsys):
     root = make_queue(tmp_path, {"a": {}})
-    PickLog(root).append(shown(["z", "a"], impression="imp9", at=datetime.datetime.now(datetime.timezone.utc).isoformat()))
+    PickLog(root).append(
+        shown(
+            ["z", "a"],
+            impression="imp9",
+            at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+    )
     log_pick.main(["skip", "a", "--root", str(root)])
     log_pick.main(["pick", "q", "--root", str(root)])
     assert capsys.readouterr().out == "skip a (position 2 of imp9)\npick q (off-list)\n"

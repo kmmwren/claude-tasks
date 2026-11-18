@@ -6,6 +6,7 @@ disagreement instead of hiding in the result. Each valid ranking implies pairwis
 Bradley-Terry fit merges them and per-item agreement becomes the confidence. Output that is not
 an exact permutation of the candidate ids with a reason each is discarded.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -27,11 +28,16 @@ SYSTEM_PROMPT = (
 )
 SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"ranking": {"type": "array", "items": {
-        "type": "object",
-        "properties": {"id": {"type": "string"}, "reason": {"type": "string"}},
-        "required": ["id", "reason"],
-    }}},
+    "properties": {
+        "ranking": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "reason": {"type": "string"}},
+                "required": ["id", "reason"],
+            },
+        }
+    },
     "required": ["ranking"],
 }
 TASK = "Rank the items in the input against the profile, as instructed."
@@ -106,7 +112,7 @@ def wins(rankings: Sequence[Sequence[str]], ids: Sequence[str]) -> dict[tuple[st
     tally = {(a, b): 0.0 for a in ids for b in ids if a != b}
     for order in rankings:
         for i, winner in enumerate(order):
-            for loser in order[i + 1:]:
+            for loser in order[i + 1 :]:
                 tally[(winner, loser)] += 1
     return tally
 
@@ -115,10 +121,15 @@ def bradley_terry(tally: Mapping[tuple[str, str], float], ids: Sequence[str]) ->
     """Hunter's MM fit, with a symmetric prior so a pair seen once never yields an infinite strength."""
     strength = dict.fromkeys(ids, 1.0)
     for _ in range(ITERATIONS):
-        updated = {i: (sum(tally[(i, j)] for j in ids if j != i) + PRIOR * (len(ids) - 1))
-                   / sum((tally[(i, j)] + tally[(j, i)] + 2 * PRIOR) / (strength[i] + strength[j])
-                         for j in ids if j != i)
-                   for i in ids}
+        updated = {
+            i: (sum(tally[(i, j)] for j in ids if j != i) + PRIOR * (len(ids) - 1))
+            / sum(
+                (tally[(i, j)] + tally[(j, i)] + 2 * PRIOR) / (strength[i] + strength[j])
+                for j in ids
+                if j != i
+            )
+            for i in ids
+        }
         total = sum(updated.values())
         strength = {i: v * len(ids) / total for i, v in updated.items()}
     return strength
@@ -128,8 +139,11 @@ def agreement(first: Sequence[str], second: Sequence[str], ids: Sequence[str]) -
     """Per item, the share of its pairs both rankings order the same way."""
     rank_a = {i: n for n, i in enumerate(first)}
     rank_b = {i: n for n, i in enumerate(second)}
-    return {i: sum((rank_a[i] < rank_a[j]) == (rank_b[i] < rank_b[j]) for j in ids if j != i)
-            / max(len(ids) - 1, 1) for i in ids}
+    return {
+        i: sum((rank_a[i] < rank_a[j]) == (rank_b[i] < rank_b[j]) for j in ids if j != i)
+        / max(len(ids) - 1, 1)
+        for i in ids
+    }
 
 
 class SetwiseJudge:
@@ -146,7 +160,9 @@ class SetwiseJudge:
         return self._merge(judgements, ids, tuple(outputs))
 
     @staticmethod
-    def _merge(judgements: Sequence[Judgement], ids: Sequence[str], raw: tuple[str, ...]) -> Verdict:
+    def _merge(
+        judgements: Sequence[Judgement], ids: Sequence[str], raw: tuple[str, ...]
+    ) -> Verdict:
         orders = [j.order for j in judgements]
         strength = bradley_terry(wins(orders, ids), ids)
         position = {i: n for n, i in enumerate(ids)}
@@ -177,6 +193,7 @@ class DirectLaunch:
 @dataclasses.dataclass(frozen=True)
 class WrapperLaunch:
     """claude-any.sh with a declared laptop class: its cloud route is asynchronous and cannot return a ranking."""
+
     script: str
     local_ok: str
 
@@ -193,6 +210,7 @@ class ClaudeBackend:
 
     The candidates go on stdin; the short task is the last argument because claude-any.sh routes on it.
     """
+
     model: str = ""
     timeout: float = 240.0
     setting_sources: str = "project"
@@ -201,16 +219,34 @@ class ClaudeBackend:
     launch: Launch = DirectLaunch()
 
     def command(self) -> list[str]:
-        args = ["--tools", "", "--output-format", "json", "--no-session-persistence",
-                "--strict-mcp-config", "--setting-sources", self.setting_sources,
-                "--system-prompt", SYSTEM_PROMPT, "--json-schema", json.dumps(SCHEMA)]
+        args = [
+            "--tools",
+            "",
+            "--output-format",
+            "json",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--setting-sources",
+            self.setting_sources,
+            "--system-prompt",
+            SYSTEM_PROMPT,
+            "--json-schema",
+            json.dumps(SCHEMA),
+        ]
         return self.launch.argv(args + (["--model", self.model] if self.model else []) + [TASK])
 
     def __call__(self, text: str) -> str:
         try:
-            proc = self.run(self.command(), input=text, capture_output=True, text=True,
-                            timeout=self.timeout, cwd=self.cwd, check=False,
-                            env=self.launch.env())
+            proc = self.run(
+                self.command(),
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=self.cwd,
+                check=False,
+                env=self.launch.env(),
+            )
         except (OSError, subprocess.SubprocessError) as exc:
             raise JudgeError(f"claude -p did not run: {exc}") from exc
         if proc.returncode != 0:
