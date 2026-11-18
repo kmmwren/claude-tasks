@@ -90,14 +90,40 @@ def test_the_queue_template_documents_source_ref(tmp_path):
     assert "source_ref:" in template and "user | claude | intake" in template
 
 
+TITLE = ["--title", "Answer a Lite prospect question", "--no-sync"]
+
+
+def capture(queue, *extra):
+    add_task.main([*TITLE, "--root", str(queue), *extra])
+    (path,) = (queue / "inbox").glob("*.md")
+    return fm(path.read_text())
+
+
 @pytest.mark.parametrize("flag", ["--title", "--domain", "--due", "--effort", "--parent"])
-def test_a_frontmatter_flag_cannot_inject_a_key(queue, flag):
-    args = ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync"]
-    with pytest.raises(SystemExit):
-        add_task.main([*args, flag, "x\nassignee: someone"])
-    assert not list((queue / "inbox").glob("*.md"))
+@pytest.mark.parametrize("brk", ["\n", "\r\n", "\u2028", "\x85", "\x0b"])
+def test_a_line_break_in_a_frontmatter_flag_is_folded_not_injected(queue, flag, brk):
+    meta = capture(queue, flag, f"x{brk}assignee: someone")
+    assert meta["status"] == "inbox" and not meta.get("assignee")
+    assert meta[{"--effort": "estimated-effort"}.get(flag, flag[2:])] == "x assignee: someone"
 
 
-def test_a_title_may_still_name_an_issue_number(queue):
-    add_task.main(["--title", "Fix PR #12 flake", "--root", str(queue), "--no-sync"])
-    assert len(list((queue / "inbox").glob("*.md"))) == 1
+@pytest.mark.parametrize("flag", ["--tags", "--requirements", "--blocks"])
+@pytest.mark.parametrize(
+    "hostile", ["x\nstatus: done", "x\u2028status: done", "x], status: [done", "x #y"]
+)
+def test_a_list_item_cannot_close_the_list_or_inject_a_key(queue, flag, hostile):
+    meta = capture(queue, flag, hostile)
+    assert meta["status"] == "inbox"
+    listed = meta[flag.lstrip("-")]
+    assert listed.startswith("[x") and listed.endswith("]") and listed.count("]") == 1
+
+
+def test_a_title_with_page_text_whitespace_and_joiners_is_filed_intact(queue):
+    meta = capture(
+        queue, "--title", "Lite\u00a0prospect\tasks about \U0001f468\u200d\U0001f4bb setup"
+    )
+    assert meta["title"] == "Lite prospect asks about \U0001f468\u200d\U0001f4bb setup"
+
+
+def test_a_title_naming_an_issue_number_reads_back_whole(queue):
+    assert capture(queue, "--title", "Fix PR #12 flake")["title"] == "Fix PR#12 flake"

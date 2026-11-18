@@ -32,7 +32,7 @@ import re
 import sys
 
 from _concurrency import atomic_write, require_lock, reserve_name
-from _paths import TASK_DIRS, require_queue, resolve_root, strip_comment
+from _paths import COMMENT_START, TASK_DIRS, require_queue, resolve_root
 from fingerprint import Fingerprint, Located, find_duplicate
 from git_sync import sync_commit as _sync_commit
 from readiness import (
@@ -60,18 +60,26 @@ class Provenance:
         return f"{self.source} from {self.ref}" if self.ref else self.source
 
 
-def one_line(value: str) -> str:
-    """A value written as one frontmatter line; any line break or control character would inject keys."""
-    if not value.isprintable():
-        raise argparse.ArgumentTypeError(f"{value!r} must be one line with no control characters")
-    return value.strip()
+def as_scalar(value: str) -> str:
+    """`value` as one frontmatter scalar that reads back whole: any whitespace run, line breaks
+    included, becomes one space, and a `#` the parser would take as a comment is joined to its word."""
+    one_line = " ".join(value.split())
+    return COMMENT_START.sub(lambda m: "#" if m.start() else "", one_line).strip()
+
+
+def scalar(value: str) -> str:
+    """Free text for a frontmatter flag, normalised rather than rejected so callers passing page or PR text keep working."""
+    clean = as_scalar(value)
+    if clean != value.strip():
+        print(f"add_task: normalised {value!r} to {clean!r} for the frontmatter", file=sys.stderr)
+    return clean
 
 
 def frontmatter_value(value: str) -> str:
-    """A one-line value that also reads back whole, so no ` #` the parser would take as a comment."""
-    if strip_comment(one_line(value)) != value.strip():
+    """A ref is cited verbatim, so one that would not read back unchanged is refused, not rewritten."""
+    if as_scalar(value) != value.strip():
         raise argparse.ArgumentTypeError(
-            f"{value!r} must not contain ' #' (it would not read back)"
+            f"{value!r} must be one line with no ' #' (it would not read back)"
         )
     return value.strip()
 
@@ -83,12 +91,14 @@ def slug(s: str, maxwords: int = 6) -> str:
 
 
 def flow_list(items: list[str]) -> str:
-    return "[" + ", ".join(items) + "]"
+    """A YAML flow list whose items cannot close it early or split into further keys."""
+    clean = [re.sub(r"[\[\],]", "-", scalar(item)) for item in items]
+    return "[" + ", ".join(item for item in clean if item) + "]"
 
 
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
-    tags = flow_list([t.strip() for t in a.tags.split(",") if t.strip()])
-    reqs = flow_list([r.strip() for r in a.requirements.split(",") if r.strip()])
+    tags = flow_list(a.tags.split(","))
+    reqs = flow_list(a.requirements.split(","))
     crit = (
         "\n".join(f"- [ ] {c}" for c in a.criteria)
         if a.criteria
@@ -167,7 +177,7 @@ def merge_into(
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Add a brief to the tasks queue")
-    ap.add_argument("--title", required=True, type=one_line)
+    ap.add_argument("--title", required=True, type=scalar)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
     ap.add_argument(
@@ -181,11 +191,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--type", default="todo", choices=["todo", "project", "research", "decision"])
     ap.add_argument("--importance", default="3", choices=["1", "2", "3", "4"])
     ap.add_argument("--autonomy", default="needs-input", choices=["full", "needs-input", "blocked"])
-    ap.add_argument("--effort", default="", type=one_line)
-    ap.add_argument("--due", default="", type=one_line)
-    ap.add_argument("--domain", default="", type=one_line)
+    ap.add_argument("--effort", default="", type=scalar)
+    ap.add_argument("--due", default="", type=scalar)
+    ap.add_argument("--domain", default="", type=scalar)
     ap.add_argument("--tags", default="")
-    ap.add_argument("--parent", default="", type=one_line)
+    ap.add_argument("--parent", default="", type=scalar)
     ap.add_argument(
         "--requirements",
         default="",

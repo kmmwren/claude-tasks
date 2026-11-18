@@ -18,6 +18,7 @@ A resolved directory only becomes a *usable* queue once it has a tasks.toml (wri
 by /tasks-init). require_queue() refuses to operate on an uninitialised directory so a
 stray run can never silently scatter folders into the wrong place.
 """
+
 import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
 
 # isort: split
@@ -41,7 +42,8 @@ _SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 # A frontmatter comment starts at a `#` that opens the value or is spaced off from it, so a
 # `#` inside a value (issue#42, [a#b]) is never mistaken for one.
-_COMMENT = re.compile(r"(?:^|\s)#.*")
+COMMENT_START = re.compile(r"(?:^|\s)#")
+_COMMENT = re.compile(COMMENT_START.pattern + ".*")
 
 
 def is_brief(path: str | os.PathLike[str]) -> bool:
@@ -80,7 +82,9 @@ def binding_path(session_id: str, env: Mapping[str, str] | None = None) -> pathl
     env = os.environ if env is None else env
     if not _SESSION_ID.fullmatch(session_id):
         raise ValueError(f"invalid session id {session_id!r}")
-    return pathlib.Path(env.get(SESSIONS_ENV) or DEFAULT_SESSIONS).expanduser() / f"{session_id}.toml"
+    return (
+        pathlib.Path(env.get(SESSIONS_ENV) or DEFAULT_SESSIONS).expanduser() / f"{session_id}.toml"
+    )
 
 
 def session_root(env: Mapping[str, str]) -> pathlib.Path | None:
