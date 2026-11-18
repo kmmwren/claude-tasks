@@ -1120,11 +1120,9 @@ def test_a_human_probe_needs_a_dated_confirmation(root):
         root,
         blocked_by=["external:x"],
         probes=["1: human"],
-        confirmed=["1: 2026-06-02 katherine"],
+        confirmed=["1: 2026-06-02 alice"],
     )
-    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == [
-        "1: 2026-06-02 katherine"
-    ]
+    assert transition.fm_repeated(new.read_text())["blocked_confirmed"] == ["1: 2026-06-02 alice"]
 
 
 def test_dropping_a_middle_blocker_renumbers_later_probes_and_confirmations():

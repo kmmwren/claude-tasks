@@ -85,8 +85,8 @@ def test_created_date_orders_members_of_one_folder(tmp_path):
 @pytest.mark.parametrize(
     "link",
     [
-        "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179",
-        "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179?thread_ts=1773265865.773179",
+        "https://example.slack.com/archives/C0123ABCD/p1773265865773179",
+        "https://example.slack.com/archives/C0123ABCD/p1773265865773179?thread_ts=1773265865.773179",
         "https://other.slack.com/archives/C0123ABCD/p1773265865773179/",
     ],
 )
@@ -95,7 +95,7 @@ def test_a_slack_permalink_is_its_thread_key(link):
 
 
 def test_one_slack_thread_cited_two_ways_is_one_source():
-    base = "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179"
+    base = "https://example.slack.com/archives/C0123ABCD/p1773265865773179"
     plain = _fp("Fix", f"From Slack {base}")
     threaded = _fp("Fix", f"See {base}?thread_ts=1773265865.773179")
     assert plain == threaded and plain.sources == frozenset({"slack:C0123ABCD/1773265865.773179"})

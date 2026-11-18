@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed
+- **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or
+  `$CLAUDE_TASKS_LAUNCHER` to run the judge and the triage calls through a launcher script; with
+  neither, both call plain `claude -p`. A named launcher that is missing or not executable prints one
+  notice and falls back. To keep a custom launcher, set `CLAUDE_TASKS_LAUNCHER` to it.
+- **One launch model.** `Launch`, `DirectLaunch` and `ScriptLaunch` live in `headless.py` (`WrapperLaunch`
+  is now `ScriptLaunch`, and it no longer carries the reason); `resolve_launch` builds the launch the
+  judge, `rank.py`, the triage and `headless.command` all use, and `rank_table` is the one reader of
+  `[rank]`. A launcher is run with `CLAUDE_TASKS_STDIN` and `CLAUDE_TASKS_LOCAL_REASON` (the legacy
+  `CLAUDE_ANY_STDIN` and `CLAUDE_LOCAL_OK` are still set).
+- **`[rank] local_reason` replaces `local_ok`.** It is the reason a launcher is told the run stays
+  local. `local_ok` and `$CLAUDE_ANY_BIN` still work as deprecated aliases with a notice; with
+  `local_ok` set and no launcher configured, the notice says to set `[rank] launcher` or
+  `$CLAUDE_TASKS_LAUNCHER` because no default launcher is assumed.
+- **`handoff` is generic.** An optional `~/.config/claude-tasks/handoff.md` adds personal steps; Step 0
+  project routing, the headroom check and the long-running-session branch are removed.
+
 ### Added
 - **Triage stops calling `claude` for the rest of a run once no account has capacity.** After a
   wrapper exit of 2, 3, 4 or 10, later batches return nothing without spawning; their briefs get

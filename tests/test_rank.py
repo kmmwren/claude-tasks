@@ -6,14 +6,15 @@ import pytest
 import rank
 import scope as scope_mod
 import taste
-from judge import ClaudeBackend, DirectLaunch, WrapperLaunch
+from headless import DirectLaunch, ScriptLaunch
+from judge import ClaudeBackend
 from picks import PickLog
 from rank import Ranker
 from scope import AllScope, ProjectScope, SessionScope, TagScope
 
-from tests.queue_helpers import make_queue
+from tests.queue_helpers import installed_launcher, make_queue
 
-PROFILE = "---\ndraft: false\nupdated: 2026-11-01\n---\n## Goals\n- FDO | weight 1 | match fdo\n"
+PROFILE = "---\ndraft: false\nupdated: 2026-11-01\n---\n## Goals\n- CHECKOUT | weight 1 | match checkout\n"
 
 
 def reply(*ids):
@@ -31,7 +32,9 @@ class FakePredict:
 
 
 def queue(tmp_path, profile=PROFILE):
-    root = make_queue(tmp_path, {"a": {"tags": "[fdo]"}, "b": {"tags": "[project:lite]"}, "c": {}})
+    root = make_queue(
+        tmp_path, {"a": {"tags": "[checkout]"}, "b": {"tags": "[project:app]"}, "c": {}}
+    )
     if profile is not None:
         taste.profile_path(root).parent.mkdir()
         taste.profile_path(root).write_text(profile)
@@ -62,8 +65,8 @@ def briefs(root, *ids, scope=None):
     "text, cls, key",
     [
         ("all", AllScope, "all"),
-        ("tag:fdo", TagScope, "tag:fdo"),
-        ("project:lite", ProjectScope, "project:lite"),
+        ("tag:checkout", TagScope, "tag:checkout"),
+        ("project:app", ProjectScope, "project:app"),
         ("session:abc", SessionScope, "session:abc"),
     ],
 )
@@ -81,14 +84,14 @@ def test_parse_scope_rejects_unknown_or_empty_scopes(text):
 def test_scopes_admit_by_tag_and_by_project_tag_or_field(tmp_path):
     root = queue(tmp_path)
     (root / "ready" / "c.md").write_text(
-        (root / "ready" / "c.md").read_text().replace("tags:", "project: lite\ntags:")
+        (root / "ready" / "c.md").read_text().replace("tags:", "project: app\ntags:")
     )
 
     def ids(scope):
         return [b.id for b in rank.candidates(root, scope, 15, rank.prioritise_rows)]
 
-    assert ids(TagScope("fdo")) == ["a"]
-    assert sorted(ids(ProjectScope("lite"))) == ["b", "c"]
+    assert ids(TagScope("checkout")) == ["a"]
+    assert sorted(ids(ProjectScope("app"))) == ["b", "c"]
 
 
 def test_session_scope_uses_the_bound_queue(tmp_path, monkeypatch):
@@ -106,7 +109,7 @@ def test_candidates_drop_blocked_briefs_and_keep_filter_order_up_to_the_limit(tm
     found = rank.candidates(root, AllScope(""), 2, rows("c", "b", "a", blocked=("b",)))
     assert [(b.id, b.title, b.tags) for b in found] == [
         ("c", "Title of c", frozenset()),
-        ("a", "Title of a", frozenset({"fdo"})),
+        ("a", "Title of a", frozenset({"checkout"})),
     ]
     assert found[1].facts == "importance 3; due none; effort m; unlocks 1 briefs"
 
@@ -254,7 +257,7 @@ def test_run_logs_the_shown_list_with_each_items_goals(tmp_path):
     rank.run(root, AllScope(""), 2, None, FakePredict(), rows("a", "b", "c"))
     [shown] = PickLog(root).shown()
     assert ([(i.id, i.goals) for i in shown.items], shown.filter_order, shown.source) == (
-        [("a", ("FDO",)), ("c", ())],
+        [("a", ("CHECKOUT",)), ("c", ())],
         ("a", "b", "c"),
         "judge",
     )
@@ -275,6 +278,46 @@ def test_rank_config_overrides_the_defaults(tmp_path):
     assert (rank.settings(root)["candidates"], rank.settings(root)["top"]) == (2, 10)
 
 
+@pytest.mark.parametrize(
+    "table, expected",
+    [
+        ('local_ok = "old"', "old"),
+        ('local_ok = "read-only-research:my reason"', "my reason"),
+        ('local_ok = "old"\nlocal_reason = "new"', "new"),
+    ],
+)
+def test_local_ok_is_a_deprecated_alias_that_local_reason_overrides(
+    tmp_path, capsys, table, expected
+):
+    root = queue(tmp_path)
+    (root / "tasks.toml").write_text((root / "tasks.toml").read_text() + f"\n[rank]\n{table}\n")
+    assert rank.settings(root)["local_reason"] == expected
+    assert "[rank] local_ok is deprecated; use local_reason" in capsys.readouterr().err
+
+
+def test_a_prefixed_local_ok_reaches_the_launcher_without_a_double_prefix(tmp_path):
+    root = queue(tmp_path)
+    (root / "tasks.toml").write_text(
+        (root / "tasks.toml").read_text() + '\n[rank]\nlocal_ok = "read-only-research:my reason"\n'
+    )
+    env = ScriptLaunch("/l.sh").env(rank.settings(root)["local_reason"])
+    assert env is not None
+    assert (env["CLAUDE_LOCAL_OK"], env["CLAUDE_TASKS_LOCAL_REASON"]) == (
+        "read-only-research:my reason",
+        "my reason",
+    )
+
+
+def test_the_local_ok_notice_prints_once_however_often_settings_load(tmp_path, capsys):
+    root = queue(tmp_path)
+    (root / "tasks.toml").write_text(
+        (root / "tasks.toml").read_text() + '\n[rank]\nlocal_ok = "x"\n'
+    )
+    rank.settings(root)
+    rank.settings(root)
+    assert capsys.readouterr().err.count("local_ok is deprecated") == 1
+
+
 def test_backend_runs_claude_from_a_neutral_dir_with_the_configured_model(tmp_path):
     root = queue(tmp_path)
     built = rank.backend(root, {**rank.DEFAULTS, "model": "haiku"})
@@ -286,16 +329,26 @@ def test_backend_runs_claude_from_a_neutral_dir_with_the_configured_model(tmp_pa
     )
 
 
-def test_the_judge_goes_through_the_wrapper_when_it_is_installed(tmp_path):
-    script = tmp_path / "claude-any.sh"
-    script.write_text("#!/bin/sh\n")
-    launch = rank.launcher({**rank.DEFAULTS, "launcher": str(script)})
-    assert launch == WrapperLaunch(str(script), rank.DEFAULTS["local_ok"])
+def test_the_judge_goes_through_the_configured_launcher_when_it_is_installed(tmp_path):
+    script = installed_launcher(tmp_path)
+    built = rank.backend(queue(tmp_path), {**rank.DEFAULTS, "launcher": str(script)})
+    assert (built.launch, built.reason) == (
+        ScriptLaunch(str(script)),
+        rank.DEFAULTS["local_reason"],
+    )
 
 
-@pytest.mark.parametrize("configured", ["", "/nowhere/claude-any.sh"])
-def test_the_judge_calls_claude_directly_without_the_wrapper(configured):
-    assert rank.launcher({**rank.DEFAULTS, "launcher": configured}) == DirectLaunch()
+def test_the_judge_takes_the_launcher_from_the_environment_by_default(tmp_path, monkeypatch):
+    script = installed_launcher(tmp_path)
+    monkeypatch.setenv("CLAUDE_TASKS_LAUNCHER", str(script))
+    assert "launcher" not in rank.DEFAULTS
+    assert rank.backend(queue(tmp_path), rank.DEFAULTS).launch == ScriptLaunch(str(script))
+
+
+@pytest.mark.parametrize("configured", [None, "/nowhere/launcher.sh"])
+def test_the_judge_calls_claude_directly_without_a_launcher(tmp_path, configured):
+    config = {**rank.DEFAULTS, **({} if configured is None else {"launcher": configured})}
+    assert rank.backend(queue(tmp_path), config).launch == DirectLaunch()
 
 
 def test_main_prints_the_ranked_text_and_json(tmp_path, monkeypatch, capsys):

@@ -2,10 +2,13 @@
 
 import pytest
 import triage_enrich
+from headless import ScriptLaunch
 from triage_brief import InboxBrief
 from triage_enrich import FILL_SCHEMA, Fill, apply_fill, claude_predict, parse_fills, render_prompt
 
 from tests.queue_helpers import inbox_text
+
+LAUNCH = ScriptLaunch("/l.sh")
 
 
 @pytest.fixture
@@ -44,12 +47,17 @@ def test_parse_drops_anything_off_schema(payload):
 
 
 def test_predict_asks_with_the_fill_schema_and_parses_the_answer(brief, monkeypatch):
-    def ask(prompt, schema, model, reason, timeout):
-        assert schema is FILL_SCHEMA and '<brief id="b">' in prompt and "tools off" in reason
+    def ask(prompt, schema, model, reason, timeout, launch):
+        assert (
+            schema is FILL_SCHEMA
+            and '<brief id="b">' in prompt
+            and "tools off" in reason
+            and launch == LAUNCH
+        )
         return {"briefs": [GOOD]}
 
     monkeypatch.setattr(triage_enrich, "ask_json", ask)
-    assert claude_predict()([brief])["b"].goal == "Ship."
+    assert claude_predict(launch=LAUNCH)([brief])["b"].goal == "Ship."
 
 
 def test_apply_fill_writes_only_missing_non_empty_fields(brief):

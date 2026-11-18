@@ -38,17 +38,17 @@ def queue(tmp_path):
     return make_queue(
         tmp_path,
         {
-            "a": {"tags": "[project:lite]"},
-            "b": {"tags": "[project:lite]", "status": "blocked", "blocked_by": "[a]"},
+            "a": {"tags": "[project:checkout]"},
+            "b": {"tags": "[project:checkout]", "status": "blocked", "blocked_by": "[a]"},
             "c": {"tags": "[other]"},
-            "d": {"tags": "[project:lite]", "status": "done"},
-            "e": {"tags": "[project:lite]", "status": "in-progress"},
+            "d": {"tags": "[project:checkout]", "status": "done"},
+            "e": {"tags": "[project:checkout]", "status": "in-progress"},
         },
     )
 
 
 def _fixed(*members, additions=()):
-    return Binding("project:lite", FixedMode(), tuple(members), tuple(additions))
+    return Binding("project:checkout", FixedMode(), tuple(members), tuple(additions))
 
 
 def test_no_file_is_no_binding(sessions):
@@ -125,8 +125,8 @@ def test_none_pulls_nothing():
 
 
 def test_ongoing_pulls_what_the_selector_admits():
-    scope = Binding("tag:fdo", OngoingMode()).pull_scope()
-    assert isinstance(scope, TagScope) and scope.key == "tag:fdo"
+    scope = Binding("tag:docs", OngoingMode()).pull_scope()
+    assert isinstance(scope, TagScope) and scope.key == "tag:docs"
 
 
 def test_fixed_pulls_its_members_and_additions():
@@ -141,12 +141,12 @@ def test_an_empty_fixed_set_admits_nothing():
 
 
 def test_a_fixed_binding_records_what_the_selector_admits_now(queue):
-    binding = Binding.bind("project:lite", FixedMode(), queue)
+    binding = Binding.bind("project:checkout", FixedMode(), queue)
     assert binding.members == ("a", "b")
 
 
 def test_a_brief_filed_later_is_not_in_a_fixed_set(queue):
-    binding = Binding.bind("project:lite", FixedMode(), queue)
+    binding = Binding.bind("project:checkout", FixedMode(), queue)
     (queue / "ready" / "late.md").write_text(
         (queue / "ready" / "a.md").read_text().replace("id: a", "id: late")
     )
@@ -154,8 +154,8 @@ def test_a_brief_filed_later_is_not_in_a_fixed_set(queue):
 
 
 def test_a_brief_without_an_id_is_known_by_its_file_name(queue):
-    (queue / "ready" / "nameless.md").write_text("---\ntitle: t\ntags: [project:lite]\n---\n")
-    assert "nameless" in Binding.bind("project:lite", FixedMode(), queue).members
+    (queue / "ready" / "nameless.md").write_text("---\ntitle: t\ntags: [project:checkout]\n---\n")
+    assert "nameless" in Binding.bind("project:checkout", FixedMode(), queue).members
 
 
 def test_ongoing_and_none_record_no_members(queue):
@@ -223,7 +223,7 @@ def test_now_is_an_iso_timestamp_in_utc():
     [
         ("ids:a,b,c", IdsScope, "ids:a,b,c"),
         ("all", AllScope, "all"),
-        ("project:lite", ProjectScope, "project:lite"),
+        ("project:checkout", ProjectScope, "project:checkout"),
     ],
 )
 def test_parse_scope_knows_ids(text, scope_type, key):
@@ -275,7 +275,7 @@ def test_ids_scope_weighs_signals_like_the_whole_queue(tmp_path):
 
 
 def test_the_fixed_scope_reaches_the_ranking_as_the_consumer_passes_it(sessions, queue):
-    scope_binding.write("s1", Binding.bind("project:lite", FixedMode(), queue))
+    scope_binding.write("s1", Binding.bind("project:checkout", FixedMode(), queue))
     scope = scope_binding.read("s1").pull_scope()
     assert _ranked(queue, scope) == ["a"]
 
@@ -315,9 +315,9 @@ def test_a_rebind_written_before_members_reads_as_none():
 
 def test_a_brief_whose_id_is_not_a_slug_is_left_out_of_a_fixed_set(tmp_path, capsys):
     root = make_queue(
-        tmp_path, {"a": {"tags": "[project:lite]"}, "b c": {"tags": "[project:lite]"}}
+        tmp_path, {"a": {"tags": "[project:checkout]"}, "b c": {"tags": "[project:checkout]"}}
     )
-    assert Binding.bind("project:lite", FixedMode(), root).members == ("a",)
+    assert Binding.bind("project:checkout", FixedMode(), root).members == ("a",)
     assert "leaving out 'b c'" in capsys.readouterr().err
 
 

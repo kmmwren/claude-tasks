@@ -10,8 +10,10 @@ from taste import Goal, Profile
 from tests.queue_helpers import make_queue
 
 CONFIG = {**learn.DEFAULTS, "min_pairs": 4, "holdout": 0.5}
-FDO, REL = frozenset({"FDO"}), frozenset({"REL"})
-PROFILE = Profile(goals=(Goal("FDO", 1.0), Goal("REL", 1.0)), draft=False, updated="2026-11-01")
+CHECKOUT, DOCS = frozenset({"CHECKOUT"}), frozenset({"DOCS"})
+PROFILE = Profile(
+    goals=(Goal("CHECKOUT", 1.0), Goal("DOCS", 1.0)), draft=False, updated="2026-11-01"
+)
 
 
 def shown(*goal_sets, impression="i1"):
@@ -29,72 +31,80 @@ def shown(*goal_sets, impression="i1"):
 
 
 def test_a_pick_beats_every_brief_shown_above_it():
-    assert learn.pairs_for(Choice("pick", "b2", "i1", 2), shown(REL, REL, FDO)) == [
-        Pair(FDO, REL),
-        Pair(FDO, REL),
+    assert learn.pairs_for(Choice("pick", "b2", "i1", 2), shown(DOCS, DOCS, CHECKOUT)) == [
+        Pair(CHECKOUT, DOCS),
+        Pair(CHECKOUT, DOCS),
     ]
 
 
 def test_a_pick_at_the_top_teaches_nothing():
-    assert learn.pairs_for(Choice("bump", "b0", "i1", 0), shown(FDO, REL)) == []
+    assert learn.pairs_for(Choice("bump", "b0", "i1", 0), shown(CHECKOUT, DOCS)) == []
 
 
 def test_a_skip_loses_to_the_brief_below_it():
-    assert learn.pairs_for(Choice("skip", "b0", "i1", 0), shown(REL, FDO)) == [Pair(FDO, REL)]
-    assert learn.pairs_for(Choice("skip", "b1", "i1", 1), shown(REL, FDO)) == []
+    assert learn.pairs_for(Choice("skip", "b0", "i1", 0), shown(DOCS, CHECKOUT)) == [
+        Pair(CHECKOUT, DOCS)
+    ]
+    assert learn.pairs_for(Choice("skip", "b1", "i1", 1), shown(DOCS, CHECKOUT)) == []
 
 
 @pytest.mark.parametrize("position", [None, 5])
 def test_an_off_list_or_stale_position_teaches_nothing(position):
-    assert learn.pairs_for(Choice("pick", "x", "i1", position), shown(FDO)) == []
+    assert learn.pairs_for(Choice("pick", "x", "i1", position), shown(CHECKOUT)) == []
 
 
 def test_pairs_join_choices_to_their_lists_and_ignore_unlinked_ones(tmp_path):
     log = PickLog(tmp_path)
-    log.append(shown(REL, FDO))
+    log.append(shown(DOCS, CHECKOUT))
     log.append(Choice("pick", "b1", "i1", 1))
     log.append(Choice("pick", "b1", None, None))
     log.append(Choice("pick", "b1", "gone", 1))
-    assert learn.pairs(log) == [Pair(FDO, REL)]
+    assert learn.pairs(log) == [Pair(CHECKOUT, DOCS)]
 
 
 def test_accuracy_counts_ties_as_half():
     assert (
-        learn.accuracy({"FDO": 2.0, "REL": 1.0}, [Pair(FDO, REL), Pair(REL, FDO), Pair(FDO, FDO)])
+        learn.accuracy(
+            {"CHECKOUT": 2.0, "DOCS": 1.0},
+            [Pair(CHECKOUT, DOCS), Pair(DOCS, CHECKOUT), Pair(CHECKOUT, CHECKOUT)],
+        )
         == 0.5
     )
 
 
 def test_nudges_are_capped_and_floored_and_limited_to_the_strongest_goals():
-    train = [Pair(FDO, REL)] * 10 + [Pair(frozenset({"C"}), frozenset())]
+    train = [Pair(CHECKOUT, DOCS)] * 10 + [Pair(frozenset({"C"}), frozenset())]
     config = {**CONFIG, "max_goals": 2, "floor": 0.9}
-    assert learn.nudged({"FDO": 1.0, "REL": 1.0, "C": 1.0, "unseen": 1.0}, train, config) == {
-        "FDO": 1.2,
-        "REL": 0.9,
+    assert learn.nudged({"CHECKOUT": 1.0, "DOCS": 1.0, "C": 1.0, "unseen": 1.0}, train, config) == {
+        "CHECKOUT": 1.2,
+        "DOCS": 0.9,
         "C": 1.0,
         "unseen": 1.0,
     }
 
 
 def test_net_preference_ignores_goals_both_sides_share():
-    assert learn.net_preference([Pair(FDO | REL, REL), Pair(REL, FDO)]) == {"FDO": 0, "REL": 1}
+    assert learn.net_preference([Pair(CHECKOUT | DOCS, DOCS), Pair(DOCS, CHECKOUT)]) == {
+        "CHECKOUT": 0,
+        "DOCS": 1,
+    }
 
 
 def test_propose_needs_enough_pairs():
-    assert learn.propose(PROFILE, [Pair(FDO, REL)], CONFIG, "2026-11-11") == (
+    assert learn.propose(PROFILE, [Pair(CHECKOUT, DOCS)], CONFIG, "2026-11-11") == (
         "only 1 preference pairs; learning starts at 4"
     )
 
 
 def test_propose_returns_a_validated_reorder_when_picks_favour_one_goal():
-    proposal = learn.propose(PROFILE, [Pair(FDO, REL)] * 4, CONFIG, "2026-11-11")
+    proposal = learn.propose(PROFILE, [Pair(CHECKOUT, DOCS)] * 4, CONFIG, "2026-11-11")
     assert (
         proposal.changes,
         proposal.kind,
         proposal.old_accuracy,
         proposal.new_accuracy,
         proposal.held_out,
-    ) == ((Change("FDO", 1.0, 1.1), Change("REL", 1.0, 0.9)), "reorder", 0.5, 1.0, 2)
+    ) == ((Change("CHECKOUT", 1.0, 1.1), Change("DOCS", 1.0, 0.9)), "reorder", 0.5, 1.0, 2)
     assert proposal.from_version == PROFILE.version
     assert (
         proposal.id
@@ -103,19 +113,19 @@ def test_propose_returns_a_validated_reorder_when_picks_favour_one_goal():
 
 
 def test_a_nudge_that_keeps_the_goal_order_is_not_a_reorder():
-    profile = Profile(goals=(Goal("FDO", 2.0), Goal("REL", 1.0)))
-    assert learn.propose(profile, [Pair(FDO, REL)] * 4, CONFIG, "2026-11-11").kind == "nudge"
+    profile = Profile(goals=(Goal("CHECKOUT", 2.0), Goal("DOCS", 1.0)))
+    assert learn.propose(profile, [Pair(CHECKOUT, DOCS)] * 4, CONFIG, "2026-11-11").kind == "nudge"
 
 
 def test_propose_reports_no_preference():
     assert (
-        learn.propose(PROFILE, [Pair(FDO, FDO)] * 4, CONFIG, "d")
+        learn.propose(PROFILE, [Pair(CHECKOUT, CHECKOUT)] * 4, CONFIG, "d")
         == "the picks do not favour any goal over another"
     )
 
 
 def test_propose_refuses_a_change_that_replays_worse_on_held_out_picks():
-    pairs = [Pair(FDO, REL)] * 2 + [Pair(REL, FDO)] * 2
+    pairs = [Pair(CHECKOUT, DOCS)] * 2 + [Pair(DOCS, CHECKOUT)] * 2
     assert learn.propose(PROFILE, pairs, CONFIG, "d") == (
         "the reorder did not replay well enough on held-out picks (0.50 -> 0.00)"
     )
@@ -140,10 +150,10 @@ def test_splitting_a_tie_changes_the_order():
 
 
 def test_describe_lists_each_change():
-    proposal = Proposal("p1", "v0", (Change("FDO", 1.0, 1.1),), "nudge", 0.5, 1.0, 2)
+    proposal = Proposal("p1", "v0", (Change("CHECKOUT", 1.0, 1.1),), "nudge", 0.5, 1.0, 2)
     assert proposal.describe() == (
         "proposal p1 (nudge; held-out accuracy 0.50 -> 1.00 over 2 pairs; proposed)\n"
-        "  FDO: 1 -> 1.1"
+        "  CHECKOUT: 1 -> 1.1"
     )
 
 
@@ -157,7 +167,7 @@ def root(tmp_path):
     )
     log = PickLog(queue)
     for n in range(4):
-        log.append(shown(REL, FDO, impression=f"i{n}"))
+        log.append(shown(DOCS, CHECKOUT, impression=f"i{n}"))
         log.append(Choice("pick", "b1", f"i{n}", 1))
     return queue
 
@@ -184,7 +194,7 @@ def test_apply_snapshots_then_writes_and_revert_restores(root):
     applied = learn.apply(root, proposal, "2026-11-11")
     assert (applied.status, taste.load_profile(root).weights) == (
         "applied",
-        {"FDO": 1.1, "REL": 0.9},
+        {"CHECKOUT": 1.1, "DOCS": 0.9},
     )
     assert learn.revert(root, PROFILE.version) == f"profile reverted to {PROFILE.version}"
     assert taste.load_profile(root) == PROFILE
@@ -221,13 +231,13 @@ def test_auto_apply_needs_the_switch_enough_runs_and_a_small_change(auto, runs, 
 
 def test_an_allowed_nudge_is_applied_automatically(root):
     taste.profile_path(root).write_text(
-        taste.render(Profile(goals=(Goal("FDO", 2.0), Goal("REL", 1.0))))
+        taste.render(Profile(goals=(Goal("CHECKOUT", 2.0), Goal("DOCS", 1.0))))
     )
     (root / "tasks.toml").write_text(
         (root / "tasks.toml").read_text() + "auto_apply = true\nmin_runs = 4\n"
     )
     assert "; applied)" in learn.learn(root, "2026-11-11").splitlines()[0]
-    assert taste.load_profile(root).weights == {"FDO": 2.2, "REL": 0.9}
+    assert taste.load_profile(root).weights == {"CHECKOUT": 2.2, "DOCS": 0.9}
 
 
 def test_main_proposes_applies_and_reverts(root, capsys):

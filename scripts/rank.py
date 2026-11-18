@@ -2,8 +2,8 @@
 """Rank a scope's ready briefs against the taste profile, with a one-line reason each.
 
     rank.py --scope all --top 10
-    rank.py --scope tag:fdo --json
-    rank.py --scope project:panaseer-lite
+    rank.py --scope tag:checkout --json
+    rank.py --scope project:acme-app
     rank.py --scope session:<id>          # the queue bound to that session
 
 prioritise.py is the filter: blocked briefs drop out and its order picks the top N candidates, whose
@@ -28,18 +28,16 @@ from typing import Any
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _concurrency import atomic_write  # noqa: E402
 from _paths import require_queue, resolve_root  # noqa: E402
-from config import load_config  # noqa: E402
 from deps import fm, parse_list  # noqa: E402
+from headless import rank_table, resolve_launch  # noqa: E402
 from judge import (  # noqa: E402
+    LOCAL_REASON,
     Candidate,
     ClaudeBackend,
-    DirectLaunch,
     JudgeError,
-    Launch,
     PredictFn,
     SetwiseJudge,
     Verdict,
-    WrapperLaunch,
 )
 from picks import PickLog, Shown, ShownItem, state_dir  # noqa: E402
 from scope import SCOPE_HELP, AllScope, Scope, parse_scope  # noqa: E402
@@ -51,8 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "model": "",
     "timeout": 240,
     "setting_sources": "project",
-    "launcher": "~/.claude-switch/claude-any.sh",
-    "local_ok": "read-only-research:predictor head setwise judge, tools off, latency-sensitive",
+    "local_reason": LOCAL_REASON,
     "excerpt_chars": 600,
     "low_confidence": 0.75,
 }
@@ -61,7 +58,7 @@ FLEET_BLOCKER_LANE = "fleet-blocker"
 
 
 def settings(root: pathlib.Path) -> dict[str, Any]:
-    return {**DEFAULTS, **load_config(root).get("rank", {})}
+    return {**DEFAULTS, **rank_table(root)}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -356,17 +353,8 @@ def backend(root: pathlib.Path, config: Mapping[str, Any]) -> ClaudeBackend:
         float(config["timeout"]),
         str(config["setting_sources"]),
         neutral,
-        launch=launcher(config),
-    )
-
-
-def launcher(config: Mapping[str, Any]) -> Launch:
-    """The configured wrapper when it exists here, else plain claude so the ranker still works elsewhere."""
-    script = pathlib.Path(str(config["launcher"])).expanduser()
-    return (
-        WrapperLaunch(str(script), str(config["local_ok"]))
-        if config["launcher"] and script.is_file()
-        else DirectLaunch()
+        launch=resolve_launch(config.get("launcher")),
+        reason=str(config["local_reason"]),
     )
 
 

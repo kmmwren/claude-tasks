@@ -27,7 +27,7 @@ from _paths import resolve_root
 from class_log import BriefClass, ClassLog, Verdict
 from fingerprint import index
 from git_sync import sync_commit
-from headless import reset_capacity
+from headless import configured_launch, reset_capacity
 from triage_brief import InboxBrief, load_inbox
 from triage_classify import (
     EXAMPLE_LIMIT,
@@ -207,9 +207,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--limit", type=int, help="enrich at most this many briefs")
     args = ap.parse_args(argv)
-    predict = _progress(claude_predict(args.model)) if args.llm else None
-    classifier = claude_classify(args.model) if args.llm else None
     root = args.root or resolve_root()
+    predict: PredictFn | None = None
+    classifier: ClassifyFn | None = None
+    if args.llm:
+        launch = configured_launch(root)
+        predict = _progress(claude_predict(args.model, launch=launch))
+        classifier = claude_classify(args.model, launch=launch)
     opts = Options(
         root,
         args.apply,

@@ -13,12 +13,12 @@ updated: 2026-11-01
 Free prose the parser ignores.
 
 ## Goals
-- Fast data onboarding | weight 1 | match fdo, project:fdo | packs live
-- Relationships | weight 0.5
+- Checkout redesign | weight 1 | match checkout, project:checkout | new flow live
+- Documentation | weight 0.5
 - Bare goal
 
 ## Values
-- NS-1 Says what to do next
+- NS-1 Fast feedback loops
 
 ## Dislikes
 - Busywork
@@ -33,8 +33,8 @@ Free prose the parser ignores.
 
 def test_parse_reads_goals_with_weights_matches_and_notes():
     assert taste.parse(TEXT).goals == (
-        Goal("Fast data onboarding", 1.0, ("fdo", "project:fdo"), "packs live"),
-        Goal("Relationships", 0.5),
+        Goal("Checkout redesign", 1.0, ("checkout", "project:checkout"), "new flow live"),
+        Goal("Documentation", 0.5),
         Goal("Bare goal", 1.0),
     )
 
@@ -42,7 +42,7 @@ def test_parse_reads_goals_with_weights_matches_and_notes():
 def test_parse_reads_lists_and_frontmatter():
     p = taste.parse(TEXT)
     assert (p.values, p.dislikes, p.patterns, p.draft, p.updated) == (
-        ("NS-1 Says what to do next",),
+        ("NS-1 Fast feedback loops",),
         ("Busywork",),
         ("Settled 2026-11-11: rank, then filter",),
         False,
@@ -83,27 +83,27 @@ def test_render_of_a_settled_profile_has_no_draft_banner():
 def test_version_ignores_prose_and_follows_content():
     profile = taste.parse(TEXT)
     assert taste.parse(TEXT.replace("Free prose", "Other prose")).version == profile.version
-    assert profile.with_weights({"Relationships": 0.6}, profile.updated).version != profile.version
+    assert profile.with_weights({"Documentation": 0.6}, profile.updated).version != profile.version
     assert len(profile.version) == 12
 
 
 def test_with_weights_changes_only_named_goals_and_stamps_the_date():
-    profile = taste.parse(TEXT).with_weights({"Relationships": 0.6}, "2026-12-01")
-    assert profile.weights == {"Fast data onboarding": 1.0, "Relationships": 0.6, "Bare goal": 1.0}
+    profile = taste.parse(TEXT).with_weights({"Documentation": 0.6}, "2026-12-01")
+    assert profile.weights == {"Checkout redesign": 1.0, "Documentation": 0.6, "Bare goal": 1.0}
     assert profile.updated == "2026-12-01"
 
 
 def test_a_goal_matches_a_tag_or_a_token_in_the_text():
-    goal = Goal("FDO", match=("fdo", "project:fdo"))
+    goal = Goal("CHECKOUT", match=("checkout", "project:checkout"))
     assert [
-        goal.matches(frozenset({"project:fdo"}), ""),
-        goal.matches(frozenset(), "the FDO demo"),
+        goal.matches(frozenset({"project:checkout"}), ""),
+        goal.matches(frozenset(), "the CHECKOUT demo"),
         goal.matches(frozenset({"x"}), "other"),
     ] == [True, True, False]
 
 
 def test_matched_goals_names_every_matching_goal():
-    assert taste.parse(TEXT).matched_goals(frozenset({"fdo"}), "") == ("Fast data onboarding",)
+    assert taste.parse(TEXT).matched_goals(frozenset({"checkout"}), "") == ("Checkout redesign",)
 
 
 def test_rubric_lists_goals_heaviest_first_then_the_lists():

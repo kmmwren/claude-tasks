@@ -7,9 +7,10 @@ import subprocess
 import pytest
 import triage
 from class_log import Correction
+from headless import ScriptLaunch
 from triage_enrich import Fill
 
-from tests.queue_helpers import inbox_text, make_inbox
+from tests.queue_helpers import inbox_text, installed_launcher, make_inbox
 
 BC = triage.BriefClass
 READY = dict(goal="Ship it.", criteria=("It ships.",))
@@ -89,11 +90,34 @@ def test_main_prints_the_dry_run_report(tmp_path, capsys, offline):
     assert json.loads(capsys.readouterr().out)["promoted_as_filed"] == 1
 
 
+def test_main_without_llm_never_reads_the_launcher(tmp_path, capsys, monkeypatch, offline):
+    def unexpected(root):
+        raise AssertionError("launcher read without --llm")
+
+    monkeypatch.setattr(triage, "configured_launch", unexpected)
+    triage.main(["promote", "--root", str(make_inbox(tmp_path, {"filed": QUEUE["filed"]}))])
+    assert json.loads(capsys.readouterr().out)["promoted_as_filed"] == 1
+
+
 def test_main_wires_the_llm_backend(tmp_path, capsys, monkeypatch, offline):
-    monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
-    monkeypatch.setattr(triage, "claude_classify", lambda model: lambda briefs, examples: {})
-    triage.main(["promote", "--root", str(make_inbox(tmp_path, {"thin": QUEUE["thin"]})), "--llm"])
+    launchers = []
+
+    def predictor(model, launch):
+        launchers.append(launch)
+        return _fill
+
+    def classifier(model, launch):
+        launchers.append(launch)
+        return lambda briefs, examples: {}
+
+    monkeypatch.setattr(triage, "claude_predict", predictor)
+    monkeypatch.setattr(triage, "claude_classify", classifier)
+    root = make_inbox(tmp_path, {"thin": QUEUE["thin"]})
+    script = installed_launcher(tmp_path)
+    (root / "tasks.toml").write_text(f'[rank]\nlauncher = "{script}"\n')
+    triage.main(["promote", "--root", str(root), "--llm"])
     assert json.loads(capsys.readouterr().out)["promoted_enriched"] == 1
+    assert launchers == [ScriptLaunch(str(script))] * 2
 
 
 def _log(root):
@@ -171,7 +195,7 @@ def _refusing_model(monkeypatch):
 
     def run(cmd, **kw):
         calls.append(cmd)
-        raise subprocess.CalledProcessError(4, cmd, stderr="claude-any: no account free\n")
+        raise subprocess.CalledProcessError(4, cmd, stderr="launcher: no account free\n")
 
     monkeypatch.setattr(subprocess, "run", run)
     return calls

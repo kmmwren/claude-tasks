@@ -33,10 +33,10 @@ g
 
 
 QUEUE = {
-    "mult": _brief("mult", tags="[multiplier, wave, project:lite]"),
-    "pr": _brief("pr", tags="[pr, wave, project:lite]"),
-    "unblock": _brief("unblock", importance="4", tags="[wave]", extra="project: lite\nclears: x\n"),
-    "plain": _brief("plain", tags="[wave, project:lite]"),
+    "mult": _brief("mult", tags="[multiplier, wave, project:app]"),
+    "pr": _brief("pr", tags="[pr, wave, project:app]"),
+    "unblock": _brief("unblock", importance="4", tags="[wave]", extra="project: app\nclears: x\n"),
+    "plain": _brief("plain", tags="[wave, project:app]"),
     "other": _brief("other", importance="1", tags="[elsewhere]"),
 }
 
@@ -66,8 +66,8 @@ def _ids(items):
             ["mult", "pr", "unblock", "other", "plain"],
         ),
         (SessionScope("s"), prioritise.Scorer.WSJF, ["other", "mult", "pr", "unblock", "plain"]),
-        (ProjectScope("lite"), prioritise.Scorer.ADDITIVE, ["pr", "unblock", "mult", "plain"]),
-        (ProjectScope("lite"), prioritise.Scorer.WSJF, ["pr", "unblock", "mult", "plain"]),
+        (ProjectScope("app"), prioritise.Scorer.ADDITIVE, ["pr", "unblock", "mult", "plain"]),
+        (ProjectScope("app"), prioritise.Scorer.WSJF, ["pr", "unblock", "mult", "plain"]),
     ],
 )
 def test_exact_order_per_scope(root, scope, scorer, expected):
@@ -75,13 +75,13 @@ def test_exact_order_per_scope(root, scope, scorer, expected):
 
 
 def test_project_scope_scores_shipping_and_unblocking_above_multipliers(root):
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY, scope=ProjectScope("lite"))}
+    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY, scope=ProjectScope("app"))}
     assert ranked["pr"]["_score_additive"] == 220 + 2000
     assert ranked["unblock"]["_score_additive"] == 120 + 2000
     assert ranked["mult"]["_score_additive"] == 220 + 500
     assert ranked["pr"]["_score_wsjf"] == round((300 + 2000) / 3, 1)
     assert ranked["pr"]["_why"]["signals"] == {"ships-pr": 2000}
-    assert ranked["pr"]["_why"]["scope"] == "project:lite"
+    assert ranked["pr"]["_why"]["scope"] == "project:app"
 
 
 def test_all_scope_scores_multipliers_first(root):
@@ -181,18 +181,18 @@ def test_an_unknown_scope_kind_weighs_nothing():
 
 
 def test_subject_reads_project_from_the_field():
-    assert _subject({"project": " lite "}).project == "lite"
-    assert ProjectScope("lite").admits(_subject({"project": "lite"}))
-    assert not ProjectScope("lite").admits(_subject({"project": "other"}))
+    assert _subject({"project": " app "}).project == "app"
+    assert ProjectScope("app").admits(_subject({"project": "app"}))
+    assert not ProjectScope("app").admits(_subject({"project": "other"}))
     assert Signal("clears-blocker") is Signal.CLEARS_BLOCKER
 
 
 def test_parse_scope_is_shared():
-    assert parse_scope("project:lite").key == "project:lite"
+    assert parse_scope("project:app").key == "project:app"
 
 
 def test_cli_scope_root_and_ids(root, capsys):
-    prioritise.main(["--scope", "project:lite", "--root", str(root), "--json"])
+    prioritise.main(["--scope", "project:app", "--root", str(root), "--json"])
     rows = json.loads(capsys.readouterr().out)
     assert [r["id"] for r in rows] == ["pr", "unblock", "mult", "plain"]
     assert rows[0]["why"]["signals"] == {"ships-pr": 2000} and rows[0]["schema_version"] == 3

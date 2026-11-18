@@ -4,9 +4,9 @@ import json
 
 import slack_links
 
-TOP = "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179"
+TOP = "https://example.slack.com/archives/C0123ABCD/p1773265865773179"
 REPLY = (
-    "https://panaseer.slack.com/archives/C0999ZZZZ/p1773300000000002"
+    "https://example.slack.com/archives/C0999ZZZZ/p1773300000000002"
     "?thread_ts=1773299999.000001&cid=C0999ZZZZ"
 )
 
@@ -79,7 +79,7 @@ def test_main_prints_parked(capsys):
 
 
 def test_a_top_level_link_and_its_thread_link_share_one_key():
-    plain = "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179"
+    plain = "https://example.slack.com/archives/C0123ABCD/p1773265865773179"
     threaded = f"{plain}?thread_ts=1773265865.773179&cid=C0123ABCD"
     keys = {slack_links.parse(u).links[0].key for u in (plain, threaded)}
     assert keys == {"slack:C0123ABCD/1773265865.773179"}

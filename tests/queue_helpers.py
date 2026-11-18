@@ -144,3 +144,11 @@ def wait_for_pusher_idle(root: pathlib.Path, timeout: float = 60.0, poll: float 
                     return True
         time.sleep(poll)
     return False
+
+
+def installed_launcher(tmp_path: pathlib.Path) -> pathlib.Path:
+    """An executable launcher script, so resolution treats it as installed."""
+    script = tmp_path / "launcher.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    return script

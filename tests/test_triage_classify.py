@@ -6,6 +6,7 @@ import pytest
 import triage_classify
 from class_log import BriefClass, ClassLog, Example, Verdict
 from fingerprint import index
+from headless import ScriptLaunch
 from triage_brief import InboxBrief
 from triage_classify import (
     CLASSIFY_SCHEMA,
@@ -24,6 +25,7 @@ from triage_classify import (
 from tests.queue_helpers import inbox_text, make_inbox
 
 C = BriefClass
+LAUNCH = ScriptLaunch("/l.sh")
 
 
 def brief(tmp_path, bid, **kw):
@@ -143,12 +145,19 @@ def test_the_schema_offers_only_the_classes_a_model_may_give():
 
 
 def test_claude_classify_asks_with_the_schema_and_parses_the_answer(tmp_path, monkeypatch):
-    def ask(prompt, schema, model, reason, timeout):
-        assert schema is CLASSIFY_SCHEMA and "tools off" in reason and model == "m"
+    def ask(prompt, schema, model, reason, timeout, launch):
+        assert (
+            schema is CLASSIFY_SCHEMA
+            and "tools off" in reason
+            and model == "m"
+            and launch == LAUNCH
+        )
         return {"briefs": [GOOD]}
 
     monkeypatch.setattr(triage_classify, "ask_json", ask)
-    assert claude_classify("m")([brief(tmp_path, "b")], []) == {"b": Call(C.DROP, "stale")}
+    assert claude_classify("m", launch=LAUNCH)([brief(tmp_path, "b")], []) == {
+        "b": Call(C.DROP, "stale")
+    }
 
 
 @pytest.mark.parametrize(
@@ -189,7 +198,7 @@ def test_reconcile_logs_one_correction_for_each_brief_found_against_its_verdict(
 def _refusing(status, calls):
     def run(cmd, **kw):
         calls.append(cmd)
-        raise subprocess.CalledProcessError(status, cmd, stderr="claude-any: no account free\n")
+        raise subprocess.CalledProcessError(status, cmd, stderr="launcher: no account free\n")
 
     return run
 

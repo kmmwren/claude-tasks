@@ -5,6 +5,7 @@ import subprocess
 
 import judge
 import pytest
+from headless import ScriptLaunch
 from judge import Candidate, ClaudeBackend, JudgeError, SetwiseJudge
 
 CANDIDATES = [
@@ -139,6 +140,12 @@ def test_backend_command_disables_tools_and_constrains_output():
     assert "--model" not in ClaudeBackend().command()
 
 
+def test_a_backend_built_without_a_reason_tells_a_launcher_the_judge_reason(tmp_path):
+    run, calls = run_returning(json.dumps({"result": "", "structured_output": {"ranking": []}}))
+    ClaudeBackend(cwd=tmp_path, run=run, launch=ScriptLaunch("/x/launcher.sh"))("P")
+    assert calls[0][1]["env"]["CLAUDE_TASKS_LOCAL_REASON"] == judge.LOCAL_REASON
+
+
 def test_backend_sends_the_prompt_on_stdin_and_returns_the_structured_output(tmp_path):
     run, calls = run_returning(json.dumps({"result": "", "structured_output": {"ranking": []}}))
     assert ClaudeBackend(cwd=tmp_path, run=run)("P") == '{"ranking": []}'
@@ -152,20 +159,19 @@ def test_backend_sends_the_prompt_on_stdin_and_returns_the_structured_output(tmp
     assert kwargs["env"] is None
 
 
-def test_the_wrapper_declares_a_laptop_class_and_forwards_stdin(monkeypatch):
+def test_the_script_launcher_says_why_it_stays_local_and_forwards_stdin(monkeypatch):
     monkeypatch.setenv("KEEP", "1")
     run, calls = run_returning(json.dumps({"structured_output": {"ranking": []}}))
-    ClaudeBackend(
-        run=run, launch=judge.WrapperLaunch("/w/claude-any.sh", "read-only-research:judge")
-    )("P")
+    ClaudeBackend(run=run, launch=ScriptLaunch("/w/launcher.sh"), reason="judge")("P")
     argv, kwargs = calls[0]
-    assert (argv[:2], argv[-1]) == (["/w/claude-any.sh", "--tools"], judge.TASK)
+    assert (argv[:2], argv[-1]) == (["/w/launcher.sh", "--tools"], judge.TASK)
     env = kwargs["env"]
-    assert (env["CLAUDE_LOCAL_OK"], env["CLAUDE_ANY_STDIN"], env["KEEP"]) == (
-        "read-only-research:judge",
+    assert (env["CLAUDE_TASKS_LOCAL_REASON"], env["CLAUDE_TASKS_STDIN"], env["KEEP"]) == (
+        "judge",
         "1",
         "1",
     )
+    assert (env["CLAUDE_LOCAL_OK"], env["CLAUDE_ANY_STDIN"]) == ("read-only-research:judge", "1")
 
 
 @pytest.mark.parametrize(
@@ -187,8 +193,14 @@ def test_unwrap_raises_on_an_error_envelope():
 
 def test_backend_raises_on_a_failed_exit():
     run, _ = run_returning(returncode=2, stderr=" boom \n")
-    with pytest.raises(JudgeError, match="claude -p exited 2: boom"):
+    with pytest.raises(JudgeError, match="claude exited 2: boom"):
         ClaudeBackend(run=run)("P")
+
+
+def test_the_error_names_the_launcher_that_exited_non_zero():
+    run, _ = run_returning(returncode=3, stderr="bad")
+    with pytest.raises(JudgeError, match="/w/launcher.sh exited 3: bad"):
+        ClaudeBackend(run=run, launch=ScriptLaunch("/w/launcher.sh"), reason="judge")("P")
 
 
 @pytest.mark.parametrize(
@@ -196,5 +208,11 @@ def test_backend_raises_on_a_failed_exit():
 )
 def test_backend_raises_when_the_cli_does_not_run(exc):
     run, _ = run_returning(raises=exc)
-    with pytest.raises(JudgeError, match="claude -p did not run"):
+    with pytest.raises(JudgeError, match="claude did not run"):
         ClaudeBackend(run=run)("P")
+
+
+def test_the_error_names_the_launcher_that_did_not_run():
+    run, _ = run_returning(raises=FileNotFoundError("gone"))
+    with pytest.raises(JudgeError, match="/w/launcher.sh did not run"):
+        ClaudeBackend(run=run, launch=ScriptLaunch("/w/launcher.sh"), reason="judge")("P")

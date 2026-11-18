@@ -8,9 +8,9 @@
     updated: 2026-11-11
     ---
     ## Goals
-    - Fast data onboarding | weight 1 | match fast-data-onboarding, project:fdo | analytics packs live
+    - Checkout redesign | weight 1 | match checkout-redesign, project:checkout | new flow live
     ## Values
-    - NS-1 An instinct-style assistant that says what to do next
+    - NS-1 Fast feedback loops
     ## Dislikes
     - Busywork that no goal needs
     ## Patterns

@@ -6,8 +6,8 @@ A session works only the briefs its binding admits (see scope_binding.py). The b
 the session's own file next to the queue it is bound to, so `root` and every other key survive.
 
 Usage:
-  python scripts/bind_scope.py --session <id> --scope project:lite --mode fixed
-  python scripts/bind_scope.py --session <id> --scope tag:fdo --mode ongoing
+  python scripts/bind_scope.py --session <id> --scope project:checkout --mode fixed
+  python scripts/bind_scope.py --session <id> --scope tag:docs --mode ongoing
   python scripts/bind_scope.py --session <id> --scope all --mode none
   python scripts/bind_scope.py --session <id> --add some-brief --reason "found while fixing the parent"
 

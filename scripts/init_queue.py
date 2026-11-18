@@ -13,7 +13,7 @@ briefs into --fold-to when the session ends.
 Usage:
   python scripts/init_queue.py ~/tasks --name my-project
   python scripts/init_queue.py ./.tasks --name my-repo --force
-  python scripts/init_queue.py ./.tasks --name panaseer-lite --prefix LITE
+  python scripts/init_queue.py ./.tasks --name acme-app --prefix APP
   python scripts/init_queue.py ~/q/s1 --session "$CLAUDE_CODE_SESSION_ID" --fold-to ~/tasks
 
 It also scaffolds requirements.md, the register a large project's requirements are extracted
@@ -58,7 +58,7 @@ blocked_by: [] # required while status is blocked: brief ids or external:<reason
 clears: # OPTIONAL fleet-blocker id (or [ids]) this brief clears; while its record is active or unverified, prioritise.py ranks the brief first. Needs tasks.toml `fleet_blockers_dir`.
 milestone: # OPTIONAL milestone id; the only place membership is stored (project.toml `briefs` lists are ignored). Checked against the milestones file if tasks.toml sets `milestones`.
 related: [] # list of brief ids
-requirements: [] # OPTIONAL requirement ids from requirements.md this brief covers, e.g. [LITE-R001].
+requirements: [] # OPTIONAL requirement ids from requirements.md this brief covers, e.g. [APP-R001].
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
 requires-local: # OPTIONAL true, when the brief needs files only on a local machine.
 ---

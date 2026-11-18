@@ -19,7 +19,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --top 5       # top 5
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --actionable  # only what Claude can run now
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --json        # machine-readable
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --context cloud  # skip requires-local / requires-repo
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --scope project:lite   # one project, project weights
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --scope project:app   # one project, project weights
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prioritise.py" --scope session:<id> --ids a,b --root <queue>
 ```
 
@@ -35,7 +35,7 @@ The script resolves the queue via `$CLAUDE_TASKS_DIR` → nearest `.tasks/` → 
 - **"What's blocked?"** → run it and read the `⛔blocked(<unmet deps>)` flags; offer to
   action the blocker first (a brief that unblocks others is ranked higher for exactly this).
 
-## Ranking against her priorities (rank.py)
+## Ranking against the user's priorities (rank.py)
 
 `prioritise.py` filters: blocked briefs drop out and due, importance, effort and unlocks become
 facts. `rank.py` then orders the top candidates against the queue's taste profile
@@ -45,7 +45,7 @@ keep the `prioritise.py` order unless they opt in.
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/seed_profile.py" --north-stars org/repo:path/north-stars.md  # once: draft the profile
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rank.py" --scope all --top 10        # or tag:<t>, project:<slug>, session:<id>
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rank.py" --scope project:lite --json
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rank.py" --scope project:app --json
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/log_pick.py" skip <id>               # pick and bump are logged automatically
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/learn.py"                            # propose profile weight changes from picks
 ```

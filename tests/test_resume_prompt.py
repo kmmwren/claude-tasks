@@ -51,13 +51,18 @@ def test_mission_is_found_by_a_previous_session_id(tmp_path: pathlib.Path) -> No
         json.dumps(
             {
                 "sessions": [
-                    {"id": "current", "name": "FDO", "mission": "Ship FDO.", "previous_ids": [SID]}
+                    {
+                        "id": "current",
+                        "name": "Checkout",
+                        "mission": "Ship checkout.",
+                        "previous_ids": [SID],
+                    }
                 ]
             }
         )
     )
     found = resume_prompt.Mission.lookup(SID, registry, tmp_path / "jobs")
-    assert found == resume_prompt.Mission("FDO", "Ship FDO.")
+    assert found == resume_prompt.Mission("Checkout", "Ship checkout.")
 
 
 def test_mission_is_found_by_the_roster_entrys_job_short_id(tmp_path: pathlib.Path) -> None:
@@ -72,9 +77,11 @@ def test_mission_is_found_by_the_roster_entrys_job_short_id(tmp_path: pathlib.Pa
 def test_pinned_session_off_the_roster_takes_its_job_name(tmp_path: pathlib.Path) -> None:
     job = tmp_path / "jobs" / SID[:8]
     job.mkdir(parents=True)
-    (job / "state.json").write_text(json.dumps({"name": "FDO"}))
+    (job / "state.json").write_text(json.dumps({"name": "Checkout"}))
     mission = resume_prompt.Mission.lookup(SID, tmp_path / "missing.json", tmp_path / "jobs")
-    assert resume_prompt.header(SID, mission) == f'Resume long-running session "FDO" (was {SID}).'
+    assert (
+        resume_prompt.header(SID, mission) == f'Resume long-running session "Checkout" (was {SID}).'
+    )
 
 
 def test_prompt_without_a_registry_entry_still_lists_the_work(

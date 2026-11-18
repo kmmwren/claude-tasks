@@ -21,7 +21,7 @@ def sessions(tmp_path, monkeypatch):
 
 @pytest.fixture
 def queue(tmp_path):
-    return make_queue(tmp_path, {"a": {"tags": "[project:lite]"}, "b": {"tags": "[other]"}})
+    return make_queue(tmp_path, {"a": {"tags": "[project:checkout]"}, "b": {"tags": "[other]"}})
 
 
 def run(*argv, queue=None):
@@ -30,15 +30,15 @@ def run(*argv, queue=None):
 
 
 def test_fixed_records_the_members_at_bind_time(sessions, queue, capsys):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     binding = scope_binding.read("s1")
     assert isinstance(binding.mode, FixedMode) and binding.members == ("a",)
-    assert "project:lite (fixed, 1 member(s))" in capsys.readouterr().out
+    assert "project:checkout (fixed, 1 member(s))" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("mode, mode_type", [("ongoing", OngoingMode), ("none", NoneMode)])
 def test_the_other_modes_bind_without_members(sessions, queue, mode, mode_type):
-    run("--scope", "tag:fdo", "--mode", mode, queue=queue)
+    run("--scope", "tag:docs", "--mode", mode, queue=queue)
     binding = scope_binding.read("s1")
     assert isinstance(binding.mode, mode_type) and binding.members == ()
 
@@ -52,7 +52,7 @@ def test_binding_keeps_the_sessions_root(sessions, queue):
 
 
 def test_a_fixed_set_grows_with_a_reason(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     run("--add", "b", "--reason", "a needs it", queue=queue)
     binding = scope_binding.read("s1")
     assert binding.pull_scope().slugs == {"a", "b"}
@@ -60,12 +60,22 @@ def test_a_fixed_set_grows_with_a_reason(sessions, queue):
 
 
 def test_a_bind_and_an_addition_can_go_in_one_call(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", "--add", "b", "--reason", "why", queue=queue)
+    run(
+        "--scope",
+        "project:checkout",
+        "--mode",
+        "fixed",
+        "--add",
+        "b",
+        "--reason",
+        "why",
+        queue=queue,
+    )
     assert scope_binding.read("s1").pull_scope().slugs == {"a", "b"}
 
 
 def test_an_addition_without_a_reason_is_refused(sessions, queue, capsys):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     with pytest.raises(SystemExit) as refused:
         run("--add", "b")
     assert refused.value.code == 2
@@ -74,7 +84,7 @@ def test_an_addition_without_a_reason_is_refused(sessions, queue, capsys):
 
 
 def test_a_blank_reason_is_refused_by_the_binding(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     with pytest.raises(SystemExit, match="needs a reason"):
         run("--add", "b", "--reason", " ")
 
@@ -116,36 +126,36 @@ def test_a_bad_scope_or_session_id_is_a_clear_exit(sessions, queue):
 
 def test_without_root_the_resolved_queue_is_used(sessions, queue, monkeypatch):
     monkeypatch.setenv(_paths.ENV_VAR, str(queue))
-    run("--scope", "project:lite", "--mode", "fixed")
+    run("--scope", "project:checkout", "--mode", "fixed")
     assert scope_binding.read("s1").members == ("a",)
 
 
 def test_a_fixed_set_is_not_replaced_without_a_reason(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
-    with pytest.raises(SystemExit, match="replacing the fixed set project:lite needs a reason"):
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
+    with pytest.raises(SystemExit, match="replacing the fixed set project:checkout needs a reason"):
         run("--scope", "all", "--mode", "fixed", queue=queue)
     assert scope_binding.read("s1").members == ("a",)
 
 
 def test_a_fixed_set_replaced_with_a_reason_keeps_why(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     run("--scope", "all", "--mode", "fixed", "--reason", "the goal grew", queue=queue)
     binding = scope_binding.read("s1")
     assert binding.members == ("a", "b")
     assert [(r.selector, r.mode, r.reason) for r in binding.rebinds] == [
-        ("project:lite", "fixed", "the goal grew")
+        ("project:checkout", "fixed", "the goal grew")
     ]
 
 
 def test_an_ongoing_binding_is_replaced_freely_and_keeps_earlier_rebinds(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
-    run("--scope", "tag:fdo", "--mode", "ongoing", "--reason", "now ongoing", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
+    run("--scope", "tag:docs", "--mode", "ongoing", "--reason", "now ongoing", queue=queue)
     run("--scope", "all", "--mode", "none", queue=queue)
     assert [r.reason for r in scope_binding.read("s1").rebinds] == ["now ongoing"]
 
 
 def test_an_addition_that_names_no_brief_is_refused(sessions, queue):
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     with pytest.raises(SystemExit, match="typo-slug is not a brief"):
         run("--add", "typo-slug", "--reason", "why", queue=queue)
     assert scope_binding.read("s1").additions == ()
@@ -170,9 +180,9 @@ def _add_in_another_process(sessions, queue, slug):
 
 def test_concurrent_additions_both_survive(sessions, tmp_path):
     queue = make_queue(
-        tmp_path, {"a": {"tags": "[project:lite]"}, **{f"x{n}": {} for n in range(6)}}
+        tmp_path, {"a": {"tags": "[project:checkout]"}, **{f"x{n}": {} for n in range(6)}}
     )
-    run("--scope", "project:lite", "--mode", "fixed", queue=queue)
+    run("--scope", "project:checkout", "--mode", "fixed", queue=queue)
     context = multiprocessing.get_context("fork")
     writers = [
         context.Process(target=_add_in_another_process, args=(sessions, queue, f"x{n}"))

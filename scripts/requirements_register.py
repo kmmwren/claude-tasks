@@ -42,7 +42,7 @@ ID_PATTERN = r"[A-Z][A-Z0-9]*-R\d+"
 TABLE_STATUS = "UNTRACKED"
 
 _HEADER = re.compile(rf"^## ({ID_PATTERN}) \[([a-z-]+)\] (.+)$")
-# A table register row: | id | when | her words | ...classes... | brief ids |
+# A table register row: | id | when | the user's words | ...classes... | brief ids |
 _ROW = re.compile(rf"^\|\s*({ID_PATTERN})\s*\|.*\|\s*$")
 _PREFIX = re.compile(r"prefix:\s*([A-Z][A-Z0-9]*)")
 _FIELD = re.compile(r"^- (quote|source|withdrawn): ?(.*)$")
@@ -199,7 +199,7 @@ def append_items(
     if not prefix:
         raise SystemExit(f"{path} has no `prefix: XXX` header and none was given.")
     columns = len(_cells(lines[last_row])) if last_row is not None else 0
-    # A table row paraphrases her words, so only the quote identifies a duplicate there.
+    # A table row paraphrases the user's words, so only the quote identifies a duplicate there.
     by_quote = last_row is not None
     seen = {(_normalise(r.quote), "" if by_quote else r.source): r.id for r in existing}
     next_number = max((r.number for r in existing), default=0) + 1

@@ -5,7 +5,7 @@ import init_queue
 import pytest
 from deps import fm, parse_list
 
-PAGE = "https://panaseer.atlassian.net/wiki/spaces/SMH/pages/123/A-call"
+PAGE = "https://example.atlassian.net/wiki/spaces/DOCS/pages/123/A-call"
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def queue(tmp_path):
 
 def filed(queue, *extra):
     add_task.main(
-        ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync", *extra]
+        ["--title", "Answer a billing question", "--root", str(queue), "--no-sync", *extra]
     )
     (path,) = (queue / "inbox").glob("*.md")
     return path.read_text()
@@ -71,7 +71,7 @@ def test_a_repeat_capture_logs_its_ref_on_the_existing_brief(queue):
     other = PAGE.replace("123", "456")
     (path,) = (queue / "inbox").glob("*.md")
     add_task.main(
-        ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync"]
+        ["--title", "Answer a billing question", "--root", str(queue), "--no-sync"]
         + ["--source", "intake", "--source-ref", other]
     )
     merged = path.read_text()
@@ -90,7 +90,7 @@ def test_the_queue_template_documents_source_ref(tmp_path):
     assert "source_ref:" in template and "user | claude | intake" in template
 
 
-TITLE = ["--title", "Answer a Lite prospect question", "--no-sync"]
+TITLE = ["--title", "Answer a billing question", "--no-sync"]
 
 
 def capture(queue, *extra):
@@ -120,9 +120,9 @@ def test_a_list_item_cannot_close_the_list_or_inject_a_key(queue, flag, hostile)
 
 def test_a_title_with_page_text_whitespace_and_joiners_is_filed_intact(queue):
     meta = capture(
-        queue, "--title", "Lite\u00a0prospect\tasks about \U0001f468\u200d\U0001f4bb setup"
+        queue, "--title", "Billing\u00a0question\tasks about \U0001f468\u200d\U0001f4bb setup"
     )
-    assert meta["title"] == "Lite prospect asks about \U0001f468\u200d\U0001f4bb setup"
+    assert meta["title"] == "Billing question asks about \U0001f468\u200d\U0001f4bb setup"
 
 
 def test_a_title_naming_an_issue_number_reads_back_whole(queue):
@@ -136,7 +136,7 @@ def test_comma_separated_blocks_file_as_separate_ids(queue):
 
 
 def test_a_normalised_list_item_is_reported_once(queue, capsys):
-    capture(queue, "--tags", "lite, x #y")
+    capture(queue, "--tags", "billing, x #y")
     assert capsys.readouterr().err.count("normalised 'x #y'") == 1
 
 

@@ -116,11 +116,17 @@ commits through the same lock). New generic modules: `_paths.py` (root resolutio
   confidence. The backend is `claude -p` with tools disabled, brief text escaped and delimited as
   data, and output constrained by a JSON schema. Anything other than an exact, reasoned permutation
   is rejected.
-- **Launcher.** When `[rank] launcher` (default `~/.claude-switch/claude-any.sh`) exists, the
-  judge runs through it with `CLAUDE_LOCAL_OK` set to `[rank] local_ok` and stdin forwarded. The
-  wrapper's cloud route is asynchronous and cannot return a ranking, so the call declares a
-  laptop class. Without the wrapper the judge calls `claude -p` directly. A refused or failed
-  call falls back like any other judge error.
+- **Launcher.** The judge and the triage calls (`headless.py`) resolve one launcher the same way:
+  the first of `[rank] launcher`, `$CLAUDE_TASKS_LAUNCHER` and the deprecated `$CLAUDE_ANY_BIN` that
+  is an executable file. When one is named but none is usable, a single stderr line says so and the
+  call uses plain `claude -p` on `PATH`. A refused or failed call falls back like any other judge
+  error.
+- **Launcher contract.** A launcher is an executable that adds `-p`, accepts claude's flags, takes
+  the prompt on stdin and prints claude's JSON envelope. It is run with `CLAUDE_TASKS_STDIN=1`,
+  meaning forward stdin, and `CLAUDE_TASKS_LOCAL_REASON=<reason>`, meaning run here and not on an
+  asynchronous cloud route that cannot return an answer. `[rank] local_reason` sets the judge's
+  reason. The legacy `CLAUDE_ANY_STDIN` and `CLAUDE_LOCAL_OK` (`read-only-research:<reason>`) are
+  set too, so launchers written against them keep working.
 - **Fallback.** A missing or unreadable profile, fewer than two candidates, or two invalid passes
   return filter order with the reason in the header.
 - **Cache and state.** Verdicts are cached by scope, profile version, brief content hashes and

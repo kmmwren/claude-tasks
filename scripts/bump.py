@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Raise the importance of a brief found by tag, recording why and when in its body.
 
-    bump.py <tag-or-ref> --importance 1 --reason "blocks the FDO demo"
+    bump.py <tag-or-ref> --importance 1 --reason "blocks the checkout demo"
 
-A ref like `product-ingest#3809` matches the tag `pr:product-ingest#3809`; anything else is matched as a
+A ref like `repo#123` matches the tag `pr:repo#123`; anything else is matched as a
 literal tag. Importance is only ever raised (a lower number), never lowered, so sessions can bump freely.
 """
 

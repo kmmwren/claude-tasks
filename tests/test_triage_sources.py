@@ -21,7 +21,7 @@ from triage_sources import (
     [
         ("see https://github.com/o/r/pull/7.", "https://github.com/o/r/pull/7"),
         ("lives at ~/.claude/hooks/gate.py", "~/.claude/hooks/gate.py"),
-        ("landed as kmmwren/claude-tasks#24", "kmmwren/claude-tasks#24"),
+        ("landed as owner/repo#24", "owner/repo#24"),
         ("tracked in ABC-42", "ABC-42"),
         ("edit build_anatomy.py first", "build_anatomy.py"),
     ],

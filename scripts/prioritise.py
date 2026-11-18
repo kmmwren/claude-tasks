@@ -36,7 +36,7 @@ Usage:
   python scripts/prioritise.py --top 5 --json  # machine-readable, top 5, with the "why"
   python scripts/prioritise.py --scorer wsjf   # rank by WSJF for this call
   python scripts/prioritise.py --context cloud # exclude briefs needing local/other-repo access
-  python scripts/prioritise.py --scope project:lite --json      # a project's queue, project weights
+  python scripts/prioritise.py --scope project:app --json      # a project's queue, project weights
   python scripts/prioritise.py --scope session:<id> --ids a,b   # rank a session's ledger briefs
 """
 
@@ -460,7 +460,7 @@ def lane_of(brief: dict[str, Any], today: datetime.date, weights: Weights) -> La
 
 
 def move_of(brief: dict[str, Any], blocked: bool, weights: Weights) -> Move:
-    """What to do with it: run it, ask her, make it safe for Claude to run, or wait."""
+    """What to do with it: run it, ask the user, make it safe for Claude to run, or wait."""
     autonomy = brief.get("autonomy", "")
     if blocked:
         return Move.BLOCKED

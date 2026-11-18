@@ -10,7 +10,7 @@ from taste import Goal
 
 from tests.queue_helpers import make_queue
 
-NORTH_STARS = "# North stars\n\n## NS-1 An instinct-style assistant\n\ntext\n\n## NS-12 AI native |  composable\n## Not a star\n"
+NORTH_STARS = "# North stars\n\n## NS-1 Fast feedback loops\n\ntext\n\n## NS-12 Offline first |  composable\n## Not a star\n"
 
 
 @pytest.fixture
@@ -18,17 +18,17 @@ def sources(tmp_path):
     goals, decisions = tmp_path / "goals", tmp_path / "decisions"
     goals.mkdir()
     decisions.mkdir()
-    (goals / "fdo.json").write_text(
+    (goals / "checkout.json").write_text(
         json.dumps(
             {
-                "slug": "fdo",
-                "title": "Fast data onboarding",
+                "slug": "checkout",
+                "title": "Checkout redesign",
                 "top_priority": True,
-                "definition_of_done": "packs live |\n everywhere",
+                "definition_of_done": "new flow live |\n everywhere",
             }
         )
     )
-    (goals / "rel.json").write_text(json.dumps({"slug": "rel", "title": "Relationships"}))
+    (goals / "docs.json").write_text(json.dumps({"slug": "docs", "title": "Documentation"}))
     (goals / "broken.json").write_text("{not json")
     (decisions / "2026-11-10-older.md").write_text("# Older choice\n")
     (decisions / "2026-11-11-ranker-design.md").write_text("no heading here\n")
@@ -46,8 +46,10 @@ def sources(tmp_path):
 def test_draft_weights_the_top_priority_goal_highest_and_skips_broken_files(sources, capsys):
     profile = seed_profile.draft(sources, "", today="2026-11-11")
     assert profile.goals == (
-        Goal("Fast data onboarding", 1.0, ("fdo", "project:fdo"), "packs live / everywhere"),
-        Goal("Relationships", 0.5, ("rel", "project:rel"), ""),
+        Goal(
+            "Checkout redesign", 1.0, ("checkout", "project:checkout"), "new flow live / everywhere"
+        ),
+        Goal("Documentation", 0.5, ("docs", "project:docs"), ""),
     )
     assert capsys.readouterr().err.startswith("warning: skipped goal broken.json:")
 
@@ -61,7 +63,7 @@ def test_draft_takes_recent_decision_titles_as_patterns(sources):
 
 def test_draft_reads_north_star_headings_as_values(sources):
     profile = seed_profile.draft(sources, "o/r:docs/ns.md", fetch=lambda spec: NORTH_STARS)
-    assert profile.values == ("NS-1 An instinct-style assistant", "NS-12 AI native / composable")
+    assert profile.values == ("NS-1 Fast feedback loops", "NS-12 Offline first / composable")
     assert (profile.draft, profile.dislikes) == (True, seed_profile.DISLIKES)
 
 

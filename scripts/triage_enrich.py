@@ -13,7 +13,7 @@ import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from headless import ask_json
+from headless import DirectLaunch, Launch, ask_json
 from triage_brief import InboxBrief
 
 BRIEF_CHARS = 4000
@@ -91,11 +91,13 @@ def parse_fills(payload: Any, asked: set[str]) -> dict[str, Fill]:
     return {i["id"]: _fill(i) for i in valid if i["id"] in asked}
 
 
-def claude_predict(model: str = "sonnet", timeout: int = 600) -> PredictFn:
+def claude_predict(
+    model: str = "sonnet", timeout: int = 600, launch: Launch = DirectLaunch()
+) -> PredictFn:
     """A PredictFn backed by one isolated `claude -p` call per batch; a failed call fills nothing."""
 
     def predict(briefs: Sequence[InboxBrief]) -> Mapping[str, Fill]:
-        payload = ask_json(render_prompt(briefs), FILL_SCHEMA, model, LOCAL_REASON, timeout)
+        payload = ask_json(render_prompt(briefs), FILL_SCHEMA, model, LOCAL_REASON, timeout, launch)
         return parse_fills(payload, {b.id for b in briefs})
 
     return predict

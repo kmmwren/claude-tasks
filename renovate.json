@@ -11,7 +11,7 @@
       "automerge": true
     },
     {
-      "description": "MAJOR version bumps require human review — CI catches breakage but not a malicious-but-passing dependency (supply-chain risk). Renovate opens the PR; Katherine approves.",
+      "description": "MAJOR version bumps require human review — CI catches breakage but not a malicious-but-passing dependency (supply-chain risk). Renovate opens the PR; a maintainer approves.",
       "matchUpdateTypes": ["major"],
       "automerge": false
     },

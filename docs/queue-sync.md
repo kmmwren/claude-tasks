@@ -1,17 +1,15 @@
 # How the work queue syncs
 
-The queue (`~/work-tasks`) is a git repo, and GitHub `main` is the shared copy. Changes reach it in two ways:
+The queue (for example `~/tasks`) is a git repo, and GitHub `main` is the shared copy. Changes reach it in two ways:
 
 - **On every write.** Every script that changes a brief (`add_task`, `transition`, `append_log`, `bump`, `unblock` and the rest) commits straight away under a cross-process lock and marks the clone dirty. One background pusher per clone then pushes the whole burst once.
-- **Every 60 seconds, as a safety net.** The LaunchAgent `com.katherine.work-tasks-sync` runs `sync.sh`. It first runs `git_sync.py --sweep`, which commits anything no writer named and pushes it, then catches the local checkout up.
-
-The plugin's own code (this repo, cloned at `~/.claude/local-plugins/claude-tasks`) is kept level with GitHub every 15 minutes by `com.katherine.local-plugins-sync`.
+- **Every 60 seconds, as a safety net.** A scheduled job (a LaunchAgent such as `com.example.claude-tasks-sync`, or a cron entry) runs `sync.sh`. It first runs `git_sync.py --sweep`, which commits anything no writer named and pushes it, then catches the local checkout up.
 
 ```mermaid
 flowchart TD
-    W["Writer script<br/>add_task, transition, append_log ..."] -->|commit under lock,<br/>mark clone dirty| C[(local main<br/>~/work-tasks)]
+    W["Writer script<br/>add_task, transition, append_log ..."] -->|commit under lock,<br/>mark clone dirty| C[(local main<br/>~/tasks)]
     W --> P["Detached pusher<br/>one per burst"]
-    T(["LaunchAgent every 60s"]) --> S["sync.sh"]
+    T(["Scheduled job every 60s"]) --> S["sync.sh"]
     S --> SW["git_sync.py --sweep<br/>commit stragglers"]
     SW --> C
     SW --> P2["push"]

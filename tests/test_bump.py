@@ -28,7 +28,7 @@ def test_pr_ref_bumps_the_pr_queue_brief_not_a_hand_brief_sorting_first(tmp_path
 
 
 def test_ref_maps_to_pr_tag_and_literal_tag_is_kept():
-    assert (bump.tag_for("repo#1"), bump.tag_for("fdo")) == ("pr:repo#1", "fdo")
+    assert (bump.tag_for("repo#1"), bump.tag_for("checkout")) == ("pr:repo#1", "checkout")
 
 
 def test_bump_raises_importance_and_appends_reason_section(tmp_path):

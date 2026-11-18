@@ -20,7 +20,7 @@ from typing import Any
 
 from class_log import BriefClass, ClassLog, Correction, Example, Verdict
 from fingerprint import Fingerprint, Located
-from headless import ask_json
+from headless import DirectLaunch, Launch, ask_json
 from transition import find_brief
 from triage_brief import InboxBrief
 from triage_promote import batches
@@ -116,14 +116,16 @@ def parse_calls(payload: Any, asked: set[str]) -> dict[str, Call]:
     return {bid: call for bid, call in pairs if call is not None and bid in asked}
 
 
-def claude_classify(model: str = "sonnet", timeout: int = 600) -> ClassifyFn:
+def claude_classify(
+    model: str = "sonnet", timeout: int = 600, launch: Launch = DirectLaunch()
+) -> ClassifyFn:
     """A ClassifyFn backed by one isolated `claude -p` call per batch; a failed call classifies nothing."""
 
     def classify_batch(
         briefs: Sequence[InboxBrief], examples: Sequence[Example]
     ) -> Mapping[str, Call]:
         payload = ask_json(
-            render_prompt(briefs, examples), CLASSIFY_SCHEMA, model, LOCAL_REASON, timeout
+            render_prompt(briefs, examples), CLASSIFY_SCHEMA, model, LOCAL_REASON, timeout, launch
         )
         return parse_calls(payload, {b.id for b in briefs})
 

@@ -56,6 +56,6 @@ After it runs:
    - The queue repo is separate from the claude-tasks *plugin* repo. This means a user
      can keep, e.g., a work queue and a personal queue in two different private repos,
      fully isolated from each other. Suggest a descriptive repo name (e.g.
-     `work-tasks`) rather than reusing the plugin's name.
+     `team-tasks`) rather than reusing the plugin's name.
 5. Optionally open `tasks.toml` so they can set the project `name`, the list of
    `domains` their briefs can use, and any `[priority] tag_weights`.

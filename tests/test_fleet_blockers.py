@@ -272,7 +272,7 @@ def test_config_default_for_the_directory_is_unset():
 
 # ── rank.py: pinned above the judged list ─────────────────────────────────────
 
-PROFILE = "---\ndraft: false\nupdated: 2026-11-01\n---\n## Goals\n- FDO | weight 1 | match fdo\n"
+PROFILE = "---\ndraft: false\nupdated: 2026-11-01\n---\n## Goals\n- CHECKOUT | weight 1 | match checkout\n"
 
 
 class FakePredict:
