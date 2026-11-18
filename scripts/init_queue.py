@@ -50,7 +50,8 @@ domain: # OPTIONAL category. Define the allowed set in tasks.toml [domains].
 tags: [] # OPTIONAL free-form labels, e.g. [security, depends:other-brief-id].
 parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-level.
 assignee: # OPTIONAL who (person or agent) has claimed this. Empty = unclaimed. Advisory, not a lock.
-source: # who created it: user | claude.
+source: # who created it: user | claude | intake.
+source_ref: # OPTIONAL url or path of the page, message or file an intake brief was extracted from.
 blockers: [] # list of brief ids or external blockers (original form; blocked_by is preferred)
 blocks: [] # OPTIONAL ids of briefs this one blocks (the inverse of their blockers:); each open one raises this brief's rank.
 blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.

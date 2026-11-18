@@ -45,6 +45,7 @@ from readiness import (
 FLAGS = {"goal": "--goal", "criteria": "--criteria/--success", "context": "--context"}
 NOTES = re.compile(r"(## Notes / open questions\n\n)(?:_none_\n*)?")
 ON_DUPLICATE = ("merge", "refuse", "file")
+SOURCES = ("claude", "user", "intake")
 
 
 def slug(s: str, maxwords: int = 6) -> str:
@@ -78,6 +79,7 @@ domain: {a.domain}
 tags: {tags}
 parent: {a.parent}
 source: {a.source}
+source_ref: {a.source_ref}
 blockers: []
 blocks: {flow_list(a.blocks)}
 related: []
@@ -164,7 +166,13 @@ def main(argv: list[str] | None = None) -> None:
         metavar="ID",
         help="repeatable id of a brief this one blocks (the inverse of that brief's blockers:)",
     )
-    ap.add_argument("--source", default="claude", choices=["claude", "user"])
+    ap.add_argument("--source", default="claude", choices=SOURCES)
+    ap.add_argument(
+        "--source-ref",
+        default="",
+        metavar="URL",
+        help="the page, message or file the brief was extracted from (provenance for intake briefs)",
+    )
     ap.add_argument(
         "--status",
         choices=["inbox", "ready", "parked"],

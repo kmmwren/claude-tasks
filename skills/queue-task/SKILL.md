@@ -67,6 +67,7 @@ task. Fewer, richer briefs beat many thin ones.
 ## Honesty rules
 
 - Set `--source claude` so a review can show what Claude self-generated.
+- A brief extracted from an external page or message is `--source intake --source-ref <url>`, so its origin stays on the brief.
 - Don't inflate `importance`. Default 3 unless it's genuinely urgent/strategic.
 - If you can't fill out the goal, that's fine — drop it in `inbox/` and let enrichment
   handle it. Capturing badly beats losing the idea.

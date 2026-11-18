@@ -68,7 +68,7 @@ personal queue, and project-scoped queues checked into a repo.
 
 YAML frontmatter (the queryable surface) + markdown body (the context). Required fields:
 `id`, `title`, `created`, `updated`, `status`, `type`, `importance`, `autonomy`. Optional:
-`estimated-effort`, `due`, `not_before`, `domain`, `tags`, `parent`, `assignee`, `source`, `blockers`,
+`estimated-effort`, `due`, `not_before`, `domain`, `tags`, `parent`, `assignee`, `source`, `source_ref`, `blockers`,
 `clears`, `related`, `requires-repo`, `requires-local`. `assignee` is who has claimed the brief
 (empty = unclaimed): advisory coordination for a shared queue, not a lock across clones.
 Body sections: Goal, Context, Success criteria,
@@ -157,7 +157,7 @@ proves code ran; mutation score proves the tests actually assert behaviour.
 - Board title (a hardcoded repo slug) → project name from `tasks.toml` (generic default).
 - `_template.md`: dropped a personal "enjoyed" routing field; neutralised the charge-model
   tag vocabulary to a generic "tags are free-form" note; generic example domains.
-- `source:` values changed from a personal name to generic `user|claude`.
+- `source:` values changed from a personal name to generic `user|claude|intake`; `source_ref` records where an intake brief came from.
 - Removed references to personal external doc paths in script docstrings/context.
 
 ## Distribution
