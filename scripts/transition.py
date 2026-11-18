@@ -35,7 +35,7 @@ from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root
+from _paths import TASK_DIRS, is_queue, resolve_root
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
@@ -367,6 +367,45 @@ def move_brief(
         atomic_write(new_path, text)
         if new_path != path:
             path.unlink()
+    return new_path
+
+
+def holding_folder(root: pathlib.Path, brief_id: str) -> str | None:
+    """The state folder of `root` that already holds `brief_id`, or None when no folder does."""
+    return next((d for d in TASK_DIRS if (root / d / f"{brief_id}.md").exists()), None)
+
+
+def relocate_brief(
+    brief_id: str,
+    root: pathlib.Path,
+    dest_root: pathlib.Path,
+    folder: str,
+    dest_folder: str,
+    log: str,
+    today: str | None = None,
+) -> pathlib.Path:
+    """Move `<root>/<folder>/<brief_id>.md` into another queue's `dest_folder`: a move, never a copy.
+
+    The destination must already be an initialised queue and must not hold the id in any
+    folder, so nothing is created or overwritten. The source goes only after the destination
+    is written, under the source queue's lock. Returns the new path.
+    """
+    path = root / folder / f"{brief_id}.md"
+    if not is_queue(dest_root):
+        raise ValueError(f"{dest_root} is not an initialised queue; {brief_id!r} not moved")
+    held = holding_folder(dest_root, brief_id)
+    if held:
+        raise ValueError(f"{brief_id!r} already exists in {dest_root}/{held}; not moved")
+    today = today or datetime.date.today().isoformat()
+    with repo_lock(root) as acquired:
+        if not acquired:
+            raise RuntimeError(f"timed out waiting for the queue lock; {brief_id!r} was NOT moved")
+        if not path.exists():
+            raise ValueError(f"no brief {brief_id!r} in {root}/{folder} (claimed by another actor)")
+        text = _append_log(_update_frontmatter(path.read_text(), dest_folder, today), today, log)
+        new_path = dest_root / dest_folder / f"{brief_id}.md"
+        atomic_write(new_path, text)
+        path.unlink()
     return new_path
 
 

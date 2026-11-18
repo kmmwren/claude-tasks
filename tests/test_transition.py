@@ -1184,3 +1184,9 @@ def test_an_unchanged_list_keeps_probes_and_a_new_probe_wins_for_its_number(root
         "1: exit 10",
         "2: exit 0",
     ]
+
+
+def test_a_move_whose_only_if_turns_false_under_the_lock_leaves_the_brief(root):
+    with pytest.raises(ValueError, match="changed while waiting"):
+        transition.move_brief("rotate-the-api-key", "parked", root, only_if=lambda: False)
+    assert transition.find_brief("rotate-the-api-key", root).parent.name != "parked"

@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- **`route_inbox.py` moves generic inbox briefs into the project queue they belong to.** `route`
+  reads the projects registry (`$PROJECT_REGISTRY`, default `~/.claude/tools/ledger-viewer/projects.toml`)
+  and routes a brief only on evidence: an explicit `project:` field or `project:<slug>` tag, a Jira
+  key or `requires-repo:` that exactly one project owns, or a project keyword in the brief's id,
+  title or tags. No match, several projects, or a project name the registry does not list leaves the
+  brief where it is and counts it as unrouted; the router never creates a project or deletes a
+  brief. A project whose queue lands by PR is reported unless `--dest-root` names a worktree of its
+  sync repo. Each move goes through the new `transition.relocate_brief` under the queue lock (a move,
+  never a copy, refusing an id the destination already holds), writes an origin line into the
+  brief's execution log and a row in `route-inbox.jsonl`; `reverse <id>` puts it back and is not
+  re-routed afterwards. `--dry-run` writes nothing and prints routed counts per project.
 - **`add_task.py --source intake --source-ref <url|path>` records where a brief came from.** An
   intake brief must carry a ref; the ref is written as `source_ref:` after `source:`, a repeat
   capture logs its own ref on the brief it merges into, and a ref that would not read back as one
