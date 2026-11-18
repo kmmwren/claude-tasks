@@ -70,7 +70,9 @@ def test_other_verdicts_raise_nothing(cls):
     assert _alerts([_brief("a", extra=OLD)], [_verdict("a", cls)]) == []
 
 
-@pytest.mark.parametrize("key", ["assignee: me\n", "closed_reason: drop\n", "parked_reason: x\n"])
+@pytest.mark.parametrize(
+    "key", ["assignee: me\n", "closed_reason: evidence\n", "reopened: 2026-11-12\n"]
+)
 def test_a_claimed_or_restored_brief_is_never_flagged(key):
     assert _alerts([_brief("a", extra=key + OLD)], [_verdict("a", BC.DROP)]) == []
 
@@ -185,6 +187,7 @@ def test_a_missing_alert_script_warns_on_stderr_and_reports_not_delivered(tmp_pa
         "def broken(:\n",
         "x = 1\n",
         "def post(*a):\n    raise OSError('disk full')\n",
+        "def post(*a):\n    raise ValueError('bad payload')\n",
     ],
 )
 def test_a_broken_alert_script_warns_instead_of_raising(tmp_path, capsys, body):

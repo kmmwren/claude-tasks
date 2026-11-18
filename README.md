@@ -313,7 +313,8 @@ PR merged or closed and named as the deliverable, or every success criterion tic
 `closed_reason` set, and so does a duplicate once its body is appended to the surviving brief. Judgement
 never moves a brief: a stale needs-info brief or a model-called drop stays put and is raised in one
 aggregated alert per run, then again only after `stale_days` more. Each move is one line in `closed.jsonl`
-in the queue, and `python3 scripts/triage.py reopen <id>` puts the brief back for good.
+in the queue, and `python3 scripts/triage.py reopen <id>` puts the brief back in its folder, clears its closing fields and
+marks it `reopened` so triage leaves it alone.
 `python3 scripts/triage.py promote --dry-run` prints the planned moves and alerts without writing anything.
 
 The engine (scripts, skills, board) is identical for everyone; only the config differs.

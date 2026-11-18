@@ -156,7 +156,7 @@ def session_alert_notifier(scripts_dir: pathlib.Path = SCRIPTS_DIR) -> Notifier:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             module.post(CHANNEL, PROJECT, KIND, text)
-        except (OSError, ImportError, SyntaxError, AttributeError) as err:
+        except Exception as err:  # a broken alert script must never stop triage or lose a close
             return _warn(f"{script.name} failed: {err}")
         return True
 

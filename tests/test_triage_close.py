@@ -9,6 +9,7 @@ from class_log import BriefClass, Verdict
 from deps import fm
 from triage_brief import InboxBrief, load_inbox
 from triage_close import (
+    CLOSING_FIELDS,
     CloseRules,
     Move,
     MoveLog,
@@ -93,9 +94,9 @@ def test_a_malformed_triage_setting_falls_back_to_its_default(tmp_path, body):
 
 
 @pytest.mark.parametrize(
-    "key", ["assignee: me\n", "closed_reason: drop\n", "parked_reason: stale\n"]
+    "key", ["assignee: me\n", "closed_reason: evidence\n", "reopened: 2026-11-12\n"]
 )
-def test_a_claimed_or_already_closed_brief_is_not_eligible(key):
+def test_a_claimed_closed_or_reopened_brief_is_not_eligible(key):
     assert not eligible(_brief(extra=key)) and eligible(_brief())
 
 
@@ -320,6 +321,9 @@ def test_reopen_puts_a_closed_brief_back_where_it_came_from_and_logs_it(tmp_path
     text = (root / "ready" / "a.md").read_text()
     assert "2026-11-12: reopened by its owner; triage had closed it (evidence)" in text
     assert _rows(root)[-1]["reason"] == "reopened"
+    fields = InboxBrief(root / "ready" / "a.md", text).fields
+    assert [fields.get(k) for k in CLOSING_FIELDS] == ["", "", ""]
+    assert fields["reopened"] == "2026-11-12" and fields["status"] == "ready"
     assert not eligible(InboxBrief(root / "ready" / "a.md", text))
 
 

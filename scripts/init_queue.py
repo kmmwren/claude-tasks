@@ -61,11 +61,10 @@ related: [] # list of brief ids
 requirements: [] # OPTIONAL requirement ids from requirements.md this brief covers, e.g. [LITE-R001].
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
 requires-local: # OPTIONAL true, when the brief needs files only on a local machine.
-closed_reason: # SET BY inbox-triage when it moves the brief to done/: duplicate | drop | evidence. A brief carrying one is never auto-closed again.
+closed_reason: # SET BY inbox-triage when it moves the brief to done/: duplicate | evidence. `triage.py reopen <id>` clears it.
 duplicate_of: # SET BY inbox-triage on a duplicate: the id of the brief it was merged into.
 closed_evidence: # SET BY inbox-triage on an evidence close: what showed the work was finished.
-closed_note: # SET BY inbox-triage on a drop: the model's reason.
-parked_reason: # SET BY inbox-triage when it parks a stale needs-info brief. Move the brief back to restore it.
+reopened: # SET BY `triage.py reopen`: the date the owner put the brief back. Triage never closes it again.
 ---
 
 ## Goal

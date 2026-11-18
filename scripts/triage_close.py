@@ -9,7 +9,7 @@ is appended to the survivor first, so no content lives only in the closed file. 
 (a needs-info brief gone stale, a model-called drop) is never moved: triage_alerts tells the owner.
 A brief carrying a closing reason is never closed again, a claimed brief is left alone, and each run
 closes at most `[triage] max_moves`, evidence first. Every move is one line in <queue>/closed.jsonl,
-and `reopen` puts a brief back with one command.
+and `reopen` puts a brief back with one command, clearing its closing fields.
 
 Stdlib only.
 """
@@ -36,6 +36,8 @@ STALE_DAYS = 21
 MAX_MOVES = 200
 DONE = "done"
 REOPENED = "reopened"
+REOPENED_FIELD = "reopened"
+CLOSING_FIELDS = ("closed_reason", "closed_evidence", "duplicate_of")
 _FRONTMATTER = re.compile(r"\A---\n.*?\n---\n?", re.DOTALL)
 
 
@@ -131,9 +133,9 @@ class MoveLog:
 
 
 def eligible(brief: InboxBrief) -> bool:
-    """Not claimed, and not already closed or parked once and put back by the owner."""
+    """Not claimed, not closed, and not put back by the owner: a reopened brief stays open."""
     fields = brief.fields
-    return not any(fields.get(k) for k in ("assignee", "closed_reason", "parked_reason"))
+    return not any(fields.get(k) for k in ("assignee", "closed_reason", REOPENED_FIELD))
 
 
 def evidence_moves(briefs: Sequence[InboxBrief], folder: str, states: PrStates) -> list[Move]:
@@ -246,7 +248,7 @@ def apply_moves(moves: Sequence[Move], root: pathlib.Path, today: str) -> list[M
 def reopen(brief_id: str, root: pathlib.Path, today: str) -> str:
     """Put a brief triage closed back where it came from; returns that folder.
 
-    It keeps its closing reason, so triage never closes it again.
+    Its closing fields are cleared and `reopened: <date>` is set, so triage never closes it again.
     """
     row = MoveLog(root).last(brief_id)
     if row is None or row["reason"] == REOPENED:
@@ -260,6 +262,7 @@ def reopen(brief_id: str, root: pathlib.Path, today: str) -> str:
         root,
         log=f"reopened by its owner; triage had closed it ({row['reason']})",
         today=today,
+        fields={**dict.fromkeys(CLOSING_FIELDS, ""), REOPENED_FIELD: today},
     )
     MoveLog(root).append_reopen(brief_id, row["to"], row["from"])
     return row["from"]

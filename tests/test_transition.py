@@ -1192,12 +1192,18 @@ def test_move_sets_extra_frontmatter_fields_flattened_to_one_line(root):
         "done",
         root,
         today="2026-06-02",
-        fields={"closed_reason": "drop", "closed_note": "obsolete,\n  superseded"},
+        fields={"closed_reason": "evidence", "closed_evidence": "obsolete,\n  superseded"},
     )
     fields = transition.fm(newp.read_text())
-    assert (fields["closed_reason"], fields["closed_note"]) == ("drop", "obsolete, superseded")
+    assert (fields["closed_reason"], fields["closed_evidence"]) == (
+        "evidence",
+        "obsolete, superseded",
+    )
     assert fields["status"] == "done"
 
 
 def test_set_fields_leaves_text_without_frontmatter_unchanged():
-    assert transition._set_fields("no frontmatter\n", {"closed_reason": "drop"}) == "no frontmatter\n"
+    assert (
+        transition._set_fields("no frontmatter\n", {"closed_reason": "evidence"})
+        == "no frontmatter\n"
+    )
