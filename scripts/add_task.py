@@ -25,13 +25,14 @@ Examples:
 """
 
 import argparse
+import dataclasses
 import datetime
 import pathlib
 import re
 import sys
 
 from _concurrency import atomic_write, require_lock, reserve_name
-from _paths import TASK_DIRS, require_queue, resolve_root
+from _paths import TASK_DIRS, require_queue, resolve_root, strip_comment
 from fingerprint import Fingerprint, Located, find_duplicate
 from git_sync import sync_commit as _sync_commit
 from readiness import (
@@ -48,6 +49,26 @@ ON_DUPLICATE = ("merge", "refuse", "file")
 SOURCES = ("claude", "user", "intake")
 
 
+@dataclasses.dataclass(frozen=True)
+class Provenance:
+    """Who filed a brief and, for an intake brief, the page or file it was extracted from."""
+
+    source: str
+    ref: str = ""
+
+    def __str__(self) -> str:
+        return f"{self.source} from {self.ref}" if self.ref else self.source
+
+
+def frontmatter_value(value: str) -> str:
+    """A value written as one frontmatter line must read back unchanged: no newline, no ` #` comment."""
+    if "\n" in value or "\r" in value or strip_comment(value) != value.strip():
+        raise argparse.ArgumentTypeError(
+            f"{value!r} must be one line with no ' #' (it would not read back)"
+        )
+    return value.strip()
+
+
 def slug(s: str, maxwords: int = 6) -> str:
     s = re.sub(r"[^a-z0-9\s-]", "", s.lower())
     words = [w for w in re.split(r"[\s-]+", s) if w]
@@ -62,7 +83,9 @@ def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, tod
     tags = flow_list([t.strip() for t in a.tags.split(",") if t.strip()])
     reqs = flow_list([r.strip() for r in a.requirements.split(",") if r.strip()])
     crit = (
-        "\n".join(f"- [ ] {c}" for c in a.criteria) if a.criteria else f"- [ ] {placeholder_criterion(a.title)}"
+        "\n".join(f"- [ ] {c}" for c in a.criteria)
+        if a.criteria
+        else f"- [ ] {placeholder_criterion(a.title)}"
     )
     return f"""---
 id: {nid}
@@ -78,8 +101,8 @@ due: {a.due}
 domain: {a.domain}
 tags: {tags}
 parent: {a.parent}
-source: {a.source}
-source_ref: {a.source_ref}
+source: {a.provenance.source}
+source_ref: {a.provenance.ref}
 blockers: []
 blocks: {flow_list(a.blocks)}
 related: []
@@ -108,7 +131,7 @@ _none_
 
 ## Execution log
 
-{today}: captured by {a.source} via add_task.py.
+{today}: captured by {a.provenance} via add_task.py.
 """
 
 
@@ -123,14 +146,16 @@ def add_note(text: str, note: str) -> str:
     return NOTES.sub(lambda m: f"{m[1]}{note}\n\n", text, count=1)
 
 
-def merged_text(text: str, source: str, context: str, today: str) -> str:
+def merged_text(text: str, provenance: Provenance, context: str, today: str) -> str:
     noted = add_note(text, context) if context and context not in text else text
-    return f"{noted.rstrip()}\n{today}: repeat capture by {source} merged here.\n"
+    return f"{noted.rstrip()}\n{today}: repeat capture by {provenance} merged here.\n"
 
 
-def merge_into(root: pathlib.Path, found: Located, source: str, context: str, today: str) -> None:
+def merge_into(
+    root: pathlib.Path, found: Located, provenance: Provenance, context: str, today: str
+) -> None:
     with require_lock(root):
-        atomic_write(found.path, merged_text(found.path.read_text(), source, context, today))
+        atomic_write(found.path, merged_text(found.path.read_text(), provenance, context, today))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -170,6 +195,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument(
         "--source-ref",
         default="",
+        type=frontmatter_value,
         metavar="URL",
         help="the page, message or file the brief was extracted from (provenance for intake briefs)",
     )
@@ -187,10 +213,15 @@ def main(argv: list[str] | None = None) -> None:
         help="a capture matching an existing brief: merge into it (default), refuse, or file anyway",
     )
     ap.add_argument("--stdin", action="store_true", help="append stdin to Context")
-    ap.add_argument("--commit", action="store_true", help="accepted for old callers: committing is the default")
+    ap.add_argument(
+        "--commit", action="store_true", help="accepted for old callers: committing is the default"
+    )
     ap.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
     ap.add_argument("--root", default=None, help="queue root (default: resolved per _paths)")
     a = ap.parse_args(argv)
+    if a.source == "intake" and not a.source_ref:
+        ap.error("--source intake needs --source-ref: an intake brief must say where it came from")
+    a.provenance = Provenance(a.source, a.source_ref)
 
     status = a.status or ("ready" if a.ready else "inbox")
     a.criteria = [c.strip() for c in a.criteria if c.strip()]
@@ -207,16 +238,22 @@ def main(argv: list[str] | None = None) -> None:
             )
     root = require_queue(a.root if a.root else resolve_root())
     today = datetime.date.today().isoformat()
-    repeat = None if a.on_duplicate == "file" else find_duplicate(
-        root, Fingerprint.of_text(render_brief("pending", a, status, context, today))
+    repeat = (
+        None
+        if a.on_duplicate == "file"
+        else find_duplicate(
+            root, Fingerprint.of_text(render_brief("pending", a, status, context, today))
+        )
     )
     if repeat and a.on_duplicate == "refuse":
         sys.exit(f"duplicate of {where(repeat)}")
     if repeat:
-        merge_into(root, repeat, a.source, context, today)
+        merge_into(root, repeat, a.provenance, context, today)
         print(f"merged into {where(repeat)}")
         if not a.no_sync:
-            _sync_commit(f"brief({repeat.id}): repeat capture merged ({a.source})", root, ids=[repeat.id])
+            _sync_commit(
+                f"brief({repeat.id}): repeat capture merged ({a.source})", root, ids=[repeat.id]
+            )
         return
     # Atomically claim a unique filename BEFORE writing, so two sessions capturing the
     # same title at the same instant can't overwrite each other (O_CREAT|O_EXCL).

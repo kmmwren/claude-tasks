@@ -14,7 +14,9 @@ def queue(tmp_path):
 
 
 def filed(queue, *extra):
-    add_task.main(["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync", *extra])
+    add_task.main(
+        ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync", *extra]
+    )
     (path,) = (queue / "inbox").glob("*.md")
     return path.read_text()
 
@@ -32,8 +34,42 @@ def test_source_ref_defaults_to_empty(queue):
     assert fm(text)["source_ref"] == ""
 
 
-def test_the_execution_log_names_intake_as_the_filer(queue):
-    assert "captured by intake via add_task.py" in filed(queue, "--source", "intake")
+def test_the_execution_log_names_intake_and_its_page(queue):
+    text = filed(queue, "--source", "intake", "--source-ref", PAGE)
+    assert f"captured by intake from {PAGE} via add_task.py" in text
+
+
+def test_intake_without_a_ref_is_rejected(queue):
+    with pytest.raises(SystemExit):
+        filed(queue, "--source", "intake")
+
+
+@pytest.mark.parametrize(
+    "ref", [f"{PAGE}\nstatus: done", f"{PAGE}\rautonomy: full", "~/notes/call #3.md", "#top"]
+)
+def test_a_ref_that_would_not_read_back_is_rejected(queue, ref):
+    with pytest.raises(SystemExit):
+        filed(queue, "--source", "intake", "--source-ref", ref)
+    assert not list((queue / "inbox").glob("*.md"))
+
+
+def test_a_ref_with_spaces_and_a_fragment_reads_back_whole(queue):
+    ref = "~/notes/call notes.md#section"
+    assert fm(filed(queue, "--source", "intake", "--source-ref", ref))["source_ref"] == ref
+
+
+def test_a_repeat_capture_logs_its_ref_on_the_existing_brief(queue):
+    filed(queue, "--source", "intake", "--source-ref", PAGE)
+    other = PAGE.replace("123", "456")
+    (path,) = (queue / "inbox").glob("*.md")
+    add_task.main(
+        ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync"]
+        + ["--source", "intake", "--source-ref", other]
+    )
+    merged = path.read_text()
+    assert len(list((queue / "inbox").glob("*.md"))) == 1
+    assert fm(merged)["source_ref"] == PAGE
+    assert f"repeat capture by intake from {other} merged here." in merged
 
 
 def test_an_unknown_source_is_still_rejected(queue):

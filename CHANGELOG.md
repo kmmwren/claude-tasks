@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **`add_task.py --source intake --source-ref <url|path>` records where a brief came from.** An
+  intake brief must carry a ref; the ref is written as `source_ref:` after `source:`, a repeat
+  capture logs its own ref on the brief it merges into, and a ref that would not read back as one
+  frontmatter line (a newline, or a ` #` comment) is rejected. The queue template and design doc
+  list the field.
 - **`resume_prompt.py` prints the successor prompt for a long-running session.** At the end of a
   session handoff it rebuilds the paste-ready resume prompt from the live ledger (open items, in
   progress first, each with its `metadata.brief` and blocker) and the long-running registry's
