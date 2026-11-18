@@ -8,6 +8,7 @@ title: {title}
 status: {status}
 type: feature
 domain: {domain}
+milestone: {milestone}
 updated: {updated}
 ---
 
@@ -33,14 +34,13 @@ set_on = "2026-10-22"
 id = "m1"
 title = "First"
 plain = "The first thing works"
-briefs = ["b1"]
 {due}
 
 [[milestones]]
 id = "m2"
 title = "Second"
 plain = "The second thing works"
-briefs = ["b2"]
+release = "2026.12"
 
 [[prs]]
 repo = "Panaseer/demo"
@@ -66,6 +66,7 @@ def make_queue(root: pathlib.Path, colour="green", due="", updated="2026-10-22")
     (q / "done" / "b1.md").write_text(
         BRIEF.format(
             id="b1",
+            milestone="m1",
             title="One",
             status="done",
             domain="demo",
@@ -76,6 +77,7 @@ def make_queue(root: pathlib.Path, colour="green", due="", updated="2026-10-22")
     (q / "in-progress" / "b2.md").write_text(
         BRIEF.format(
             id="b2",
+            milestone="m2",
             title="Two",
             status="in-progress",
             domain="demo",
@@ -102,7 +104,7 @@ set_on = "2026-09-01"
 [[milestones]]
 id = "m1"
 title = "Only"
-briefs = ["b-done", "b-open"]
+release = "2026.12"
 
 [[workstreams]]
 id = "w"
@@ -262,6 +264,7 @@ def make_rich(root: pathlib.Path) -> pathlib.Path:
     for bid, folder, status, crit in spec:
         text = BRIEF.format(
             id=bid,
+            milestone="m1" if bid in ("b-done", "b-open") else "",
             title=bid.upper(),
             status=status,
             domain="demo",

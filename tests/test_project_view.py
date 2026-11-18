@@ -117,3 +117,23 @@ def test_render_has_header_and_stable_hash(tmp_path):
     assert pv.content_hash(m) == pv.content_hash(
         model(make_queue(tmp_path / "x"), now=NOW + dt.timedelta(minutes=5))
     )
+
+
+def test_milestone_membership_comes_from_brief_frontmatter(tmp_path):
+    ms = {x["id"]: x for x in model(make_queue(tmp_path))["milestones"]}
+    assert ms["m1"]["briefs"] == ["b1"] and ms["m2"]["briefs"] == ["b2"]
+
+
+def test_a_legacy_briefs_list_on_a_milestone_is_ignored(tmp_path):
+    q = make_queue(tmp_path)
+    toml = q / "project.toml"
+    toml.write_text(toml.read_text().replace('title = "First"', 'title = "First"\nbriefs = ["b2"]'))
+    ms = {x["id"]: x for x in model(q)["milestones"]}
+    assert ms["m1"]["briefs"] == ["b1"] and ms["m1"]["status"] == "done"
+
+
+def test_release_is_read_and_shown_only_when_set(tmp_path):
+    m = model(make_queue(tmp_path))
+    assert [x["release"] for x in m["milestones"]] == ["", "2026.12"]
+    html = pv.render_fragment(m)
+    assert html.count("Ships in 2026.12") == 1

@@ -81,3 +81,32 @@ def test_cli_reports_a_bad_file_as_an_error(tmp_path):
     root = make_queue(tmp_path, {}, milestones="x = [")
     with pytest.raises(SystemExit, match="error"):
         milestones.main(["progress", "--root", str(root)])
+
+
+def test_membership_is_read_from_brief_frontmatter():
+    briefs = [{"id": "a", "m": "M1"}, {"id": "b", "m": "M2"}, {"id": "c", "m": "M1"}, {"id": "d"}]
+    got = milestones.members(briefs, "M1", lambda b: b.get("m", ""))
+    assert [b["id"] for b in got] == ["a", "c"]
+
+
+def test_a_legacy_briefs_list_is_ignored(tmp_path):
+    body = '[milestone.M1]\ntitle = "First"\nbriefs = ["c", "d"]\n'
+    root = make_queue(tmp_path, BRIEFS, milestones=body)
+    (row,) = milestones.progress(root)
+    assert row.counts == {"done": 1, "in-progress": 1}
+
+
+def test_release_is_parsed_and_absent_means_unset(tmp_path):
+    body = '[milestone.M1]\nrelease = " 2026.12 "\n[milestone.M2]\n[milestone.M3]\nrelease = ""\n'
+    root = make_queue(tmp_path, BRIEFS, milestones=body)
+    assert [m.release for m in milestones.progress(root)] == ["2026.12", None, None]
+
+
+def test_release_is_shown_in_the_cli_output(tmp_path, capsys):
+    body = '[milestone.M1]\nrelease = "2026.12"\n[milestone.M2]\n'
+    root = make_queue(tmp_path, BRIEFS, milestones=body)
+    milestones.main(["progress", "--root", str(root)])
+    first, second = capsys.readouterr().out.splitlines()
+    assert "ships in 2026.12" in first and "ships in" not in second
+    milestones.main(["progress", "--root", str(root), "--json"])
+    assert [r["release"] for r in json.loads(capsys.readouterr().out)] == ["2026.12", None]

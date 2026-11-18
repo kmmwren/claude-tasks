@@ -29,6 +29,7 @@ from typing import Any
 
 import build_board
 from _paths import is_queue
+from milestones import MilestoneSpec, members
 from requirements_check import check as check_queue
 from requirements_register import parse_register, register_path
 
@@ -118,6 +119,10 @@ def brief_state(b: dict[str, Any]) -> str:
     if b["dir"] == "done":
         return "done" if b["crit_done"] == b["crit_total"] else "unverified"
     return {"in-progress": "active", "parked": "parked"}.get(b["dir"], "queued")
+
+
+def _milestone_of(b: dict[str, Any]) -> str:
+    return str(b["milestone"])
 
 
 def _select(
@@ -478,16 +483,18 @@ def build_model(
 
     milestones = []
     for m in cfg.get("milestones", []):
-        picked = _select(briefs, m.get("briefs", []))
+        spec = MilestoneSpec.parse(m["id"], m)
+        picked = members(briefs, spec.id, _milestone_of)
         roll = _rollup(picked)
         due = _date(m.get("due"))
         milestones.append(
             {
-                "id": m["id"],
-                "title": m.get("title", m["id"]),
-                "plain": m.get("plain") or m.get("title", m["id"]),
+                "id": spec.id,
+                "title": spec.title,
+                "plain": m.get("plain") or spec.title,
                 "due": due.isoformat() if due else "",
-                "briefs": m.get("briefs", []),
+                "release": spec.release or "",
+                "briefs": [b["id"] for b in picked],
                 "criteria": [c for b in picked for c in _criteria(b)],
                 "missed": bool(due and due < today and roll["status"] != "done"),
                 **roll,
@@ -845,6 +852,8 @@ def _milestone(ms: dict[str, Any], w: dict[str, Any], m: dict[str, Any]) -> str:
     when = ""
     if ms["due"]:
         when = f' <span class="due{" late" if ms["missed"] else ""}">Due {e(_day(ms["due"], True))}{" (overdue)" if ms["missed"] else ""}</span>'
+    if ms["release"]:
+        when += f' <span class="due">Ships in {e(ms["release"])}</span>'
     crit = ms.get("criteria", [])
     body = ""
     if crit:

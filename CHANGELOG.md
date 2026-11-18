@@ -7,6 +7,12 @@
   wrapper exit of 2, 3, 4 or 10, later batches return nothing without spawning; their briefs get
   no verdict, are not logged, stay untouched and are counted as `unclassified` in the report. Each
   `triage.run` starts unlatched. A failure prints its exit status and reason, never the command.
+- **A brief's milestone membership lives only in its `milestone:` frontmatter, and a milestone can
+  name its `release`.** `milestones.members` is the one function every reader uses (progress, the
+  board strip and the project page); a `briefs = [...]` list on a `project.toml` milestone is
+  ignored, not an error. An optional `release` string per milestone, in the milestones file or
+  `project.toml`, is read into `MilestoneSpec` and shown in the CLI, the board strip and the
+  project page; absent means unset.
 - **`add_task.py --source intake --source-ref <url|path>` records where a brief came from.** An
   intake brief must carry a ref; the ref is written as `source_ref:` after `source:`, a repeat
   capture logs its own ref on the brief it merges into, and a ref that would not read back as one

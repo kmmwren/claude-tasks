@@ -56,7 +56,7 @@ blockers: [] # list of brief ids or external blockers (original form; blocked_by
 blocks: [] # OPTIONAL ids of briefs this one blocks (the inverse of their blockers:); each open one raises this brief's rank.
 blocked_by: [] # required while status is blocked: brief ids or external:<reason>; cleared on unblock.
 clears: # OPTIONAL fleet-blocker id (or [ids]) this brief clears; while its record is active or unverified, prioritise.py ranks the brief first. Needs tasks.toml `fleet_blockers_dir`.
-milestone: # OPTIONAL id from the project's milestones file; only checked if tasks.toml sets `milestones`.
+milestone: # OPTIONAL milestone id; the only place membership is stored (project.toml `briefs` lists are ignored). Checked against the milestones file if tasks.toml sets `milestones`.
 related: [] # list of brief ids
 requirements: [] # OPTIONAL requirement ids from requirements.md this brief covers, e.g. [LITE-R001].
 requires-repo: # OPTIONAL repo slug, when the brief needs a repo other than this one.
@@ -94,7 +94,8 @@ domains = []
 timezone = "UTC"
 
 # OPTIONAL. Path (relative to the directory holding this queue) of a milestones file the
-# project owns. Unset, the queue has no milestones and `milestone:` is ignored.
+# project owns. Unset, the queue has no milestones and `milestone:` is ignored. Each
+# [milestone.<id>] table may carry `title` and `release` (the release it ships in).
 # milestones = "docs/milestones.toml"
 
 # OPTIONAL. Directory of fleet-blocker records, one <id>.json each (id, summary, status

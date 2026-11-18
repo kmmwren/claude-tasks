@@ -158,9 +158,15 @@ keep working and take part in all of it.
 `milestones = "docs/milestones.toml"` in `tasks.toml` (path relative to the directory
 holding the queue) and a brief's `milestone:` is validated against that file and the board
 shows progress per milestone. The only contract with the file is that the keys of its
-`[milestone]` table are the ids, in display order, each with an optional `title`; every
-other field is the project's. A queue without the setting behaves exactly as before.
+`[milestone]` table are the ids, in display order, each with an optional `title` and an
+optional `release` (the release it ships in, shown beside the milestone; absent means unset);
+every other field is the project's. A queue without the setting behaves exactly as before.
 `python scripts/milestones.py progress --json` prints the counts.
+
+A brief's membership of a milestone is stored in one place, its own `milestone: <id>`
+frontmatter, and every count and the project page derive from it. The `[[milestones]]` tables of
+a queue's `project.toml` take the same `release` key and no longer take a `briefs` list; an old
+one is ignored.
 
 ### Sharing a queue: claiming with `assignee`
 

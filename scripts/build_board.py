@@ -167,8 +167,9 @@ def milestone_strip(root: pathlib.Path) -> str:
     cells = ""
     for m in rows:
         pct = round(100 * m.done / m.total) if m.total else 0
+        ships = f" &middot; ships in {html.escape(m.release)}" if m.release else ""
         cells += (
-            f'<div class="ms"><b>{html.escape(m.id)}</b> {html.escape(m.title)} '
+            f'<div class="ms"><b>{html.escape(m.id)}</b> {html.escape(m.title)}{ships} '
             f'<span class="pct">{m.done}/{m.total}</span>'
             f'<div class="prog"><div class="bar" style="width:{pct}%"></div></div></div>'
         )
