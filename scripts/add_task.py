@@ -60,11 +60,18 @@ class Provenance:
         return f"{self.source} from {self.ref}" if self.ref else self.source
 
 
+def one_line(value: str) -> str:
+    """A value written as one frontmatter line; any line break or control character would inject keys."""
+    if not value.isprintable():
+        raise argparse.ArgumentTypeError(f"{value!r} must be one line with no control characters")
+    return value.strip()
+
+
 def frontmatter_value(value: str) -> str:
-    """A value written as one frontmatter line must read back unchanged: no newline, no ` #` comment."""
-    if "\n" in value or "\r" in value or strip_comment(value) != value.strip():
+    """A one-line value that also reads back whole, so no ` #` the parser would take as a comment."""
+    if strip_comment(one_line(value)) != value.strip():
         raise argparse.ArgumentTypeError(
-            f"{value!r} must be one line with no ' #' (it would not read back)"
+            f"{value!r} must not contain ' #' (it would not read back)"
         )
     return value.strip()
 
@@ -160,7 +167,7 @@ def merge_into(
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Add a brief to the tasks queue")
-    ap.add_argument("--title", required=True, type=str.strip)
+    ap.add_argument("--title", required=True, type=one_line)
     ap.add_argument("--goal", default="")
     ap.add_argument("--context", default="")
     ap.add_argument(
@@ -174,11 +181,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--type", default="todo", choices=["todo", "project", "research", "decision"])
     ap.add_argument("--importance", default="3", choices=["1", "2", "3", "4"])
     ap.add_argument("--autonomy", default="needs-input", choices=["full", "needs-input", "blocked"])
-    ap.add_argument("--effort", default="")
-    ap.add_argument("--due", default="")
-    ap.add_argument("--domain", default="")
+    ap.add_argument("--effort", default="", type=one_line)
+    ap.add_argument("--due", default="", type=one_line)
+    ap.add_argument("--domain", default="", type=one_line)
     ap.add_argument("--tags", default="")
-    ap.add_argument("--parent", default="")
+    ap.add_argument("--parent", default="", type=one_line)
     ap.add_argument(
         "--requirements",
         default="",

@@ -45,7 +45,15 @@ def test_intake_without_a_ref_is_rejected(queue):
 
 
 @pytest.mark.parametrize(
-    "ref", [f"{PAGE}\nstatus: done", f"{PAGE}\rautonomy: full", "~/notes/call #3.md", "#top"]
+    "ref",
+    [
+        f"{PAGE}\nstatus: done",
+        f"{PAGE}\rautonomy: full",
+        "~/notes/call #3.md",
+        "#top",
+        f"{PAGE}\u2028x",
+        f"{PAGE}\x85x",
+    ],
 )
 def test_a_ref_that_would_not_read_back_is_rejected(queue, ref):
     with pytest.raises(SystemExit):
@@ -80,3 +88,16 @@ def test_an_unknown_source_is_still_rejected(queue):
 def test_the_queue_template_documents_source_ref(tmp_path):
     template = (init_queue.init_queue(tmp_path / "t") / "_template.md").read_text()
     assert "source_ref:" in template and "user | claude | intake" in template
+
+
+@pytest.mark.parametrize("flag", ["--title", "--domain", "--due", "--effort", "--parent"])
+def test_a_frontmatter_flag_cannot_inject_a_key(queue, flag):
+    args = ["--title", "Answer a Lite prospect question", "--root", str(queue), "--no-sync"]
+    with pytest.raises(SystemExit):
+        add_task.main([*args, flag, "x\nassignee: someone"])
+    assert not list((queue / "inbox").glob("*.md"))
+
+
+def test_a_title_may_still_name_an_issue_number(queue):
+    add_task.main(["--title", "Fix PR #12 flake", "--root", str(queue), "--no-sync"])
+    assert len(list((queue / "inbox").glob("*.md"))) == 1
