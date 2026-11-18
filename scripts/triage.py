@@ -8,7 +8,8 @@ triage.py — move the inbox towards ready/: collapse bulk filings, then promote
 
 Every inbox brief also gets a class (ready, needs-info, duplicate or drop) and a reason, in the
 report; --apply logs them, and logs a correction when the owner has since moved a brief against
-its class. Nothing is ever dropped: a brief that does not pass stays in the inbox exactly as it was.
+its class; a brief a model was asked about and left unanswered gets none and is counted as
+unclassified. Nothing is ever dropped: a brief that does not pass stays in the inbox exactly as it was.
 
 Stdlib only.
 """
@@ -26,6 +27,7 @@ from _paths import resolve_root
 from class_log import BriefClass, ClassLog, Verdict
 from fingerprint import index
 from git_sync import sync_commit
+from headless import reset_capacity
 from triage_brief import InboxBrief, load_inbox
 from triage_classify import (
     EXAMPLE_LIMIT,
@@ -55,6 +57,7 @@ class Report:
     changed_underfoot: int = 0
     duplicates: int = 0
     corrections_logged: int = 0
+    unclassified: int = 0
     classes: dict[str, int] = dataclasses.field(default_factory=dict)
     verdicts: list[dict[str, str]] = dataclasses.field(default_factory=list)
     inbox_after: int = 0
@@ -126,8 +129,9 @@ def _classify(
     found: Sequence[Promotion],
 ) -> list[Verdict]:
     promoted = {p.original.id: p.reason for p in found}
+    inbox = load_inbox(opts.root)
     verdicts = classify(
-        load_inbox(opts.root),
+        inbox,
         fixed,
         promoted,
         opts.classify,
@@ -135,6 +139,7 @@ def _classify(
         opts.batch_size,
         opts.jobs,
     )
+    report.unclassified = len(inbox) - len(verdicts)
     report.classes = dict(collections.Counter(v.cls.value for v in verdicts))
     report.verdicts = [
         {"id": v.brief_id, "class": v.cls.value, "reason": v.reason} for v in verdicts
@@ -150,6 +155,7 @@ def _record(log: ClassLog, verdicts: Sequence[Verdict], moved: Collection[str]) 
 
 
 def run(opts: Options) -> Report:
+    reset_capacity()  # a second run in this process must not inherit the last run's latch
     log = opts.log or ClassLog(opts.root)
     report = Report(_count(opts.root, "inbox"), _count(opts.root, "ready"))
     report.corrections_logged = len(reconcile(opts.root, log)) if opts.apply else 0

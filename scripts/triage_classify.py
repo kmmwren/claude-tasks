@@ -161,17 +161,20 @@ def classify(
     batch: int,
     jobs: int,
 ) -> list[Verdict]:
-    """A verdict for every brief: the fixed calls first, then ready, then what the model or the gate says."""
+    """A verdict per brief: fixed calls first, then ready, then the model's call or, with no model, the gate's.
+
+    A brief the model was asked about and left unanswered gets none, so an outage is never logged as a call.
+    """
     residue = [b for b in inbox if b.id not in fixed and b.id not in promoted]
     called = calls_for(residue, call, examples, batch, jobs) if call and residue else {}
 
-    def verdict(b: InboxBrief) -> Verdict:
+    def verdict(b: InboxBrief) -> Verdict | None:
         if b.id in promoted and b.id not in fixed:
             return Verdict(b.id, BriefClass.READY, promoted[b.id], b.title)
-        c = fixed.get(b.id) or called.get(b.id) or _unready(b)
-        return Verdict(b.id, c.cls, c.reason, b.title)
+        c = fixed.get(b.id) or called.get(b.id) or (_unready(b) if call is None else None)
+        return Verdict(b.id, c.cls, c.reason, b.title) if c else None
 
-    return [verdict(b) for b in inbox]
+    return [v for v in map(verdict, inbox) if v]
 
 
 def contradicting_class(predicted: BriefClass, folder: str) -> BriefClass | None:

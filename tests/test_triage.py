@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import subprocess
 
 import pytest
 import triage
@@ -163,3 +164,38 @@ def test_the_classifier_is_shown_earlier_corrections(tmp_path, synced):
 
     opts = dataclasses.replace(_opts(root, apply=True), classify=classify)
     assert triage.run(opts).classes == {"drop": 1} and seen == [(["bare"], ["Old one"])]
+
+
+def _refusing_model(monkeypatch):
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        raise subprocess.CalledProcessError(4, cmd, stderr="claude-any: no account free\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return calls
+
+
+def _with_model(root, apply):
+    return dataclasses.replace(
+        _opts(root, apply, predict=None), classify=triage.claude_classify("m")
+    )
+
+
+def test_briefs_a_refusing_model_left_unanswered_get_no_verdict_and_are_counted(
+    tmp_path, synced, monkeypatch
+):
+    _refusing_model(monkeypatch)
+    root = make_inbox(tmp_path, QUEUE)
+    report = triage.run(_with_model(root, apply=True))
+    assert [v.brief_id for v in _log(root).verdicts()] == ["filed"]
+    assert report.unclassified == 3 and report.classes == {"ready": 1}
+    assert {p.stem for p in (root / "inbox").glob("*.md")} >= {"thin", "bare"}
+
+
+def test_a_second_run_in_one_process_is_not_latched_by_the_first(tmp_path, synced, monkeypatch):
+    calls = _refusing_model(monkeypatch)
+    for name in ("one", "two"):
+        triage.run(_with_model(make_inbox(tmp_path / name, QUEUE), apply=False))
+    assert len(calls) == 2

@@ -2,7 +2,6 @@
 
 import subprocess
 
-import headless
 import pytest
 import triage_classify
 from class_log import BriefClass, ClassLog, Example, Verdict
@@ -68,7 +67,6 @@ def test_classify_ranks_duplicate_over_promotion_over_the_residue(tmp_path):
     assert [(v.brief_id, v.cls, v.reason) for v in verdicts] == [
         ("dup", C.DUPLICATE, "same title and sources as orig"),
         ("ready", C.READY, "ready as filed"),
-        ("thin", C.NEEDS_INFO, "missing goal, criteria, context"),
         ("bare", C.DROP, "stale idea"),
         ("held", C.NEEDS_INFO, "moved back from ready by the owner"),
     ]
@@ -83,6 +81,11 @@ def test_without_a_model_the_residue_is_needs_info_with_the_reason_from_the_brie
         (C.NEEDS_INFO, "cites no source that exists now"),
         (C.NEEDS_INFO, "missing goal, criteria, context"),
     ]
+
+
+def test_a_brief_the_model_was_asked_about_and_left_unanswered_gets_no_verdict(tmp_path):
+    unanswered = classify([brief(tmp_path, "b")], {}, {}, lambda b, e: {}, [], batch=5, jobs=1)
+    assert unanswered == []
 
 
 def test_calls_are_asked_in_batches_and_a_failed_batch_is_skipped(tmp_path):
@@ -193,7 +196,6 @@ def _refusing(status, calls):
 
 def test_once_no_account_can_run_a_call_no_later_batch_is_attempted(tmp_path, monkeypatch):
     calls = []
-    headless.reset_capacity()
     monkeypatch.setattr(subprocess, "run", _refusing(4, calls))
     briefs = [brief(tmp_path, f"b{i}") for i in range(6)]
     assert calls_for(briefs, claude_classify("m"), [], size=1, jobs=1) == {}

@@ -10,13 +10,6 @@ from headless import ask_json, command, headless_claude
 SCHEMA = {"type": "object"}
 
 
-@pytest.fixture(autouse=True)
-def _fresh_run():
-    headless.reset_capacity()
-    yield
-    headless.reset_capacity()
-
-
 def _exiting(status, stderr):
     calls = []
 
