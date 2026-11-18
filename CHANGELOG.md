@@ -22,16 +22,18 @@
   background `Agent` and `run_in_background` work with no completion yet, writes each one's brief
   (what it was asked, its output file, how to collect or re-run it) into the item it serves, and
   records them in the ledger item's `metadata.agents`; `resume_prompt.py` prints them under the item.
-- **Triage acts on its verdicts.** `triage.py promote --apply` now moves a duplicate or a model-called
-  drop to `done/` (`closed_reason`, `duplicate_of`, `closed_note`), closes a brief in `inbox/` or
-  `ready/` whose own evidence says it is finished (`closed_reason: evidence`, `closed_evidence`), and
-  parks a needs-info inbox brief idle past `[triage] stale_days` (default 21) with
-  `parked_reason: stale needs-info`. A PR closes a brief only when every cited PR is merged or closed,
-  the title or goal names it as the deliverable, and nothing looks past the merge; all success criteria
-  ticked also counts. Nothing is deleted, a brief carrying a closing reason or an `assignee` is never
-  closed again, and each move appends a line to `closed.jsonl`. A run makes at most `[triage]
-  max_moves` (default 200), evidence first, and the report says how many it held back. `--dry-run`
-  prints the plan grouped by reason with counts.
+- **Triage closes on evidence and alerts on judgement.** `triage.py promote --apply` closes a brief in
+  `inbox/` or `ready/` whose own evidence says it is finished (`closed_reason: evidence`,
+  `closed_evidence`), and a fingerprinted duplicate (`closed_reason: duplicate`, `duplicate_of`) once its
+  body is appended to the survivor under `## Merged from <id>`. A PR closes a brief only when every cited
+  PR is merged or closed, the title or goal names it as the deliverable, and nothing looks past the merge;
+  all success criteria ticked also counts. A needs-info brief idle past `[triage] stale_days` (default
+  21) and a model-called drop are never moved: one aggregated alert per run goes to the session-alerts
+  channel (stderr warning when `~/.claude/scripts/session_alerts.py` is absent), and
+  `.triage-alerts.json` in the queue stops the same brief being raised again for `stale_days`. Every
+  close is a line in `closed.jsonl`, and `triage.py reopen <id>` puts the brief back; a brief carrying a
+  closing reason or an `assignee` is never closed again. A run closes at most `[triage] max_moves`
+  (default 200), evidence first. `--dry-run` prints the planned closes and alerts.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by

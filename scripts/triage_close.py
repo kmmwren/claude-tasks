@@ -187,7 +187,7 @@ def _body(text: str) -> str:
 
 def _demoted(body: str) -> str:
     """Headings pushed below the `## Merged from` heading, so they never read as the survivor's own."""
-    return re.sub(r"(?m)^(#{2,5})(?=\s)", r"\1#", re.sub(r"(?m)^#(?=\s)", "###", body))
+    return re.sub(r"(?m)^#(?=\s)", "###", re.sub(r"(?m)^(#{2,5})(?=\s)", r"\1#", body))
 
 
 def _with_merged(survivor: str, source_id: str, source: str) -> str:

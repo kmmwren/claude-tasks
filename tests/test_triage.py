@@ -218,7 +218,7 @@ def test_apply_closes_finished_briefs_from_inbox_and_ready_and_logs_each(tmp_pat
         ("done-ready", "ready", "done"),
     ]
     assert committed[0][1:] == (["done-inbox", "done-ready"], ["closed.jsonl"])
-    assert committed[0][0].endswith("close 2")
+    assert committed[0][0].endswith("close 2, alert 0")
 
 
 def test_a_brief_closed_on_evidence_is_neither_promoted_nor_classified(tmp_path, committed):
@@ -255,7 +255,7 @@ def _judged_queue(tmp_path):
         {
             "junk": inbox_text("junk"),
             "stale": inbox_text("stale", extra="created: 2026-10-01\n"),
-            "fresh": inbox_text("fresh", extra="created: 2026-11-10\n"),
+            "fresh": inbox_text("fresh", extra="created: 2026-11-20\n"),
         },
     )
     calls = {

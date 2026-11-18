@@ -215,7 +215,7 @@ def test_a_duplicates_body_is_appended_to_the_survivor_before_it_closes(tmp_path
     survivor = (root / "inbox" / "keep.md").read_text()
     assert "## Merged from a\n" in survivor
     assert "Unique goal of the twin." in survivor and "Twin context." in survivor
-    assert "### Goal" in survivor and survivor.count("## Goal") == 1
+    assert "### Goal" in survivor and survivor.count("\n## Goal\n") == 1
     assert survivor.index("## Merged from a") < survivor.index("## Execution log")
     assert survivor.rstrip().endswith("2026-11-11: merged a: Title of a")
     assert "captured." not in survivor.split("## Merged from a")[1].split("## Execution log")[0]
@@ -303,9 +303,12 @@ def test_headings_in_a_merged_body_sit_below_the_merge_heading():
     )
 
 
+ENRICHED = dict(goal="Ship it.", context="Per o/r#2.", criteria=("It ships.",), ticked=True)
+
+
 def _closed_on_evidence(tmp_path):
     root = make_inbox(tmp_path, {})
-    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready", **{"ticked": True}))
+    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready", **ENRICHED))
     apply_moves([Move("a", "T", "ready", Reason.EVIDENCE, "ticked")], root, "2026-11-11")
     return root
 
