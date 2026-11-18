@@ -3,7 +3,7 @@
 import add_task
 import init_queue
 import pytest
-from deps import fm
+from deps import fm, parse_list
 
 PAGE = "https://panaseer.atlassian.net/wiki/spaces/SMH/pages/123/A-call"
 
@@ -138,3 +138,8 @@ def test_comma_separated_blocks_file_as_separate_ids(queue):
 def test_a_normalised_list_item_is_reported_once(queue, capsys):
     capture(queue, "--tags", "lite, x #y")
     assert capsys.readouterr().err.count("normalised 'x #y'") == 1
+
+
+def test_a_slack_thread_key_reads_back_as_a_tag(queue):
+    key = "slack:C0123ABCD/1773265865.773179"
+    assert key in parse_list(fm(filed(queue, "--tags", f"{key},other"))["tags"])

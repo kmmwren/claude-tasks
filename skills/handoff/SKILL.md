@@ -61,7 +61,8 @@ it is what she is thinking about it:
 - **Split:** pipe her whole message to `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slack_links.py"`.
   It returns `direction` (her text before the first link, applied to every item through
   Directed handoff below) and one `links` entry per permalink with `channel`, `message_ts`,
-  `thread_ts`, `note` (her text after that link, up to the next one) and `parked`. Exit 2
+  `thread_ts`, `key` (`slack:<channel>/<thread_ts>`, the thread's one identity), `note` (her
+  text after that link, up to the next one) and `parked`. Exit 2
   means no permalink was found: say so and stop.
 - **Parked option:** `parked` is true when the direction or that link's own note mentions
   parking, so "park these <links>" parks the batch and "<link> as a task, parked" parks only
@@ -76,8 +77,10 @@ it is what she is thinking about it:
 - **Name:** the channel name is the `<session name>` for `router.py which` in Step 0, with
   her note and the message text as `--text`.
 - **No ledger, no judgement layer:** Step 1 files the links without closing anything and
-  Step 2 is skipped. Step 3 greps the queue for the permalink, so a re-pasted link sharpens
-  its existing brief.
+  Step 2 is skipped. Step 3 greps the queue for the `key`, so a re-paste or an intake-watched
+  thread sharpens its existing brief.
+- **Filing:** each brief is filed with `--tags <key>` and `--source-ref <permalink>`; never
+  build the key by hand.
 - **Provenance:** each brief's `--context` opens with
   `From Slack <url> (#<channel>, <message date>); re-check the thread before acting.`, then
   `Her note: <note verbatim>`, then a summary of the thread.
@@ -189,6 +192,9 @@ Before each capture, check for an existing brief and sharpen it instead of dupli
 ```bash
 grep -rl "<keyword>" "$CLAUDE_TASKS_DIR"/{inbox,ready,in-progress,done} 2>/dev/null
 ```
+
+For a Slack link grep for its `key` instead of a keyword: a brief that carries it is the same
+thread however the link was written, so sharpen that brief and file nothing.
 
 Sharpen the file the grep found, in the folder it is in now. Never append to a remembered
 `inbox/<id>.md` path: if the brief moved meanwhile, the append re-creates it. `git_sync.py`

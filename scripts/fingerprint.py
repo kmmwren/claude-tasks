@@ -16,6 +16,7 @@ import re
 
 from deps import fm
 from readiness import EXECUTION_LOG, raw_title
+from slack_links import permalink_key
 from triage_brief import FRONTMATTER
 from triage_sources import GH_ISSUE, cited_sources
 
@@ -27,9 +28,11 @@ def normal_title(title: str) -> str:
 
 
 def canonical_source(source: str) -> str:
-    """A PR or issue as `owner/repo#N`, any other reference without a trailing slash."""
+    """A PR or issue as `owner/repo#N`, a Slack permalink as its thread key, any other reference without a trailing slash."""
     if m := GH_ISSUE.fullmatch(source):
         return f"{m[1]}#{m[2]}".lower()
+    if key := permalink_key(source):
+        return key
     return source.rstrip("/")
 
 

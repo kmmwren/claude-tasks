@@ -76,3 +76,18 @@ def test_park_must_be_a_whole_word():
 def test_main_prints_parked(capsys):
     slack_links.main([f"parked {TOP}"])
     assert json.loads(capsys.readouterr().out)["links"][0]["parked"] is True
+
+
+def test_a_top_level_link_and_its_thread_link_share_one_key():
+    plain = "https://panaseer.slack.com/archives/C0123ABCD/p1773265865773179"
+    threaded = f"{plain}?thread_ts=1773265865.773179&cid=C0123ABCD"
+    keys = {slack_links.parse(u).links[0].key for u in (plain, threaded)}
+    assert keys == {"slack:C0123ABCD/1773265865.773179"}
+
+
+def test_a_reply_is_keyed_by_its_thread_root():
+    assert slack_links.parse(REPLY).links[0].key == "slack:C0999ZZZZ/1773299999.000001"
+
+
+def test_permalink_key_is_none_for_other_urls():
+    assert slack_links.permalink_key("https://example.test/archives/C1/p1") is None

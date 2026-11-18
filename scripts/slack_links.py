@@ -5,7 +5,9 @@ slack_links.py: split a pasted block of Slack permalinks and notes into handoff 
 Each permalink starts an item; the text after it, up to the next permalink, is that item's
 note. Text before the first permalink is a direction shared by the whole batch. A link is
 flagged parked when the direction or its own note mentions parking.
-Prints JSON: {"direction": str, "links": [{url, channel, message_ts, thread_ts, note, parked}]}.
+Each link carries `key`, the one canonical thread identity (`slack:<channel>/<thread_ts>`) that
+dedupes a pasted link against an intake-watched thread. Nothing else builds that key.
+Prints JSON: {"direction": str, "links": [{url, channel, message_ts, thread_ts, key, note, parked}]}.
 """
 
 import argparse
@@ -25,6 +27,7 @@ class SlackLink:
     channel: str
     message_ts: str
     thread_ts: str
+    key: str
     note: str
     parked: bool
 
@@ -40,16 +43,41 @@ def to_ts(segment: str) -> str:
     return f"{digits[:-6]}.{digits[-6:]}"
 
 
+def thread_key(channel: str, thread_ts: str) -> str:
+    return f"slack:{channel}/{thread_ts}"
+
+
 def asks_to_park(direction: str, note: str) -> bool:
     return PARK.search(f"{direction} {note}") is not None
 
 
-def parse_link(url: str, note: str, direction: str) -> SlackLink:
+def locate(url: str) -> tuple[str, str, str]:
+    """The (channel, message_ts, thread_ts) a permalink points at; a top-level message roots its own thread."""
     parsed = urlparse(url)
     channel, segment = parsed.path.removeprefix("/archives/").split("/")[:2]
     message_ts = to_ts(segment)
-    thread_ts = parse_qs(parsed.query).get("thread_ts", [message_ts])[0]
-    return SlackLink(url, channel, message_ts, thread_ts, tidy(note), asks_to_park(direction, note))
+    return channel, message_ts, parse_qs(parsed.query).get("thread_ts", [message_ts])[0]
+
+
+def permalink_key(url: str) -> str | None:
+    """The thread key of a Slack permalink, or None when `url` is not one."""
+    if not PERMALINK.fullmatch(url):
+        return None
+    channel, _, thread_ts = locate(url)
+    return thread_key(channel, thread_ts)
+
+
+def parse_link(url: str, note: str, direction: str) -> SlackLink:
+    channel, message_ts, thread_ts = locate(url)
+    return SlackLink(
+        url,
+        channel,
+        message_ts,
+        thread_ts,
+        thread_key(channel, thread_ts),
+        tidy(note),
+        asks_to_park(direction, note),
+    )
 
 
 def tidy(text: str) -> str:
