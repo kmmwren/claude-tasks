@@ -1,7 +1,6 @@
 """Tests for triage_classify.py: the class each inbox brief gets, and learning from being overruled."""
 
 import subprocess
-import threading
 
 import headless
 import pytest
@@ -194,7 +193,7 @@ def _refusing(status, calls):
 
 def test_once_no_account_can_run_a_call_no_later_batch_is_attempted(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(headless, "_spent", threading.Event())
+    headless.reset_capacity()
     monkeypatch.setattr(subprocess, "run", _refusing(4, calls))
     briefs = [brief(tmp_path, f"b{i}") for i in range(6)]
     assert calls_for(briefs, claude_classify("m"), [], size=1, jobs=1) == {}
@@ -203,10 +202,9 @@ def test_once_no_account_can_run_a_call_no_later_batch_is_attempted(tmp_path, mo
 
 def test_a_spent_run_makes_no_call_from_any_worker_thread(tmp_path, monkeypatch):
     calls = []
-    spent = threading.Event()
-    spent.set()
-    monkeypatch.setattr(headless, "_spent", spent)
     monkeypatch.setattr(subprocess, "run", _refusing(4, calls))
     briefs = [brief(tmp_path, f"b{i}") for i in range(6)]
+    calls_for(briefs, claude_classify("m"), [], size=1, jobs=1)
+    calls.clear()
     assert calls_for(briefs, claude_classify("m"), [], size=1, jobs=3) == {}
     assert calls == []

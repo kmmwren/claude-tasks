@@ -3,7 +3,8 @@
 headless.py — one schema-validated `claude -p` call that treats its prompt purely as data.
 
 Every tool, MCP server and settings file is off and no session is saved, so text inside the
-prompt can ask for anything and nothing can act on it. A failed or malformed call returns None.
+prompt can ask for anything and nothing can act on it. A failed or malformed call returns None,
+and once no account can run a call, every later call in the run returns None without spawning.
 
 Stdlib only.
 """
@@ -21,7 +22,12 @@ HEADLESS_WRAPPER = "~/.claude-switch/claude-any.sh"
 # Wrapper exits meaning no account will run any call (no quota, route refused, no usable login,
 # kill switch), so every later call in this run would fail the same way.
 NO_CAPACITY = frozenset({2, 3, 4, 10})
-_spent = threading.Event()
+_no_capacity = threading.Event()
+
+
+def reset_capacity() -> None:
+    """Start a fresh run: calls spawn again until the next no-capacity exit."""
+    _no_capacity.clear()
 
 
 def headless_claude() -> list[str]:
@@ -60,7 +66,7 @@ def ask_json(
     prompt: str, schema: dict[str, Any], model: str, reason: str, timeout: int = 600
 ) -> Any:
     """The structured output of one call, or None when it fails, answers off-schema or capacity is spent."""
-    if _spent.is_set():
+    if _no_capacity.is_set():
         return None
     try:
         with tempfile.TemporaryDirectory() as scratch:
@@ -77,6 +83,9 @@ def ask_json(
         return json.loads(out).get("structured_output")
     except subprocess.CalledProcessError as e:
         return _refused(e)
+    except subprocess.TimeoutExpired as e:
+        print(f"inbox-triage: headless call failed: timed out after {e.timeout}s", file=sys.stderr)
+        return None
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as e:
         print(f"inbox-triage: headless call failed: {type(e).__name__}: {e}"[:300], file=sys.stderr)
         return None
@@ -87,6 +96,6 @@ def _refused(e: subprocess.CalledProcessError) -> None:
     lines = str(e.stderr or "").strip().splitlines()
     why = f"exit {e.returncode}: {lines[-1] if lines else 'no stderr'}"[:300]
     if e.returncode in NO_CAPACITY:
-        _spent.set()
+        _no_capacity.set()
         why += "; skipping this run's remaining calls"
     print(f"inbox-triage: headless call failed: {why}", file=sys.stderr)

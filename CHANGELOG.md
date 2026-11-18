@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Triage stops calling `claude` for the rest of a run once no account has capacity.** After a
+  wrapper exit of 2, 3, 4 or 10, later batches return nothing without spawning and their briefs
+  stay untouched; a failure prints its exit status and reason, never the command.
 - **`add_task.py --source intake --source-ref <url|path>` records where a brief came from.** An
   intake brief must carry a ref; the ref is written as `source_ref:` after `source:`, a repeat
   capture logs its own ref on the brief it merges into, and a ref that would not read back as one
