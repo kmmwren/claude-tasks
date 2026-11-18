@@ -127,3 +127,14 @@ def test_a_title_with_page_text_whitespace_and_joiners_is_filed_intact(queue):
 
 def test_a_title_naming_an_issue_number_reads_back_whole(queue):
     assert capture(queue, "--title", "Fix PR #12 flake")["title"] == "Fix PR#12 flake"
+
+
+def test_comma_separated_blocks_file_as_separate_ids(queue):
+    assert (
+        capture(queue, "--blocks", "one, two", "--blocks", "three")["blocks"] == "[one, two, three]"
+    )
+
+
+def test_a_normalised_list_item_is_reported_once(queue, capsys):
+    capture(queue, "--tags", "lite, x #y")
+    assert capsys.readouterr().err.count("normalised 'x #y'") == 1

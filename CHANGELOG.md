@@ -11,8 +11,9 @@
 - **Every frontmatter flag is written as a value that reads back whole.** `--title`, `--domain`,
   `--due`, `--effort` and `--parent` fold any whitespace run, line breaks included, into one space
   and join a ` #` to its word (`Fix PR #12` is filed as `Fix PR#12` instead of reading back as
-  `Fix PR`); each `--tags`, `--requirements` and `--blocks` item also has `[`, `]` and `,` replaced,
-  so no flag can inject a key or close a list early. A changed value is reported on stderr.
+  `Fix PR`); each `--tags`, `--requirements` and `--blocks` value splits on `,` into items with
+  `[` and `]` replaced, so no flag can inject a key or close a list early. A changed value is
+  reported once on stderr.
 - **`resume_prompt.py` prints the successor prompt for a long-running session.** At the end of a
   session handoff it rebuilds the paste-ready resume prompt from the live ledger (open items, in
   progress first, each with its `metadata.brief` and blocker) and the long-running registry's

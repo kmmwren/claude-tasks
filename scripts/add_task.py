@@ -90,15 +90,19 @@ def slug(s: str, maxwords: int = 6) -> str:
     return "-".join(words[:maxwords]) or "task"
 
 
+def list_items(values: list[str]) -> list[str]:
+    """Comma-separated flag values as flow-list items that cannot close the list or split into further keys."""
+    parts = (part.strip() for value in values for part in value.split(","))
+    return [item for part in parts if (item := scalar(part.replace("[", "-").replace("]", "-")))]
+
+
 def flow_list(items: list[str]) -> str:
-    """A YAML flow list whose items cannot close it early or split into further keys."""
-    clean = [re.sub(r"[\[\],]", "-", scalar(item)) for item in items]
-    return "[" + ", ".join(item for item in clean if item) + "]"
+    return "[" + ", ".join(items) + "]"
 
 
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
-    tags = flow_list(a.tags.split(","))
-    reqs = flow_list(a.requirements.split(","))
+    tags = flow_list(a.tags)
+    reqs = flow_list(a.requirements)
     crit = (
         "\n".join(f"- [ ] {c}" for c in a.criteria)
         if a.criteria
@@ -242,7 +246,11 @@ def main(argv: list[str] | None = None) -> None:
 
     status = a.status or ("ready" if a.ready else "inbox")
     a.criteria = [c.strip() for c in a.criteria if c.strip()]
-    a.blocks = [b.strip() for b in a.blocks if b.strip()]
+    a.tags, a.requirements, a.blocks = (
+        list_items([a.tags]),
+        list_items([a.requirements]),
+        list_items(a.blocks),
+    )
     context = a.context.strip()
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
