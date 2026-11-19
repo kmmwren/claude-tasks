@@ -85,16 +85,14 @@ _STAGE_OF_STATUS = {
 
 
 class Format(enum.Enum):
-    JSON = ("application/json", ".json")
-    MARKDOWN = ("text/markdown; charset=utf-8", ".md")
-    HTML = ("text/html; charset=utf-8", "")
+    JSON = ("application/json", ".json", True)
+    MARKDOWN = ("text/markdown; charset=utf-8", ".md", False)
+    HTML = ("text/html; charset=utf-8", "", True)
 
-    def __init__(self, content_type: str, suffix: str) -> None:
+    def __init__(self, content_type: str, suffix: str, served: bool) -> None:
         self.content_type = content_type
         self.suffix = suffix
-
-
-SERVED_BY_SUFFIX = {f.suffix: f for f in (Format.HTML, Format.JSON)}
+        self.served = served  # Markdown is a file for GitHub to render, not a page to browse
 
 
 # --- text a project owner typed -------------------------------------------------------------
@@ -1003,36 +1001,96 @@ def write(out: pathlib.Path, r: Rollup) -> list[pathlib.Path]:
         raise RollupError(f"cannot write {out}: {e.strerror or type(e).__name__}") from e
 
 
+@dataclasses.dataclass(frozen=True)
+class Served:
+    """One page the server has: a level in a format, found by the file name `write` gives it."""
+
+    level: Level
+    fmt: Format
+
+    @property
+    def target(self) -> str:
+        return _linked(self.level, self.fmt)
+
+    def answer(self, r: Rollup) -> tuple[str, str]:
+        return self.fmt.content_type, self.level.render(self.fmt, r)
+
+
+PAGES = {
+    page.target: page
+    for page in (Served(lv, fmt) for lv in LEVELS.values() for fmt in Format if fmt.served)
+}
+
+
 def route(path: str, r: Rollup) -> tuple[str, str] | None:
     """(content type, body) for a localhost path, or None for a path the server does not have."""
     target = path.strip("/")
     if not target:
         return Format.HTML.content_type, index_html(r)
-    name, dot, ext = target.partition(".")
-    level, fmt = LEVELS.get(name), SERVED_BY_SUFFIX.get(dot + ext)
-    if level is None or fmt is None:
-        return None
-    return fmt.content_type, level.render(fmt, r)
+    served = PAGES.get(target)
+    return served.answer(r) if served else None
 
 
 # --- commands ------------------------------------------------------------------------------
 
+Now = Callable[[], dt.datetime]
+
+
+class SourceOptions:
+    """The `--source` and `--config` flags and how they resolve to sources."""
+
+    @staticmethod
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--source", action="append", default=[], metavar="LABEL=PATH")
+        parser.add_argument(
+            "--config", help=f"sources file (default ${CONFIG_ENV} or {DEFAULT_CONFIG})"
+        )
+
+    @staticmethod
+    def load(args: argparse.Namespace, env: Mapping[str, str]) -> list[Source]:
+        if args.source and args.config:
+            warn("--config is ignored because --source was given")
+        return load_sources(args.source, lambda: config_file(args.config, env))
+
 
 @dataclasses.dataclass(frozen=True)
-class Run(ABC):
+class Command(ABC):
+    """A subcommand: it declares its own flags, builds itself from them, and runs."""
+
+    name: ClassVar[str]
+    summary: ClassVar[str]
     sources: list[Source]
-    now: Callable[[], dt.datetime]
+    now: Now
+
+    @classmethod
+    @abstractmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None: ...
+
+    @classmethod
+    @abstractmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Command": ...
 
     def rollup(self) -> Rollup:
         return build(self.sources, self.now())
 
     @abstractmethod
-    def execute(self) -> None: ...
+    def run(self) -> None: ...
 
 
 @dataclasses.dataclass(frozen=True)
-class ListSources(Run):
-    def execute(self) -> None:
+class ListSources(Command):
+    name = "sources"
+    summary = "list the projects each source finds"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        SourceOptions.add_arguments(parser)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "ListSources":
+        return cls(SourceOptions.load(args, env), now)
+
+    def run(self) -> None:
         for s in self.sources:
             found = [q.parent.name for q in s.projects()]
             print(f"{s.label}: {s.path}\n  " + (", ".join(found) or "no projects found"))
@@ -1041,27 +1099,83 @@ class ListSources(Run):
 
 
 @dataclasses.dataclass(frozen=True)
-class Show(Run):
-    level: Level
-    fmt: Format
+class Show(Command):
+    """Print the roll-up in `fmt`; each format is its own subcommand."""
 
-    def execute(self) -> None:
+    fmt: ClassVar[Format]
+    level: Level
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        SourceOptions.add_arguments(parser)
+        parser.add_argument("--level", choices=list(LEVELS), default="pm")
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Show":
+        return cls(SourceOptions.load(args, env), now, LEVELS[args.level])
+
+    def run(self) -> None:
         print(self.level.render(self.fmt, self.rollup()))
 
 
+class ShowJson(Show):
+    name = "json"
+    summary = "print the roll-up as json"
+    fmt = Format.JSON
+
+
+class ShowMarkdown(Show):
+    name = "markdown"
+    summary = "print the roll-up as markdown"
+    fmt = Format.MARKDOWN
+
+
+class ShowHtml(Show):
+    name = "html"
+    summary = "print the roll-up as html"
+    fmt = Format.HTML
+
+
 @dataclasses.dataclass(frozen=True)
-class Write(Run):
+class Write(Command):
+    name = "write"
+    summary = "write the roll-up files into OUT_DIR"
     out: pathlib.Path
 
-    def execute(self) -> None:
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        SourceOptions.add_arguments(parser)
+        parser.add_argument(
+            "--out",
+            required=True,
+            metavar="OUT_DIR",
+            help="a new or empty folder, or an earlier roll-up",
+        )
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Write":
+        return cls(SourceOptions.load(args, env), now, expand(args.out))
+
+    def run(self) -> None:
         written = write(self.out, self.rollup())
         print("\n".join(map(str, written)) if written else f"{self.out} is up to date")
 
 
 @dataclasses.dataclass(frozen=True)
-class Serve(Run):
+class Serve(Command):
+    name = "serve"
+    summary = "serve the roll-ups on localhost"
     port: int
     behind: BehindCount = dataclasses.field(default_factory=BehindCounts)
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        SourceOptions.add_arguments(parser)
+        parser.add_argument("--port", type=int, default=8788)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Serve":
+        return cls(SourceOptions.load(args, env), now, args.port)
 
     def rollup(self) -> Rollup:
         return build(self.sources, self.now(), self.behind)
@@ -1092,9 +1206,7 @@ class Serve(Run):
 
         return http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
 
-    def execute(
-        self, block: Callable[[http.server.ThreadingHTTPServer], None] | None = None
-    ) -> None:
+    def run(self, block: Callable[[http.server.ThreadingHTTPServer], None] | None = None) -> None:
         try:
             srv = self.server()
         except (OSError, OverflowError) as e:  # in use, or outside 0-65535
@@ -1116,69 +1228,24 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
-MakeRun = Callable[[argparse.Namespace, list[Source], Callable[[], dt.datetime]], Run]
+COMMANDS: tuple[type[Command], ...] = (ShowJson, ShowMarkdown, ShowHtml, ListSources, Write, Serve)
 
 
-def _command(
-    commands: "argparse._SubParsersAction[argparse.ArgumentParser]",
-    name: str,
-    summary: str,
-    make: MakeRun,
-) -> argparse.ArgumentParser:
-    sub = commands.add_parser(name, help=summary, description=summary)
-    sub.add_argument("--source", action="append", default=[], metavar="LABEL=PATH")
-    sub.add_argument("--config", help=f"sources file (default ${CONFIG_ENV} or {DEFAULT_CONFIG})")
-    sub.set_defaults(make_run=make)
-    return sub
-
-
-def parse(argv: list[str], env: Mapping[str, str], now: Callable[[], dt.datetime] = _now) -> Run:
+def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
     ap = argparse.ArgumentParser(description="Project roll-ups for a product manager or a CTO.")
-    commands = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
-    for fmt in (Format.JSON, Format.MARKDOWN, Format.HTML):
-        word = fmt.name.lower()
-        shown = _command(commands, word, f"print the roll-up as {word}", _show)
-        shown.add_argument("--level", choices=list(LEVELS), default="pm")
-        shown.set_defaults(fmt=fmt)
-    _command(commands, "sources", "list the projects each source finds", _list_sources)
-    _command(commands, "write", "write the roll-up files into OUT_DIR", _write).add_argument(
-        "--out",
-        required=True,
-        metavar="OUT_DIR",
-        help="a new or empty folder, or an earlier roll-up",
-    )
-    _command(commands, "serve", "serve the roll-ups on localhost", _serve).add_argument(
-        "--port", type=int, default=8788
-    )
-    a = ap.parse_args(argv)
-    if a.source and a.config:
-        warn("--config is ignored because --source was given")
-    sources = load_sources(a.source, lambda: config_file(a.config, env))
-    return a.make_run(a, sources, now)  # type: ignore[no-any-return]
-
-
-def _show(a: argparse.Namespace, sources: list[Source], now: Callable[[], dt.datetime]) -> Run:
-    return Show(sources, now, LEVELS[a.level], a.fmt)
-
-
-def _list_sources(
-    a: argparse.Namespace, sources: list[Source], now: Callable[[], dt.datetime]
-) -> Run:
-    return ListSources(sources, now)
-
-
-def _write(a: argparse.Namespace, sources: list[Source], now: Callable[[], dt.datetime]) -> Run:
-    return Write(sources, now, expand(a.out))
-
-
-def _serve(a: argparse.Namespace, sources: list[Source], now: Callable[[], dt.datetime]) -> Run:
-    return Serve(sources, now, a.port)
+    subparsers = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    for command in COMMANDS:
+        sub = subparsers.add_parser(command.name, help=command.summary, description=command.summary)
+        command.add_arguments(sub)
+    args = ap.parse_args(argv)
+    chosen = next(c for c in COMMANDS if c.name == args.command)
+    return chosen.from_args(args, env, now)
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        parse(args, os.environ if env is None else env).execute()
+        parse(args, os.environ if env is None else env).run()
     except RollupError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

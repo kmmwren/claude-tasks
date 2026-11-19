@@ -105,7 +105,7 @@ def get(address, path, host=None):
 def listening(tmp_path):
     make_queue(tmp_path / "demo")
     holder = {}
-    rollup.Serve([rollup.Source("W", tmp_path)], lambda: NOW, 0).execute(
+    rollup.Serve([rollup.Source("W", tmp_path)], lambda: NOW, 0).run(
         block=lambda srv: holder.setdefault("srv", srv)
     )
     srv = holder["srv"]

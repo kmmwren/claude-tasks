@@ -526,14 +526,14 @@ def test_routes(work, path, ctype, needle):
     assert got is not None and got[0].startswith(ctype) and needle in got[1]
 
 
-@pytest.mark.parametrize("path", ["/nope", "/pm.txt"])
+@pytest.mark.parametrize("path", ["/nope", "/pm.txt", "/pm.md", "/pm.json.x", "/pm.", "/.json"])
 def test_unknown_routes(work, path):
     assert rollup.route(path, built(work)) is None
 
 
 def test_server_answers_on_localhost(work, capsys):
     holder = {}
-    rollup.Serve([rollup.Source("Work", work)], lambda: NOW, 0).execute(
+    rollup.Serve([rollup.Source("Work", work)], lambda: NOW, 0).run(
         block=lambda srv: holder.setdefault("srv", srv)
     )
     srv = holder["srv"]
@@ -590,6 +590,40 @@ def test_only_write_takes_an_output_option(argv, capsys):
     with pytest.raises(SystemExit) as exit_:
         rollup.parse(argv, {})
     assert exit_.value.code == 2 and "usage:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv,command",
+    [
+        (["json", "--level", "cto"], rollup.ShowJson),
+        (["markdown"], rollup.ShowMarkdown),
+        (["html"], rollup.ShowHtml),
+        (["sources"], rollup.ListSources),
+        (["write", "--out", "o"], rollup.Write),
+        (["serve", "--port", "0"], rollup.Serve),
+    ],
+)
+def test_each_subcommand_parses_to_its_own_command(argv, command, work):
+    assert type(rollup.parse([*argv, "--source", f"W={work}"], {})) is command
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["sources", "--level", "cto"],
+        ["write", "--out", "o", "--port", "1"],
+        ["json", "--port", "1"],
+    ],
+)
+def test_a_flag_belongs_only_to_the_commands_that_use_it(argv):
+    with pytest.raises(SystemExit) as exit_:
+        rollup.parse([*argv, "--source", "W=/w"], {})
+    assert exit_.value.code == 2
+
+
+def test_command_names_are_unique():
+    names = [c.name for c in rollup.COMMANDS]
+    assert len(names) == len(set(names))
 
 
 def test_cli_reads_config_from_the_environment(work, tmp_path, capsys, monkeypatch):
