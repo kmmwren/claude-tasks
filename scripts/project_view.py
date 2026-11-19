@@ -145,10 +145,19 @@ def _listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
     usable = []
     for number, m in enumerate(raw, 1):
         if _has_text_id(m):
+            _warn_if_listing_briefs(where, m)
             usable.append(m)
         else:
             warn(f"{where} row {number} needs a text id; that row is left out")
     return usable
+
+
+def _warn_if_listing_briefs(where: str, row: dict[str, Any]) -> None:
+    # Membership comes only from each brief's frontmatter, so a listed row would sit at 0% unseen.
+    if row.get("briefs"):
+        warn(
+            f"{where} '{row['id']}' lists briefs, which are ignored; give each brief `milestone: {row['id']}`"
+        )
 
 
 def _has_text_id(row: Any) -> bool:
@@ -754,7 +763,9 @@ def _since_line(m: dict[str, Any]) -> str:
         line = re.sub(r"^(\d+) acceptance criteria no longer met.*", r"\1 checks reopened", line)
         line = re.sub(
             r"Health moved from (\w+) to (\w+)",
-            lambda g: f"Health moved from {HEALTH_WORD.get(g[1], g[1])} to {HEALTH_WORD.get(g[2], g[2])}",
+            lambda g: (
+                f"Health moved from {HEALTH_WORD.get(g[1], g[1])} to {HEALTH_WORD.get(g[2], g[2])}"
+            ),
             line,
         )
         items.append(line)

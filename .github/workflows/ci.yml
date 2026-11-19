@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install dev dependencies
-        run: pip install pytest pytest-cov ruff mypy pyyaml
+        run: pip install pytest pytest-cov ruff==0.17.6 mypy pyyaml
       - name: ruff lint
         run: ruff check scripts/ tests/
       - name: ruff format

@@ -69,6 +69,20 @@ def test_retagging_a_brief_moves_it_to_the_milestone_it_now_names(tmp_path):
     assert sorted(m2["briefs"]) == ["b1", "b2"] and m2["total"] == 3
 
 
+def test_a_row_listing_briefs_warns_that_the_list_is_ignored_and_stays_unmapped(tmp_path, capsys):
+    q = make_queue(tmp_path)
+    toml = q / "project.toml"
+    toml.write_text(toml.read_text().replace('id = "m1"\n', 'id = "m1"\nbriefs = ["b2"]\n', 1))
+    retag(q, "done", "b1", "m2")
+    m1, _ = model(q)["milestones"]
+    assert (m1["briefs"], m1["status"]) == ([], "unmapped")
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        f"warning: {q / 'project.toml'}: milestones 'm1' lists briefs, which are ignored;"
+        " give each brief `milestone: m1`"
+    ]
+
+
 def test_a_malformed_tasks_file_warns_once_and_keeps_the_listed_milestones(tmp_path, capsys):
     q = make_queue(tmp_path)
     (q / "tasks.toml").write_text("not = [valid")

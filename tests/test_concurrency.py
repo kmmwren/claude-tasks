@@ -63,7 +63,7 @@ def run_add(repo, title, *extra):
 def queue(tmp_path):
     """A throwaway clone wired like ~/tasks: task dirs, scripts/, and a bare remote."""
     remote, clone = tmp_path / "remote", tmp_path / "clone"
-    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
     subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
     git(clone, "config", "user.email", "t@t.t")
     git(clone, "config", "user.name", "t")
