@@ -26,8 +26,8 @@ def test_brief_states_and_rollups(tmp_path):
 
 
 def test_rollout_cells_cover_every_evidence_kind(tmp_path):
-    merged = pv.PrState("Panaseer/demo#1", "MERGED", "green", NOW)
-    open_pr = pv.PrState("Panaseer/demo#2", "OPEN", "green", NOW)
+    merged = pv.PrState("example-org/demo#1", "MERGED", "green", NOW)
+    open_pr = pv.PrState("example-org/demo#2", "OPEN", "green", NOW)
     cells = {
         t["id"]: t["cells"]
         for t in build(tmp_path, prs={merged.key: merged, open_pr.key: open_pr})["rollout"][
@@ -76,7 +76,7 @@ def test_requirements_register_states(tmp_path):
 
 
 def test_floor_inside_owner_colour_is_noted_not_overriding(tmp_path):
-    pr = pv.PrState("Panaseer/demo#1", "OPEN", "red", NOW)
+    pr = pv.PrState("example-org/demo#1", "OPEN", "red", NOW)
     m = build(tmp_path, prs={pr.key: pr})
     assert (
         m["health"]["effective"] == "amber"
@@ -88,7 +88,7 @@ def test_floor_inside_owner_colour_is_noted_not_overriding(tmp_path):
 
 
 def test_full_render_sections(tmp_path):
-    pr = pv.PrState("Panaseer/demo#1", "OPEN", "red", NOW, "https://x.test/1", "Real title")
+    pr = pv.PrState("example-org/demo#1", "OPEN", "red", NOW, "https://x.test/1", "Real title")
     m = build(
         tmp_path,
         prs={pr.key: pr},
@@ -179,7 +179,7 @@ def test_delta_covers_every_line_kind(tmp_path):
     base.update(
         criteria=[m["totals"]["ticked"] + 2, m["totals"]["total"]], prs_merged=[], health="red"
     )
-    now = dict(m, prs=[{"key": "Panaseer/demo#1", "state": "MERGED"}])
+    now = dict(m, prs=[{"key": "example-org/demo#1", "state": "MERGED"}])
     lines = pv.delta(now, base)["lines"]
     assert any("no longer met" in x for x in lines) and any(x.startswith("Merged:") for x in lines)
     assert any("Health moved" in x for x in lines)
@@ -228,7 +228,7 @@ def test_rendered_page_avoids_internal_vocabulary_and_ids(tmp_path):
     import re
 
     m = build(
-        tmp_path, prs={"Panaseer/demo#1": pv.PrState("Panaseer/demo#1", "OPEN", "green", NOW)}
+        tmp_path, prs={"example-org/demo#1": pv.PrState("example-org/demo#1", "OPEN", "green", NOW)}
     )
     html = pv.render_fragment(m)
     visible = re.sub(r"<(style|script)\b.*?</\1>", "", html, flags=re.S)

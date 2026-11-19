@@ -43,7 +43,7 @@ def test_floor_is_load_bearing(tmp_path, monkeypatch):
 
 
 def test_red_ci_on_open_pr_caps_to_amber(tmp_path):
-    pr = pv.PrState("Panaseer/demo#7", "OPEN", "red", NOW)
+    pr = pv.PrState("example-org/demo#7", "OPEN", "red", NOW)
     h = model(make_queue(tmp_path), prs={pr.key: pr})["health"]
     assert h["effective"] == "amber" and h["capping"][0]["signal"] == "red CI"
 

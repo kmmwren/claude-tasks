@@ -43,7 +43,7 @@ plain = "The second thing works"
 release = "2026.12"
 
 [[prs]]
-repo = "Panaseer/demo"
+repo = "example-org/demo"
 number = 7
 workstream = "w"
 
@@ -117,12 +117,12 @@ id = "empty"
 title = "Nothing mapped"
 
 [[prs]]
-repo = "Panaseer/demo"
+repo = "example-org/demo"
 number = 1
 workstream = "w"
 
 [[prs]]
-repo = "Panaseer/demo"
+repo = "example-org/demo"
 number = 2
 workstream = "w"
 label = "Fallback title"
@@ -145,14 +145,14 @@ url = "https://example.test/e"
 [[rollout.targets.evidence]]
 stage = "live"
 kind = "pr_merged"
-repo = "Panaseer/demo"
+repo = "example-org/demo"
 number = 1
 [[rollout.targets]]
 id = "other"
 [[rollout.targets.evidence]]
 stage = "built"
 kind = "pr_merged"
-repo = "Panaseer/demo"
+repo = "example-org/demo"
 number = 2
 [[rollout.targets.evidence]]
 stage = "live"
