@@ -23,6 +23,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from _paths import warn
 from config import load_config
 
 LAUNCHER_ENV = "CLAUDE_TASKS_LAUNCHER"
@@ -41,7 +42,7 @@ def reset_capacity() -> None:
 
 @functools.cache
 def warn_once(message: str) -> None:
-    print(f"claude-tasks: {message}", file=sys.stderr)
+    warn(message, prefix="claude-tasks")
 
 
 def reset_notices() -> None:

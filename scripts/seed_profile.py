@@ -23,7 +23,7 @@ from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _concurrency import atomic_write  # noqa: E402
-from _paths import require_queue, resolve_root  # noqa: E402
+from _paths import require_queue, resolve_root, warn  # noqa: E402
 from config import load_config  # noqa: E402
 from git_sync import sync_commit  # noqa: E402
 from taste import PROFILE_FILE, Goal, Profile, profile_path, render  # noqa: E402
@@ -46,10 +46,6 @@ Fetch = Callable[[str], str]
 
 def settings(root: pathlib.Path) -> dict[str, Any]:
     return {**DEFAULTS, **load_config(root).get("profile", {})}
-
-
-def warn(message: str) -> None:
-    print(f"warning: {message}", file=sys.stderr)
 
 
 def _one_line(text: str) -> str:

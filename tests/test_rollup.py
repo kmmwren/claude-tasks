@@ -204,19 +204,40 @@ def test_a_default_config_with_no_usable_rows_falls_back_too(tmp_path, capsys):
 REPEATED_LABELS = '[[source]]\nlabel = "A"\npath = "/a"\n[[source]]\nlabel = "A"\npath = "/b"\n'
 
 
-def test_repeated_labels_in_the_default_config_warn_and_fall_back(tmp_path, capsys):
+@pytest.mark.parametrize("named", [True, False])
+def test_a_repeated_label_in_a_config_skips_the_later_row_with_a_warning(tmp_path, capsys, named):
     cfg = tmp_path / "rollup.toml"
-    cfg.write_text(REPEATED_LABELS)
-    found = rollup.load_sources([], lazily(cfg, named=False), make_here(tmp_path))
+    cfg.write_text(REPEATED_LABELS + '[[source]]\nlabel = "B"\npath = "/c"\n')
+    found = rollup.load_sources([], lazily(cfg, named))
+    assert found == [rollup.Source("A", pathlib.Path("/a")), rollup.Source("B", pathlib.Path("/c"))]
+    warning = capsys.readouterr().err
+    assert "used more than once" in warning and "'A'" in warning and "row is skipped" in warning
+
+
+def test_an_absent_default_config_falls_back_silently(tmp_path, capsys):
+    found = rollup.load_sources(
+        [], lazily(tmp_path / "missing.toml", named=False), make_here(tmp_path)
+    )
     assert [s.label for s in found] == ["this repository"]
-    assert "used more than once: A" in capsys.readouterr().err
+    assert capsys.readouterr().err == ""
 
 
-def test_repeated_labels_in_a_named_config_are_an_error(tmp_path):
+def test_a_config_is_read_as_bytes_so_the_locale_cannot_misdecode_it(tmp_path, monkeypatch):
     cfg = tmp_path / "rollup.toml"
-    cfg.write_text(REPEATED_LABELS)
-    with pytest.raises(rollup.RollupError, match="more than once: A"):
-        rollup.load_sources([], lazily(cfg))
+    cfg.write_text('[[source]]\nlabel = "Café"\npath = "/a"\n', encoding="utf-8")
+
+    def no_text(*_args, **_kwargs):
+        raise AssertionError("read_text uses the locale encoding")
+
+    monkeypatch.setattr(pathlib.Path, "read_text", no_text)
+    assert [s.label for s in rollup.load_sources([], lazily(cfg))] == ["Café"]
+
+
+def test_config_is_ignored_when_sources_are_given_and_the_run_says_so(work, tmp_path, capsys):
+    cfg = tmp_path / "ignored.toml"
+    assert rollup.main(["sources", "--source", f"W={work}", "--config", str(cfg)], env={}) == 0
+    err = capsys.readouterr().err.splitlines()
+    assert err == ["warning: --config is ignored because --source was given"]
 
 
 def test_the_default_config_is_not_looked_up_when_sources_are_given(work, monkeypatch, capsys):
@@ -942,3 +963,124 @@ def test_a_source_git_cannot_read_is_remembered_as_unknown(tmp_path):
     clock, calls = Clock(), []
     counts = rollup.BehindCounts(lambda path: calls.append(path), clock)
     assert counts(tmp_path) is None and counts(tmp_path) is None and calls == [tmp_path]
+
+
+# --- what a milestone says, and the rows a project file gets wrong ----------------------------
+
+HEAD = '[project]\ntitle = "T"\noutcome = "O"\n'
+
+
+def test_a_milestone_percent_is_the_one_the_project_view_computes(tmp_path):
+    q = make_queue(tmp_path / "demo")
+    declared = pv.declared_milestones(q, pv.read_project(q))
+    rows = pv.milestone_rows(declared, pv.project_briefs(q), NOW.date())
+    r = rollup.build(only_source(tmp_path), NOW)
+    assert [m.percent_done for m in r.projects[0].milestones] == [100, 50]
+    assert [m.percent_done for m in r.projects[0].milestones] == [x["percent_done"] for x in rows]
+    pm = rollup.LEVELS["pm"].data(r)["projects"][0]
+    assert [m["percent_done"] for m in pm["now"]] == [50]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '[[milestones]]\nid = "m1"\n[[milestones]]\ntitle = "No id"\n',
+        '[[milestones]]\nid = "m1"\n[[milestones]]\nid = 5\n',
+        '[[milestones]]\nid = "m1"\n[[milestones]]\nid = "  "\n',
+    ],
+)
+def test_a_milestone_row_without_a_text_id_is_dropped_and_the_project_still_shows(
+    tmp_path, capsys, body
+):
+    q = make_queue(tmp_path / "demo")
+    (q / "project.toml").write_text(HEAD + body)
+    r = rollup.build(only_source(tmp_path), NOW)
+    assert r.skipped == () and [m.id for m in r.projects[0].milestones] == ["m1"]
+    warning = capsys.readouterr().err
+    assert "milestones row 2 needs a text id" in warning and "that row is left out" in warning
+
+
+@pytest.mark.parametrize("value", ['"m1"', "3"])
+def test_milestones_that_are_not_a_list_warn_and_are_left_out(tmp_path, capsys, value):
+    q = make_queue(tmp_path / "demo")
+    (q / "project.toml").write_text(f"milestones = {value}\n{HEAD}")
+    r = rollup.build(only_source(tmp_path), NOW)
+    assert r.skipped == () and r.projects[0].milestones == ()
+    assert "milestones must be [[milestones]] tables" in capsys.readouterr().err
+
+
+def test_milestone_entries_that_are_not_tables_are_dropped_one_by_one(tmp_path, capsys):
+    q = make_queue(tmp_path / "demo")
+    (q / "project.toml").write_text(f"milestones = [1, 2]\n{HEAD}")
+    r = rollup.build(only_source(tmp_path), NOW)
+    assert r.skipped == () and r.projects[0].milestones == ()
+    assert "milestones row 1 needs a text id" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["5", '""', '["a"]'])
+def test_a_slug_that_is_not_text_falls_back_to_the_folder_name_with_a_warning(
+    tmp_path, capsys, value
+):
+    q = make_queue(tmp_path / "folder")
+    (q / "project.toml").write_text(HEAD.replace("[project]", f"[project]\nslug = {value}"))
+    assert rollup.build(only_source(tmp_path), NOW).projects[0].slug == "folder"
+    assert "slug must be text" in capsys.readouterr().err
+
+
+def test_a_title_of_only_whitespace_is_missing(tmp_path):
+    q = make_queue(tmp_path)
+    (q / "project.toml").write_text('[project]\ntitle = "  "\noutcome = "O"\n')
+    with pytest.raises(pv.ProjectConfigError, match=r"\[project\] title is required"):
+        pv.read_project(q)
+
+
+@pytest.mark.parametrize("colour", ['["red"]', "5", "{ a = 1 }"])
+def test_a_health_colour_that_is_not_text_is_a_config_error_not_a_crash(tmp_path, colour):
+    q = make_queue(tmp_path)
+    (q / "project.toml").write_text(f'{HEAD}[health]\ncolour = {colour}\nreason = "r"\n')
+    with pytest.raises(pv.ProjectConfigError, match="green, amber or red"):
+        pv.read_project(q)
+
+
+# --- writing over files that are not ours -----------------------------------------------------
+
+
+def test_an_existing_file_that_is_not_utf8_is_replaced_not_fatal(work, tmp_path):
+    out = tmp_path / "o"
+    out.mkdir()
+    rollup.write(out, built(work))
+    (out / "pm.md").write_bytes(b"\xff\xfe")
+    assert [p.name for p in rollup.write(out, built(work))] == ["pm.md"]
+    assert "Product roll-up" in (out / "pm.md").read_text()
+    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
+
+
+# --- sources that add nothing -----------------------------------------------------------------
+
+
+def test_a_source_whose_projects_all_sit_under_an_earlier_source_is_named(tmp_path):
+    make_queue(tmp_path / "d")
+    sources = [rollup.Source("A", tmp_path / "d"), rollup.Source("B", tmp_path / "d" / ".tasks")]
+    r = rollup.build(sources, NOW)
+    assert [(s.source, s.reason) for s in r.skipped] == [("B", rollup.SHOWN_UNDER_ANOTHER_SOURCE)]
+    assert rollup.LEVELS["pm"].data(r)["source_projects"] == [
+        {"source": "A", "projects": 1},
+        {"source": "B", "projects": 0},
+    ]
+    assert "- B: every project it finds is already shown under another source" in (
+        rollup.LEVELS["pm"].markdown(r)
+    )
+
+
+def test_a_build_walks_each_source_once(work, tmp_path, monkeypatch):
+    calls = []
+    real = rollup.Source.projects
+
+    def counted(self):
+        calls.append(self.label)
+        return real(self)
+
+    monkeypatch.setattr(rollup.Source, "projects", counted)
+    (tmp_path / "empty").mkdir()
+    rollup.build([rollup.Source("A", work), rollup.Source("B", tmp_path / "empty")], NOW)
+    assert sorted(calls) == ["A", "B"]

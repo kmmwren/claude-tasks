@@ -51,9 +51,9 @@ folders are not followed and a queue reached twice counts once. The first match 
 2. The file named by `--config PATH` or `$CLAUDE_TASKS_ROLLUP_CONFIG`; naming a file that does not
    exist or cannot be read is an error. A `[[source]]` row without a label and a path is skipped
    with a warning.
-3. `~/.config/claude-tasks/rollup.toml`, when it exists; if it is malformed or has no usable rows,
-   a warning is printed (a repeated label counts as malformed) and the current repository is used
-   instead.
+3. `~/.config/claude-tasks/rollup.toml`, when it exists (absent is silent); if it is malformed or has
+   no usable rows, a warning is printed and the current repository is used instead. A row whose label
+   repeats an earlier one is skipped with a warning.
 4. The current repository, labelled "this repository": the queue in use when it is not a `.tasks`
    folder, otherwise the folder holding the `.tasks` queue. A home folder is never scanned by default.
 
@@ -69,7 +69,8 @@ label = "Home"
 path = "~/projects"
 ```
 
-One run can override them: `--source Work=~/code/team-notes --source Home=~/projects`.
+One run can override them: `--source Work=~/code/team-notes --source Home=~/projects`; a `--config`
+given with `--source` is ignored, with a warning.
 Run `rollup.py sources` to check which projects each source finds.
 
 ## Desktop or chat: read a published copy

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import build_board
-from _paths import is_queue
+from _paths import is_queue, warn
 from milestones import MilestonesError, MilestoneSpec, members, milestone_specs
 from requirements_check import check as check_queue
 from requirements_register import parse_register, register_path
@@ -78,7 +78,7 @@ class Signals:
 
 def require_text(value: Any, field_name: str, hint: str = "") -> str:
     """A TOML field that later code treats as text; any other type would crash a roll-up."""
-    if not value:
+    if not value or (isinstance(value, str) and not value.strip()):
         raise ProjectConfigError(f"{field_name} is required{hint}")
     if not isinstance(value, str):
         raise ProjectConfigError(f"{field_name} must be text, not {type(value).__name__}")
@@ -106,7 +106,8 @@ def read_project(queue: pathlib.Path) -> dict[str, Any]:
 def _check_health(health: Any) -> None:
     if not isinstance(health, dict):
         raise ProjectConfigError("[health] is required")
-    if health.get("colour") not in RANK:
+    colour = health.get("colour")
+    if not isinstance(colour, str) or colour not in RANK:
         raise ProjectConfigError("[health] colour must be green, amber or red")
     require_text(health.get("reason"), "[health] reason", hint=": one line saying why")
 
@@ -126,7 +127,7 @@ def project_briefs(queue: pathlib.Path) -> list[dict[str, Any]]:
 
 def declared_milestones(queue: pathlib.Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """project.toml milestones in order, then any further ids the queue's milestones file declares."""
-    listed = list(cfg.get("milestones", []))
+    listed = _listed_milestones(queue, cfg.get("milestones", []))
     known = {m["id"] for m in listed}
     return listed + [
         {"id": m.id, "title": m.title, "release": m.release or ""}
@@ -135,9 +136,23 @@ def declared_milestones(queue: pathlib.Path, cfg: dict[str, Any]) -> list[dict[s
     ]
 
 
-def warn(message: str) -> None:
-    """Say a queue file was ignored; a roll-up of many queues must not stop at one bad file."""
-    print(f"warning: {message}", file=sys.stderr)
+def _listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
+    """The `[[milestones]]` rows that carry a text id; each other row is named and left out."""
+    where = f"{queue / 'project.toml'}: milestones"
+    if not isinstance(raw, list):
+        warn(f"{where} must be [[milestones]] tables; they are left out")
+        return []
+    usable = []
+    for number, m in enumerate(raw, 1):
+        if _has_text_id(m):
+            usable.append(m)
+        else:
+            warn(f"{where} row {number} needs a text id; that row is left out")
+    return usable
+
+
+def _has_text_id(row: Any) -> bool:
+    return isinstance(row, dict) and isinstance(row.get("id"), str) and bool(row["id"].strip())
 
 
 def _file_milestones(queue: pathlib.Path) -> list[MilestoneSpec]:

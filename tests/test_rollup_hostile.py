@@ -14,7 +14,7 @@ from tests.project_fixtures import make_queue
 
 NOW = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)
 SAFE_TARGET = re.compile(r"[\w./-]+")
-CSP = "default-src 'none'; style-src 'unsafe-inline'"
+CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 HOSTILE_PROJECT = """
 [project]
 title = "[x](javascript:alert(1))"
@@ -117,7 +117,9 @@ def listening(tmp_path):
 
 def test_server_sends_a_content_security_policy_on_every_answer(listening):
     for path in ("/pm", "/pm.json", "/nope"):
-        assert get(listening, path)[1]["Content-Security-Policy"] == CSP
+        headers = get(listening, path)[1]
+        assert headers["Content-Security-Policy"] == CSP
+        assert headers["X-Content-Type-Options"] == "nosniff"
 
 
 @pytest.mark.parametrize(
@@ -265,3 +267,35 @@ def test_skip_reasons_never_carry_an_absolute_path(tmp_path):
 )
 def test_os_reason_hides_paths_outside_the_queue(tmp_path, error, expected):
     assert rollup._os_reason(error, tmp_path) == expected
+
+
+# --- links a Markdown renderer would make on its own -------------------------------------------
+
+AUTOLINK = re.compile(r"(?i)https?://|www\.|@(?!⁠)")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "see http://x.example/a",
+        "https://x.example",
+        "(WWW.x.example)",
+        "mail a@b.example",
+        "mailto:a@b.example",
+    ],
+)
+def test_text_that_a_renderer_would_autolink_is_neutralised(text):
+    assert not AUTOLINK.search(rollup.escape_md(text))
+
+
+@pytest.mark.parametrize("level", ["pm", "cto"])
+def test_project_text_never_becomes_a_live_link_in_markdown(tmp_path, level):
+    z = "http://e.example www.e.example a@e.example"
+    q = make_queue(tmp_path / "evil")
+    (q / "project.toml").write_text(
+        f"[project]\ntitle = {json.dumps(z)}\noutcome = {json.dumps(z)}\n"
+        f'[health]\ncolour = "amber"\nreason = {json.dumps(z)}\n'
+        f"[ask]\nquestion = {json.dumps(z)}\n"
+    )
+    text = rollup.LEVELS[level].markdown(rollup.build([rollup.Source(z, tmp_path)], NOW))
+    assert "e.example" in text and not AUTOLINK.search(text)

@@ -63,11 +63,18 @@
   (no fetch) in `sources`, the Markdown and HTML footers and the JSON `warnings`. `write` also
   generates a `README.md` saying how someone else gets their own view. A pm milestone's `waiting` key counts
   its briefs waiting on an unmet blocker. `serve` reuses each source's behind-upstream count for 30 seconds
-  rather than running git on every request. A destination `write` cannot create is a one-line error, and
-  a milestone whose `briefs` is not a list of text names that field when its project is skipped.
-  The `rollup` skill drives it.
-- **Project views count a brief's `milestone:` frontmatter as membership**, alongside the project's
-  `briefs` list, each brief once; a malformed milestones file warns and is skipped.
+  rather than running git on every request. A destination `write` cannot create is a one-line error.
+  A milestone's percent is the one the project page shows (from ticked criteria). An absent default
+  config falls back to the current repository without a warning; a repeated source label, a `[[milestones]]`
+  row without a text `id` and a `[project] slug` that is not text each warn and skip just that row
+  (`--config` given with `--source` warns that it is ignored). Bare URLs and emails in project text are
+  escaped so GitHub does not link them; `serve` also sends `X-Content-Type-Options: nosniff` and
+  `frame-ancestors 'none'`. A source whose projects another source already shows is named under "Not
+  shown". The `rollup` skill drives it.
+- **Project views warn and skip a malformed milestones file**, and a `[[milestones]]` row without a text `id`,
+  instead of stopping.
+- **One shared `warn` in `_paths.py`** replaces the copies in `project_view`, `seed_profile`, `headless`
+  and `fleet_blockers`; each keeps its output prefix.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by

@@ -33,7 +33,7 @@ from typing import Any, ClassVar
 
 import project_view as pv
 from _concurrency import atomic_write
-from _paths import PROJECT_MARKER, is_queue, resolve_root
+from _paths import PROJECT_MARKER, is_queue, resolve_root, warn
 from config import load_config
 from deps import load_queue, unmet
 from milestones import Milestone
@@ -50,8 +50,9 @@ BEHIND_TTL_SECONDS = 30
 WHAT_A_PROJECT_IS = "a queue with a project.toml"
 NO_PROJECTS = f"No projects found. A project is {WHAT_A_PROJECT_IS}."
 NO_PROJECTS_IN_SOURCE = f"no projects (a project is {WHAT_A_PROJECT_IS})"
+SHOWN_UNDER_ANOTHER_SOURCE = "every project it finds is already shown under another source"
 WORD = {**pv.LABEL, "": "Not set by owner"}
-CSP = "default-src 'none'; style-src 'unsafe-inline'"
+CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
 GENERATED = re.compile(r'(?m)^\*Generated \S+|^\s*"generated": "[^"]*"')
 
@@ -98,12 +99,17 @@ SERVED_BY_SUFFIX = {f.suffix: f for f in (Format.HTML, Format.JSON)}
 # --- text a project owner typed -------------------------------------------------------------
 
 _ESCAPABLE = "\\*_[]<>`|"
-_SPECIAL = re.compile(f"([{re.escape(_ESCAPABLE)}])")
+# GitHub links a bare `http://`, `https://`, `www.` or email on its own. A backslash before the
+# `:` or `.` keeps a URL plain, but GitHub rejoins escaped text before matching emails, so an
+# invisible word joiner after the `@` is what breaks those.
+_SPECIAL = re.compile(f"[{re.escape(_ESCAPABLE)}]|(?<=www)\\.|:(?=//)", re.IGNORECASE)
+WORD_JOINER = "⁠"
 
 
 def escape_md(text: str) -> str:
     """One line of literal text: whitespace collapsed so it cannot start a block, markup escaped."""
-    return _SPECIAL.sub(r"\\\1", " ".join(text.split()))
+    escaped = _SPECIAL.sub(r"\\\g<0>", " ".join(text.split()))
+    return escaped.replace("@", "@" + WORD_JOINER)
 
 
 # Every string from a queue reaches HTML through these, so none of it can become markup.
@@ -279,12 +285,14 @@ def load_sources(
 
 def _from_config_or_here(config: ConfigFile, here: Callable[[], pathlib.Path]) -> list[Source]:
     """A fault in the default config must not stop a run the current repository can serve."""
+    if not config.named and not config.path.is_file():
+        return [_current(here())]
     try:
         return _configured(config)
     except RollupError as e:
         if config.named:
             raise
-        pv.warn(f"{e}; using the current repository instead")
+        warn(f"{e}; using the current repository instead")
     return [_current(here())]
 
 
@@ -304,13 +312,13 @@ def _configured(config: ConfigFile) -> list[Source]:
     found = [s for number, row in enumerate(rows, 1) if (s := _usable(row, number, config.path))]
     if not found:
         raise RollupError(f"{config.path} has no usable [[source]] rows")
-    _reject_repeated_labels(found)
-    return found
+    return _first_of_each_label(found, config.path)
 
 
 def _rows(config: pathlib.Path) -> list[object]:
     try:
-        rows = tomllib.loads(config.read_text()).get("source", [])
+        with config.open("rb") as fh:
+            rows = tomllib.load(fh).get("source", [])
     except (OSError, ValueError) as e:
         raise RollupError(f"cannot read {config}: {e}") from e
     if not isinstance(rows, list):
@@ -323,8 +331,18 @@ def _usable(row: object, number: int, config: pathlib.Path) -> Source | None:
     try:
         return Source.from_row(row, number)
     except RollupError as e:
-        pv.warn(f"{config}: {e}; that row is skipped")
+        warn(f"{config}: {e}; that row is skipped")
         return None
+
+
+def _first_of_each_label(found: list[Source], config: pathlib.Path) -> list[Source]:
+    """A label that repeats keeps its first row; each later one is named and skipped."""
+    kept: dict[str, Source] = {}
+    for s in found:
+        if s.label in kept:
+            warn(f"{config}: label {s.label!r} is used more than once; that row is skipped")
+        kept.setdefault(s.label, s)
+    return list(kept.values())
 
 
 def _reject_repeated_labels(found: list[Source]) -> None:
@@ -364,6 +382,7 @@ class MilestoneSummary:
     stage: Stage
     due: str
     missed: bool
+    percent_done: int  # from ticked criteria, as the project page shows it
     briefs: tuple[BriefSummary, ...]
 
     @classmethod
@@ -376,6 +395,7 @@ class MilestoneSummary:
             Stage.of(row["status"]),
             row["due"],
             row["missed"],
+            row["percent_done"],
             mine,
         )
 
@@ -386,11 +406,6 @@ class MilestoneSummary:
     @property
     def title(self) -> str:
         return self.milestone.title
-
-    @property
-    def percent_done(self) -> int:
-        counted = self.milestone
-        return round(100 * counted.done / counted.total) if counted.total else 0
 
     @property
     def waiting_count(self) -> int:
@@ -543,7 +558,7 @@ def _zone(queue: pathlib.Path) -> zoneinfo.ZoneInfo:
     try:
         return zoneinfo.ZoneInfo(name)
     except (KeyError, ValueError):  # an unknown zone name is a KeyError subclass
-        pv.warn(f"{queue / 'tasks.toml'}: timezone {name!r} is not a known zone; using UTC")
+        warn(f"{queue / 'tasks.toml'}: timezone {name!r} is not a known zone; using UTC")
         return zoneinfo.ZoneInfo("UTC")
 
 
@@ -565,7 +580,7 @@ def project_of(label: str, queue: pathlib.Path, now: dt.datetime) -> Project:
     health = Health.of(cfg, pv.computed_floor(rows, briefs, signals), signals.now)
     return Project(
         label,
-        cfg["project"].get("slug", queue.parent.name),
+        _slug(cfg["project"], queue),
         cfg["project"]["title"],
         cfg["project"]["outcome"],
         health,
@@ -573,6 +588,16 @@ def project_of(label: str, queue: pathlib.Path, now: dt.datetime) -> Project:
         _milestones(label, queue, rows, summaries),
         _shipped(summaries.values(), today),
     )
+
+
+def _slug(table: dict[str, Any], queue: pathlib.Path) -> str:
+    """The project's own slug when it is text; otherwise the folder name, saying so."""
+    slug = table.get("slug")
+    if isinstance(slug, str) and slug.strip():
+        return slug
+    if slug is not None:
+        warn(f"{queue / 'project.toml'}: [project] slug must be text; using the folder name")
+    return queue.parent.name
 
 
 def _milestones(
@@ -584,7 +609,7 @@ def _milestones(
         try:
             kept.append(MilestoneSummary.of(row, briefs))
         except pv.ProjectConfigError as e:
-            pv.warn(f"{label} / {queue.parent.name}: {e}; that milestone is left out")
+            warn(f"{label} / {queue.parent.name}: {e}; that milestone is left out")
     return tuple(kept)
 
 
@@ -613,28 +638,43 @@ def _os_reason(error: OSError, queue: pathlib.Path) -> str:
     return f"{reason} ({inside})" if error.filename else reason
 
 
-def first_source_per_queue(sources: list[Source]) -> list[tuple[Source, pathlib.Path]]:
+@dataclasses.dataclass(frozen=True)
+class Contribution:
+    """What one source adds: the queues it finds, and those no earlier source already has."""
+
+    source: Source
+    found: tuple[pathlib.Path, ...]
+    new: tuple[pathlib.Path, ...]
+
+    def nothing_added(self) -> Skipped | None:
+        if self.new or not self.source.path.is_dir():
+            return None
+        reason = SHOWN_UNDER_ANOTHER_SOURCE if self.found else NO_PROJECTS_IN_SOURCE
+        return Skipped(self.source.label, "", reason)
+
+
+def contributions(sources: list[Source]) -> list[Contribution]:
     """Each queue once, under the first source that reaches it, however many paths lead there."""
-    first: dict[pathlib.Path, tuple[Source, pathlib.Path]] = {}
+    seen: set[pathlib.Path] = set()
+    out = []
     for s in sources:
-        for q in s.projects():
-            first.setdefault(q.resolve(), (s, q))
-    return list(first.values())
+        found = s.projects()
+        new = [q for q in found if q.resolve() not in seen]
+        seen.update(q.resolve() for q in new)
+        out.append(Contribution(s, tuple(found), tuple(new)))
+    return out
 
 
 def build(sources: list[Source], now: dt.datetime, behind: BehindCount = commits_behind) -> Rollup:
-    outcomes = [project_or_skipped(s, q, now) for s, q in first_source_per_queue(sources)]
+    added = contributions(sources)
+    outcomes = [project_or_skipped(c.source, q, now) for c in added for q in c.new]
     missing = [
         Skipped(s.label, s.path.name, "not a folder that exists")
         for s in sources
         if not s.path.is_dir()
     ]
     # A source that adds nothing must say so, or the header names it and the reader assumes it did.
-    empty = [
-        Skipped(s.label, "", NO_PROJECTS_IN_SOURCE)
-        for s in sources
-        if s.path.is_dir() and not s.projects()
-    ]
+    empty = [note for c in added if (note := c.nothing_added())]
     return Rollup(
         now.isoformat(timespec="seconds"),
         tuple(s.label for s in sources),
@@ -934,10 +974,21 @@ def _check_destination(out: pathlib.Path) -> None:
 
 def write_if_changed(path: pathlib.Path, text: str) -> bool:
     """Write `path` unless it only differs in its generated-on line; True when it wrote."""
-    if path.is_file() and GENERATED.sub("", path.read_text()) == GENERATED.sub("", text):
+    if _same_but_for_date(path, text):
         return False
     atomic_write(path, text)
     return True
+
+
+def _same_but_for_date(path: pathlib.Path, text: str) -> bool:
+    """A file we cannot decode is not ours to keep, so it counts as different."""
+    if not path.is_file():
+        return False
+    try:
+        current = path.read_text()
+    except UnicodeDecodeError:
+        return False
+    return GENERATED.sub("", current) == GENERATED.sub("", text)
 
 
 def write(out: pathlib.Path, r: Rollup) -> list[pathlib.Path]:
@@ -1031,6 +1082,7 @@ class Serve(Run):
                 self.send_response(status)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Security-Policy", CSP)
+                self.send_header("X-Content-Type-Options", "nosniff")
                 self.end_headers()
                 self.wfile.write(body.encode())
 
@@ -1098,6 +1150,8 @@ def parse(argv: list[str], env: Mapping[str, str], now: Callable[[], dt.datetime
         "--port", type=int, default=8788
     )
     a = ap.parse_args(argv)
+    if a.source and a.config:
+        warn("--config is ignored because --source was given")
     sources = load_sources(a.source, lambda: config_file(a.config, env))
     return a.make_run(a, sources, now)  # type: ignore[no-any-return]
 

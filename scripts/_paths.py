@@ -25,6 +25,7 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 import os
 import pathlib
 import re
+import sys
 import tomllib
 from collections.abc import Mapping
 
@@ -46,6 +47,11 @@ COMMENT_START = re.compile(r"(?:^|\s)#")
 _COMMENT = re.compile(COMMENT_START.pattern + ".*")
 # As in YAML, a quoted value runs to its closing quote, so a spaced `#` inside it is text.
 _QUOTED = re.compile(r"""\s*(["'])(.*?)\1(?=\s|$)""")
+
+
+def warn(message: str, prefix: str = "warning") -> None:
+    """One line on stderr saying something was ignored; the run carries on."""
+    print(f"{prefix}: {message}", file=sys.stderr)
 
 
 def is_brief(path: str | os.PathLike[str]) -> bool:

@@ -17,14 +17,15 @@ import dataclasses
 import enum
 import json
 import pathlib
-import sys
 from collections.abc import Mapping
 from typing import Any
 
+from _paths import warn
 from config import load_config
 from deps import parse_list
 
 CONFIG_KEY = "fleet_blockers_dir"
+PREFIX = "prioritise"  # the command whose output these notices appear in
 
 
 class BlockerStatus(enum.Enum):
@@ -75,8 +76,9 @@ class FleetBlockers:
     @classmethod
     def read(cls, directory: pathlib.Path) -> "FleetBlockers":
         if not directory.is_dir():
-            cls._warn(
-                f"{CONFIG_KEY} {directory} is not a readable directory; using no fleet blockers"
+            warn(
+                f"{CONFIG_KEY} {directory} is not a readable directory; using no fleet blockers",
+                PREFIX,
             )
             return cls({})
         parsed, skipped = [], []
@@ -86,12 +88,8 @@ class FleetBlockers:
             except (OSError, ValueError) as err:
                 skipped.append(f"{f.name} ({err})")
         if skipped:
-            cls._warn(f"skipping unreadable fleet-blockers records: {', '.join(skipped)}")
+            warn(f"skipping unreadable fleet-blockers records: {', '.join(skipped)}", PREFIX)
         return cls({b.id: b for b in parsed if b.status.is_open})
-
-    @staticmethod
-    def _warn(message: str) -> None:
-        print(f"prioritise: {message}", file=sys.stderr)
 
     def clearing(self, brief: Mapping[str, Any]) -> FleetBlocker | None:
         """The first open blocker the brief's `clears:` names, if any."""
