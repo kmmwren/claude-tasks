@@ -29,7 +29,7 @@ from typing import Any
 
 import build_board
 from _paths import is_queue
-from milestones import MilestoneSpec, members
+from milestones import MilestonesError, MilestoneSpec, members, milestone_specs
 from requirements_check import check as check_queue
 from requirements_register import parse_register, register_path
 
@@ -76,28 +76,81 @@ class Signals:
 # --- loading -----------------------------------------------------------------------------
 
 
-def load_project(queue: pathlib.Path) -> dict[str, Any]:
+def require_text(value: Any, field_name: str, hint: str = "") -> str:
+    """A TOML field that later code treats as text; any other type would crash a roll-up."""
+    if not value:
+        raise ProjectConfigError(f"{field_name} is required{hint}")
+    if not isinstance(value, str):
+        raise ProjectConfigError(f"{field_name} must be text, not {type(value).__name__}")
+    return value
+
+
+def read_project(queue: pathlib.Path) -> dict[str, Any]:
+    """project.toml with owner health optional, for readers that can say it is not set yet."""
     path = queue / "project.toml"
     if not path.is_file():
         raise ProjectConfigError(f"{path} does not exist")
     with path.open("rb") as fh:
         cfg = tomllib.load(fh)
-    for table in ("project", "health"):
-        if not isinstance(cfg.get(table), dict):
-            raise ProjectConfigError(f"[{table}] is required")
+    if not isinstance(cfg.get("project"), dict):
+        raise ProjectConfigError("[project] is required")
     for key in ("title", "outcome"):
-        if not cfg["project"].get(key):
-            raise ProjectConfigError(f"[project] {key} is required")
-    if cfg["health"].get("colour") not in RANK:
-        raise ProjectConfigError("[health] colour must be green, amber or red")
-    if not cfg["health"].get("reason"):
-        raise ProjectConfigError("[health] reason is required: one line saying why")
+        require_text(cfg["project"].get(key), f"[project] {key}")
+    if "health" in cfg:
+        _check_health(cfg["health"])
     if "ask" in cfg and not isinstance(cfg["ask"], dict):
         raise ProjectConfigError("[ask] is a single table: a page carries at most one ask")
     return cfg
 
 
-def _date(value: Any) -> dt.date | None:
+def _check_health(health: Any) -> None:
+    if not isinstance(health, dict):
+        raise ProjectConfigError("[health] is required")
+    if health.get("colour") not in RANK:
+        raise ProjectConfigError("[health] colour must be green, amber or red")
+    require_text(health.get("reason"), "[health] reason", hint=": one line saying why")
+
+
+def load_project(queue: pathlib.Path) -> dict[str, Any]:
+    cfg = read_project(queue)
+    if "health" not in cfg:
+        raise ProjectConfigError("[health] is required")
+    return cfg
+
+
+def project_briefs(queue: pathlib.Path) -> list[dict[str, Any]]:
+    """Briefs a project reports on: everything past inbox, plus inbox items already tied to it."""
+    raw = build_board.load_briefs(queue)
+    return [b for b in raw if b["dir"] != "inbox" or b["requirements"] or b["domain"]]
+
+
+def declared_milestones(queue: pathlib.Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """project.toml milestones in order, then any further ids the queue's milestones file declares."""
+    listed = list(cfg.get("milestones", []))
+    known = {m["id"] for m in listed}
+    return listed + [
+        {"id": m.id, "title": m.title, "release": m.release or ""}
+        for m in _file_milestones(queue)
+        if m.id not in known
+    ]
+
+
+def warn(message: str) -> None:
+    """Say a queue file was ignored; a roll-up of many queues must not stop at one bad file."""
+    print(f"warning: {message}", file=sys.stderr)
+
+
+def _file_milestones(queue: pathlib.Path) -> list[MilestoneSpec]:
+    try:
+        return milestone_specs(queue) or []
+    except MilestonesError as e:
+        warn(f"{e}; its milestones are left out")
+    except (tomllib.TOMLDecodeError, ValueError, OSError, KeyError, TypeError) as e:
+        warn(f"cannot read {queue / 'tasks.toml'} ({e}); the milestones file it names is left out")
+    return []
+
+
+def parse_date(value: Any) -> dt.date | None:
     if isinstance(value, dt.datetime):
         return value.date()
     if isinstance(value, dt.date):
@@ -148,7 +201,33 @@ def _rollup(chosen: list[dict[str, Any]]) -> dict[str, Any]:
         "ticked": ticked,
         "total": total,
         "status": status,
-        "pct": round(100 * ticked / total) if total else (100 if status == "done" else 0),
+        "percent_done": round(100 * ticked / total) if total else (100 if status == "done" else 0),
+    }
+
+
+def milestone_rows(
+    declared: list[dict[str, Any]], briefs: list[dict[str, Any]], today: dt.date
+) -> list[dict[str, Any]]:
+    return [_milestone_row(m, briefs, today) for m in declared]
+
+
+def _milestone_row(
+    m: dict[str, Any], briefs: list[dict[str, Any]], today: dt.date
+) -> dict[str, Any]:
+    spec = MilestoneSpec.parse(m["id"], m)
+    picked = members(briefs, spec.id, _milestone_of)
+    roll = _rollup(picked)
+    due = parse_date(m.get("due"))
+    return {
+        "id": spec.id,
+        "title": spec.title,
+        "reader_title": m.get("plain") or spec.title,
+        "due": due.isoformat() if due else "",
+        "release": spec.release or "",
+        "briefs": [b["id"] for b in picked],
+        "criteria": [c for b in picked for c in _criteria(b)],
+        "missed": bool(due and due < today and roll["status"] != "done"),
+        **roll,
     }
 
 
@@ -344,7 +423,7 @@ def _last_movement(
     briefs: list[dict[str, Any]], prs: list[PrState], signals: Signals, sessions: list[str]
 ) -> dt.datetime | None:
     stamps = [signals.queue_activity] if signals.queue_activity else []
-    stamps += [_utc(d) for b in briefs if (d := _date(b["updated"]))]
+    stamps += [_utc(d) for b in briefs if (d := parse_date(b["updated"]))]
     stamps += [p.updated for p in prs if p.updated]
     stamps += [signals.sessions[s] for s in sessions if s in signals.sessions]
     return max(stamps) if stamps else None
@@ -386,13 +465,26 @@ def _floor(
     return found
 
 
+def computed_floor(
+    milestones: list[dict[str, Any]], briefs: list[dict[str, Any]], signals: Signals
+) -> list[dict[str, str]]:
+    """The floor from the queue alone: staleness and missed dates, without PR or session signals."""
+    return _floor(milestones, [], _last_movement(briefs, [], signals, []), signals)
+
+
+def owner_health(
+    cfg: dict[str, Any], found: list[dict[str, str]], now: dt.datetime
+) -> dict[str, Any] | None:
+    return _health(cfg, found, now) if "health" in cfg else None
+
+
 def _health(
     cfg: dict[str, Any], signals_found: list[dict[str, str]], now: dt.datetime
 ) -> dict[str, Any]:
     owner = cfg["health"]
     floor = max((s["floor"] for s in signals_found), key=RANK.__getitem__, default=GREEN)
     effective = max(owner["colour"], floor, key=RANK.__getitem__)
-    set_on = _date(owner.get("set_on"))
+    set_on = parse_date(owner.get("set_on"))
     age = (now.date() - set_on).days if set_on else None
     return {
         "owner": owner["colour"],
@@ -440,7 +532,7 @@ def delta(model: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, A
         }
     now = snapshot(model)
     lines = []
-    plain = {m["id"]: m["plain"] for m in model["milestones"]}
+    plain = {m["id"]: m["reader_title"] for m in model["milestones"]}
     for m in sorted(set(now["milestones_done"]) - set(baseline["milestones_done"])):
         lines.append(f"Milestone reached: {plain.get(m, m)}")
     gained = now["criteria"][0] - baseline["criteria"][0]
@@ -476,30 +568,9 @@ def build_model(
     if not is_queue(queue):
         raise ProjectConfigError(f"{queue} is not an initialised queue (no tasks.toml)")
     cfg = load_project(queue)
-    raw = build_board.load_briefs(queue)
-    briefs = [b for b in raw if b["dir"] != "inbox" or b["requirements"] or b["domain"]]
+    briefs = project_briefs(queue)
     by_id = {b["id"]: b for b in briefs}
-    today = signals.now.date()
-
-    milestones = []
-    for m in cfg.get("milestones", []):
-        spec = MilestoneSpec.parse(m["id"], m)
-        picked = members(briefs, spec.id, _milestone_of)
-        roll = _rollup(picked)
-        due = _date(m.get("due"))
-        milestones.append(
-            {
-                "id": spec.id,
-                "title": spec.title,
-                "plain": m.get("plain") or spec.title,
-                "due": due.isoformat() if due else "",
-                "release": spec.release or "",
-                "briefs": [b["id"] for b in picked],
-                "criteria": [c for b in picked for c in _criteria(b)],
-                "missed": bool(due and due < today and roll["status"] != "done"),
-                **roll,
-            }
-        )
+    milestones = milestone_rows(declared_milestones(queue, cfg), briefs, signals.now.date())
 
     prs = []
     for p in cfg.get("prs", []):
@@ -603,10 +674,6 @@ TABS = (
     ("decisions", "Decisions"),
     ("links", "Links"),
 )
-STAGE_WORDS = {
-    "Enabled on C00 production": "Live on C00",
-    "Enabled for every customer": "Live everywhere",
-}
 
 _ID_NOTE = re.compile(r"\s*\((?:[A-Z]{2,}-\d+(?:[,;]\s*[A-Z]{2,}-\d+)*)\)")
 _TRAIL_PAREN = re.compile(r"\s*\([^()]*\)\s*$")
@@ -614,7 +681,7 @@ _JIRA_KEY = re.compile(r"\b[A-Z]{2,}-\d+\b")
 
 
 def _plain(text: str) -> str:
-    """Drop ticket-id asides such as (MM-2177) so the page reads as sentences."""
+    """Drop ticket-id asides such as (PROJ-123) so the page reads as sentences."""
     return re.sub(r"\s{2,}", " ", _ID_NOTE.sub("", text)).strip()
 
 
@@ -684,7 +751,7 @@ def _since_line(m: dict[str, Any]) -> str:
 
 def _signal_text(s: dict[str, str], m: dict[str, Any]) -> str:
     if s["signal"] == "missed milestone date":
-        late = [x["plain"] for x in m["milestones"] if x["missed"]]
+        late = [x["reader_title"] for x in m["milestones"] if x["missed"]]
         return "milestones past their date: " + "; ".join(late)
     if s["signal"] == "red CI":
         return s["detail"].replace(
@@ -824,7 +891,7 @@ def _cards(m: dict[str, Any]) -> str:
         )
     live = [x for x in m["milestones"] if x["status"] in ("active", "unverified")]
     upcoming = live or [x for x in m["milestones"] if x["status"] != "done"]
-    rows = "".join(f"<li><span>{e(x['plain'])}</span></li>" for x in upcoming[:3])
+    rows = "".join(f"<li><span>{e(x['reader_title'])}</span></li>" for x in upcoming[:3])
     cards += (
         '<section class="card next"><h2>Next up</h2>'
         + (f"<ul>{rows}</ul>" if rows else "<p>Every milestone is done.</p>")
@@ -836,7 +903,7 @@ def _cards(m: dict[str, Any]) -> str:
 def _jira_for(ms: dict[str, Any], m: dict[str, Any]) -> list[dict[str, Any]]:
     by_key = {j["key"]: j for j in m["jira"]}
     titles = [b["title"] for b in m["briefs"] if b["id"] in ms["briefs"]]
-    text = " ".join([ms["plain"], *titles, *[c["text"] for c in ms.get("criteria", [])]])
+    text = " ".join([ms["reader_title"], *titles, *[c["text"] for c in ms.get("criteria", [])]])
     return [by_key[k] for k in dict.fromkeys(_JIRA_KEY.findall(text)) if k in by_key]
 
 
@@ -880,7 +947,7 @@ def _milestone(ms: dict[str, Any], w: dict[str, Any], m: dict[str, Any]) -> str:
     inner = body or '<p class="sub">No checks written yet.</p>'
     return (
         f'<li><details class="ms"><summary>{_chip(ms["status"])}'
-        f'<span class="t">{e(ms["plain"])}{when}</span></summary><div class="msbody">{inner}</div></details></li>'
+        f'<span class="t">{e(ms["reader_title"])}{when}</span></summary><div class="msbody">{inner}</div></details></li>'
     )
 
 
@@ -888,9 +955,7 @@ def _rollout_table(m: dict[str, Any]) -> str:
     r = m["rollout"]
     if not r["targets"]:
         return ""
-    head = "".join(
-        f'<th scope="col">{e(STAGE_WORDS.get(s["label"], s["label"]))}</th>' for s in r["stages"]
-    )
+    head = "".join(f'<th scope="col">{e(s["label"])}</th>' for s in r["stages"])
     rows = ""
     for t in r["targets"]:
         cells, seen_open = "", False

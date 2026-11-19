@@ -28,7 +28,12 @@ def test_since_line_lists_several_changes_in_plain_words():
 
 
 def test_signal_text_names_the_late_milestones():
-    m = {"milestones": [{"plain": "Beta", "missed": True}, {"plain": "GA", "missed": False}]}
+    m = {
+        "milestones": [
+            {"reader_title": "Beta", "missed": True},
+            {"reader_title": "GA", "missed": False},
+        ]
+    }
     assert pv._signal_text({"signal": "missed milestone date", "detail": "x"}, m) == (
         "milestones past their date: Beta"
     )

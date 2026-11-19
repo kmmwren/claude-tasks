@@ -49,6 +49,24 @@
   background `Agent` and `run_in_background` work with no completion yet, writes each one's brief
   (what it was asked, its output file, how to collect or re-run it) into the item it serves, and
   records them in the ledger item's `metadata.agents`; `resume_prompt.py` prints them under the item.
+- **`rollup.py` projects one or more queues' projects for readers above the engineer.** `pm` gives
+  each project's health, ask, now/next/done and what shipped in the last 14 days; `cto` gives a table
+  of health, milestones done of total, next due and missed. Output is JSON (schema
+  `claude-tasks.rollup/v1`) plus Markdown, written to a folder for GitHub (`write <dir>`) or served on a
+  loopback port (`serve`). Sources come from `~/.config/claude-tasks/rollup.toml` (or `--config`,
+  `$CLAUDE_TASKS_ROLLUP_CONFIG`) and default to the current repository. Project text is escaped, never
+  becomes a link or script; one bad queue file is skipped with a reason, and a queue or source that
+  cannot be read is reported as a "Not shown" row rather than stopping the run. A bad `[[source]]`
+  row or a malformed default config warns and the run carries on; only a config you named is an
+  error. A source that is a git work tree behind its upstream gets a "N commits behind" warning
+  (no fetch) in `sources`, the Markdown and HTML footers and the JSON `warnings`. `write` also
+  generates a `README.md` saying how someone else gets their own view. A pm milestone's `waiting` key counts
+  its briefs waiting on an unmet blocker. `serve` reuses each source's behind-upstream count for 30 seconds
+  rather than running git on every request. A destination `write` cannot create is a one-line error, and
+  a milestone whose `briefs` is not a list of text names that field when its project is skipped.
+  The `rollup` skill drives it.
+- **Project views count a brief's `milestone:` frontmatter as membership**, alongside the project's
+  `briefs` list, each brief once; a malformed milestones file warns and is skipped.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by
@@ -83,6 +101,10 @@
   Chosen by `[priority] scorer` (default `additive`, unchanged) or `--scorer`. `--json` adds both
   scores and ranks, `lane`, `move`, `leverage`, `why` and `schema_version`; existing fields are
   unchanged.
+
+### Changed
+- **The project view's rollout table headers show each stage's own label.** The `STAGE_WORDS`
+  mapping that renamed stage labels is removed, so a header reads exactly as the project declares it.
 
 ### Fixed
 - **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits

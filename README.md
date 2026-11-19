@@ -96,6 +96,7 @@ is run with it, it exits with a message telling you which interpreters to use in
 | "show the board" / `/tasks-board` | — | regenerates `view/board.html` |
 | "I'm done, hand off" | **handoff** | the session's open work flows to the queue |
 | "recap" | **recap** | a quick in-chat status summary |
+| "how are my projects going?" / "portfolio status" | **rollup** | a read-only project roll-up for a product manager or CTO, over any queues (JSON milestones carry `waiting`) |
 
 ### Priorities and dependencies
 

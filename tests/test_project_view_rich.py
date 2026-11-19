@@ -21,7 +21,7 @@ def test_brief_states_and_rollups(tmp_path):
     assert states["b-unverified"] == "unverified" and states["b-parked"] == "parked"
     assert states["b-queued"] == "queued" and states["b-done"] == "done"
     ws = {w["id"]: w for w in m["workstreams"]}
-    assert ws["empty"]["status"] == "unmapped" and ws["empty"]["pct"] == 0
+    assert ws["empty"]["status"] == "unmapped" and ws["empty"]["percent_done"] == 0
     assert [b["id"] for b in ws["w"]["next"]] == ["b-queued"]
 
 
@@ -157,9 +157,9 @@ def test_config_errors_and_date_forms(tmp_path):
     )
     with pytest.raises(pv.ProjectConfigError, match="single table"):
         pv.load_project(q)
-    assert pv._date(dt.datetime(2026, 1, 2, 3)) == dt.date(2026, 1, 2)
-    assert pv._date(dt.date(2026, 1, 2)) == dt.date(2026, 1, 2)
-    assert pv._date(5) is None
+    assert pv.parse_date(dt.datetime(2026, 1, 2, 3)) == dt.date(2026, 1, 2)
+    assert pv.parse_date(dt.date(2026, 1, 2)) == dt.date(2026, 1, 2)
+    assert pv.parse_date(5) is None
 
 
 def test_unreadable_register_entry_and_untouched_workstream(tmp_path):

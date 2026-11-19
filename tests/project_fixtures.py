@@ -209,9 +209,9 @@ label = "A"
 effect = "does a"
 
 [[jira]]
-key = "MM-1"
+key = "PROJ-1"
 title = "A ticket"
-url = "https://example.test/MM-1"
+url = "https://example.test/PROJ-1"
 
 [[sessions]]
 id = "abc12345"
