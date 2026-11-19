@@ -44,6 +44,8 @@ _SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 # `#` inside a value (issue#42, [a#b]) is never mistaken for one.
 COMMENT_START = re.compile(r"(?:^|\s)#")
 _COMMENT = re.compile(COMMENT_START.pattern + ".*")
+# As in YAML, a quoted value runs to its closing quote, so a spaced `#` inside it is text.
+_QUOTED = re.compile(r"""\s*(["'])(.*?)\1(?=\s|$)""")
 
 
 def is_brief(path: str | os.PathLike[str]) -> bool:
@@ -53,8 +55,9 @@ def is_brief(path: str | os.PathLike[str]) -> bool:
 
 
 def strip_comment(value: str) -> str:
-    """Drop a frontmatter value's inline `#` comment. The shared cleaner for every parser."""
-    return _COMMENT.sub("", value).strip()
+    """Drop a frontmatter value's inline `#` comment, and a quoted value's quotes. The shared cleaner."""
+    quoted = _QUOTED.match(value)
+    return quoted.group(2) if quoted else _COMMENT.sub("", value).strip()
 
 
 def resolve_root(

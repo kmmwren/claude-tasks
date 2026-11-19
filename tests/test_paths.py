@@ -103,6 +103,15 @@ def test_strip_comment_keeps_a_hash_inside_a_tag_list():
     assert _paths.strip_comment("[a#b, c#d]") == "[a#b, c#d]"
 
 
+def test_strip_comment_keeps_a_spaced_hash_inside_a_quoted_value_and_drops_the_quotes():
+    assert _paths.strip_comment(' "fix PRs (#1, #2)"') == "fix PRs (#1, #2)"
+    assert _paths.strip_comment(" 'see #3' # owner note") == "see #3"
+
+
+def test_strip_comment_treats_an_unclosed_quote_as_plain_text():
+    assert _paths.strip_comment(' "half #open') == '"half'
+
+
 def test_strip_comment_strips_only_at_the_first_spaced_hash():
     assert _paths.strip_comment("a # b # c") == "a"
 
