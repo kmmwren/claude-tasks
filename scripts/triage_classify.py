@@ -13,6 +13,7 @@ Stdlib only.
 """
 
 import dataclasses
+import hashlib
 import pathlib
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -95,6 +96,12 @@ def render_prompt(briefs: Sequence[InboxBrief], examples: Sequence[Example]) -> 
     return f"{INSTRUCTIONS}\n{seen}\n{body}"
 
 
+def brief_digest(brief: InboxBrief, examples: Sequence[Example]) -> str:
+    """Identifies what the model judges for one brief: the instructions, the examples and its prompt text."""
+    basis = "\n".join([INSTRUCTIONS, *map(_example_line, examples), brief.text[:BRIEF_CHARS]])
+    return hashlib.sha256(basis.encode()).hexdigest()
+
+
 def _call(item: object) -> Call | None:
     if not isinstance(item, dict) or not isinstance(item.get("id"), str):
         return None
@@ -160,19 +167,32 @@ def classify(
     examples: Sequence[Example],
     batch: int,
     jobs: int,
+    known: Mapping[str, Verdict] | None = None,
 ) -> list[Verdict]:
     """A verdict per brief: fixed calls first, then ready, then the model's call or, with no model, the gate's.
 
-    A brief the model was asked about and left unanswered gets none, so an outage is never logged as a call.
+    A model call already in `known` on the same digest is reused, so a run over an unchanged inbox asks
+    nothing. A brief the model was asked about and left unanswered gets none, so an outage is never
+    logged as a call.
     """
     residue = [b for b in inbox if b.id not in fixed and b.id not in promoted]
-    called = calls_for(residue, call, examples, batch, jobs) if call and residue else {}
+    digests = {b.id: brief_digest(b, examples) for b in residue} if call else {}
+    prior = known or {}
+    reused = {
+        b.id: Call(prior[b.id].cls, prior[b.id].reason)
+        for b in residue
+        if b.id in prior
+        and prior[b.id].cls in MODEL_CLASSES
+        and prior[b.id].digest == digests.get(b.id)
+    }
+    asked = [b for b in residue if b.id not in reused]
+    called = {**reused, **(calls_for(asked, call, examples, batch, jobs) if call and asked else {})}
 
     def verdict(b: InboxBrief) -> Verdict | None:
         if b.id in promoted and b.id not in fixed:
             return Verdict(b.id, BriefClass.READY, promoted[b.id], b.title)
         c = fixed.get(b.id) or called.get(b.id) or (_unready(b) if call is None else None)
-        return Verdict(b.id, c.cls, c.reason, b.title) if c else None
+        return Verdict(b.id, c.cls, c.reason, b.title, digest=digests.get(b.id, "")) if c else None
 
     return [v for v in map(verdict, inbox) if v]
 

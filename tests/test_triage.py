@@ -199,3 +199,17 @@ def test_a_second_run_in_one_process_is_not_latched_by_the_first(tmp_path, synce
     for name in ("one", "two"):
         triage.run(_with_model(make_inbox(tmp_path / name, QUEUE), apply=False))
     assert len(calls) == 2
+
+
+def test_a_second_apply_run_on_an_unchanged_inbox_asks_the_classifier_nothing(tmp_path, synced):
+    root = make_inbox(tmp_path, {"bare": QUEUE["bare"]})
+    asked = []
+
+    def classify(briefs, examples):
+        asked.append([b.id for b in briefs])
+        return {"bare": triage.Call(BC.DROP, "obsolete")}
+
+    opts = dataclasses.replace(_opts(root, apply=True), classify=classify)
+    triage.run(opts)
+    assert triage.run(opts).classes == {"drop": 1}
+    assert asked == [["bare"]]

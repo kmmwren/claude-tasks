@@ -138,6 +138,7 @@ def _classify(
         log.examples(EXAMPLE_LIMIT),
         opts.batch_size,
         opts.jobs,
+        log.latest(),
     )
     report.unclassified = len(inbox) - len(verdicts)
     report.classes = dict(collections.Counter(v.cls.value for v in verdicts))

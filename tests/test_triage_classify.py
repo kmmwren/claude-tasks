@@ -210,3 +210,58 @@ def test_a_spent_run_makes_no_call_from_any_worker_thread(tmp_path, monkeypatch)
     calls.clear()
     assert calls_for(briefs, claude_classify("m"), [], size=1, jobs=3) == {}
     assert calls == []
+
+
+def _model_verdicts(tmp_path, briefs, examples, known=None):
+    asked = []
+
+    def call(batch, shots):
+        asked.extend(b.id for b in batch)
+        return {b.id: Call(C.DROP, "stale") for b in batch}
+
+    verdicts = classify(briefs, {}, {}, call, examples, batch=5, jobs=1, known=known)
+    return verdicts, asked
+
+
+def test_a_second_run_on_an_unchanged_inbox_asks_the_model_nothing(tmp_path):
+    briefs = [brief(tmp_path, "a"), brief(tmp_path, "b")]
+    first, asked = _model_verdicts(tmp_path, briefs, [])
+    assert asked == ["a", "b"]
+    again, asked = _model_verdicts(tmp_path, briefs, [], known={v.brief_id: v for v in first})
+    assert asked == []
+    assert [(v.brief_id, v.cls, v.reason) for v in again] == [("a", C.DROP, "stale"), ("b", C.DROP, "stale")]
+
+
+def test_an_edited_brief_or_changed_examples_reclassify(tmp_path):
+    first, _ = _model_verdicts(tmp_path, [brief(tmp_path, "a"), brief(tmp_path, "b")], [])
+    known = {v.brief_id: v for v in first}
+    edited = [brief(tmp_path, "a", title="Reworded"), brief(tmp_path, "b")]
+    _, asked = _model_verdicts(tmp_path, edited, [], known=known)
+    assert asked == ["a"]
+    shots = [Example("t", C.DROP, "r", C.READY)]
+    _, asked = _model_verdicts(tmp_path, [brief(tmp_path, "a"), brief(tmp_path, "b")], shots, known=known)
+    assert asked == ["a", "b"]
+
+
+def test_only_model_calls_are_reused_and_an_unanswered_brief_is_asked_again(tmp_path):
+    ready_before = Verdict("a", C.READY, "ready as filed", "A")
+    _, asked = _model_verdicts(tmp_path, [brief(tmp_path, "a")], [], known={"a": ready_before})
+    assert asked == ["a"]
+    _, asked = _model_verdicts(tmp_path, [brief(tmp_path, "b")], [], known={})
+    assert asked == ["b"]
+
+
+def test_a_log_row_without_a_digest_is_never_reused(tmp_path):
+    legacy = Verdict("a", C.DROP, "stale", "A")
+    _, asked = _model_verdicts(tmp_path, [brief(tmp_path, "a")], [], known={"a": legacy})
+    assert asked == ["a"]
+
+
+def test_the_log_records_a_same_class_verdict_made_on_a_new_digest_and_reads_old_rows(tmp_path):
+    log = ClassLog(tmp_path)
+    assert log.record_verdict(Verdict("a", C.DROP, "r", "A", digest="d1"))
+    assert not log.record_verdict(Verdict("a", C.DROP, "r", "A", digest="d1"))
+    assert log.record_verdict(Verdict("a", C.DROP, "r", "A", digest="d2"))
+    assert log.latest()["a"].digest == "d2"
+    log.path.write_text('{"at": "t", "brief_id": "o", "cls": "drop", "event": "verdict", "reason": "r", "title": "O"}\n')
+    assert log.latest()["o"].digest == ""
