@@ -162,7 +162,7 @@ note = "owner says so"
 id = "third"
 [[rollout.targets.evidence]]
 stage = "built"
-kind = "configcat"
+kind = "feature_flag"
 flag = "some_flag"
 [[rollout.targets.evidence]]
 stage = "live"

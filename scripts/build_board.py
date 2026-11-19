@@ -86,6 +86,7 @@ def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
                     "parent": fm.get("parent", "") or "",
                     "assignee": fm.get("assignee", ""),
                     "milestone": fm.get("milestone", ""),
+                    "architecture": fm.get("architecture", ""),
                     "updated": fm.get("updated", ""),
                     "blocked_by": parse_list(fm.get("blocked_by", "")),
                     "requirements": cited_ids(header[1]) if header else [],

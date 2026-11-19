@@ -110,6 +110,7 @@ view/*.html
 # sync lock + atomic-write temp files
 .tasks-sync.lock
 .*.tmp
+*.lock
 # python
 .venv/
 __pycache__/

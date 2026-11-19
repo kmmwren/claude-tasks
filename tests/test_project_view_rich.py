@@ -147,16 +147,18 @@ def test_config_errors_and_date_forms(tmp_path):
 
     q = make_rich(tmp_path)
     with pytest.raises(pv.ProjectConfigError, match="does not exist"):
-        pv.load_project(tmp_path)
+        pv.read_project(tmp_path)
     good = (q / "project.toml").read_text()
     (q / "project.toml").write_text(good.replace("[health]", "[nothealth]"))
-    with pytest.raises(pv.ProjectConfigError, match=r"\[health\] is required"):
-        pv.load_project(q)
+    assert "health" not in pv.read_project(q)
+    (q / "project.toml").write_text(good.replace("[health]", "[health]\nx = 1\n[unused]"))
+    with pytest.raises(pv.ProjectConfigError, match="colour must be green, amber or red"):
+        pv.read_project(q)
     (q / "project.toml").write_text(
         good.replace("[ask]\n", "").replace("[[ask.options]]", "[[ask]]\n[[ask.options]]")
     )
     with pytest.raises(pv.ProjectConfigError, match="single table"):
-        pv.load_project(q)
+        pv.read_project(q)
     assert pv.parse_date(dt.datetime(2026, 1, 2, 3)) == dt.date(2026, 1, 2)
     assert pv.parse_date(dt.date(2026, 1, 2)) == dt.date(2026, 1, 2)
     assert pv.parse_date(5) is None

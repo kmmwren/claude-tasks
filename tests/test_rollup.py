@@ -393,16 +393,14 @@ def test_broken_projects_are_skipped_with_the_reason(tmp_path):
 def test_project_view_ignores_an_unreadable_milestones_file(tmp_path):
     q = make_queue(tmp_path)
     (q / "tasks.toml").write_text('name = "Demo"\nmilestones = "missing.toml"\n')
-    cfg = pv.load_project(q)
+    cfg = pv.read_project(q)
     assert [m["id"] for m in pv.declared_milestones(q, cfg)] == ["m1", "m2"]
 
 
-def test_load_project_still_requires_owner_health(tmp_path):
+def test_a_project_with_no_owner_health_reads_without_one(tmp_path):
     q = make_queue(tmp_path)
     (q / "project.toml").write_text('[project]\ntitle = "T"\noutcome = "O"\n')
     assert "health" not in pv.read_project(q)
-    with pytest.raises(pv.ProjectConfigError, match=r"\[health\] is required"):
-        pv.load_project(q)
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,9 @@ Finds, in one pass:
   unknown-milestone  a `milestone:` not in the project's milestones file (only checked when
                      tasks.toml sets `milestones`)
   milestones-file    tasks.toml names a milestones file that cannot be read
+  facts-orphan       a facts/<id>.toml with no brief of that id
+  facts-brief-mismatch  a facts file whose `brief` field is not its file stem
+  facts-unreadable   a facts file that is not valid TOML
 
   python scripts/check_deps.py [--json]
 """
@@ -21,9 +24,11 @@ import dataclasses
 import json
 import pathlib
 import sys
+import tomllib
 
 from _paths import require_queue, resolve_root
 from deps import Brief, awaits_release, dependency_edges, load_queue
+from facts import declared_brief, facts_files
 from milestones import MilestonesError, milestone_titles
 
 
@@ -71,7 +76,26 @@ def check(root: pathlib.Path) -> list[Problem]:
     for b in queue:
         problems += _brief_problems(b, known, done)
     problems += _milestone_problems(root, queue)
+    for path in facts_files(root):
+        problems += _facts_problems(path, known)
     return problems
+
+
+def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:
+    """An orphan facts file, and one whose `brief` is not its stem or which cannot be read."""
+    stem = path.stem
+    out = (
+        []
+        if stem in known
+        else [Problem("facts-orphan", stem, f"{path.name} has no brief {stem!r}")]
+    )
+    try:
+        declared = declared_brief(path)
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        return [*out, Problem("facts-unreadable", stem, f"{path.name}: {e}")]
+    if declared != stem:
+        out.append(Problem("facts-brief-mismatch", stem, f"`brief` is {declared!r}, not {stem!r}"))
+    return out
 
 
 def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:

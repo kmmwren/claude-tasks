@@ -35,10 +35,11 @@ from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root
+from _paths import resolve_root, warn
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
+    Brief,
     blocker_number,
     fm,
     fm_repeated,
@@ -47,6 +48,7 @@ from deps import (
     parse_list,
     probe_gaps,
 )
+from facts import lacks_evidence
 from git_sync import sync_commit
 from picks import note_choice
 from readiness import brief_missing_fields
@@ -291,6 +293,12 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
         raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
 
 
+def _warn_missing_evidence(brief_id: str, text: str, root: pathlib.Path) -> None:
+    """Say so when a brief that requires evidence is done without any; the move is never blocked."""
+    if Brief(brief_id, "done", fm(text)).evidence_required and lacks_evidence(root, brief_id):
+        warn(f"{brief_id} requires evidence but facts/{brief_id}.toml records none")
+
+
 def move_brief(
     brief_id: str,
     new_status: str,
@@ -367,6 +375,8 @@ def move_brief(
         atomic_write(new_path, text)
         if new_path != path:
             path.unlink()
+    if new_status == "done":
+        _warn_missing_evidence(brief_id, text, root)
     return new_path
 
 

@@ -202,3 +202,43 @@ def test_a_prerequisite_the_parent_already_has_is_not_copied(queues):
     fold_session.SessionQueue.load(child).fold(env)
     assert not (parent / "done" / "c.md").exists()
     assert _parent_unmet(parent, "a") == ["c"]
+
+
+def _write_facts(queue, stem, text):
+    (queue / "facts").mkdir(exist_ok=True)
+    (queue / "facts" / f"{stem}.toml").write_text(text)
+
+
+def test_facts_follow_a_brief_into_the_parent(queues):
+    parent, child, env = queues
+    _write_facts(child, "a", 'brief = "a"\nshipped = "yes"\n')
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "facts" / "a.toml").read_text() == 'brief = "a"\nshipped = "yes"\n'
+    assert not (child / "facts" / "a.toml").exists()
+
+
+def test_facts_are_renamed_with_a_bumped_brief_and_name_it(queues):
+    parent, child, env = queues
+    (parent / "ready" / "a.md").write_text("theirs\n")
+    _write_facts(child, "a", 'shipped = "yes"\nbrief = "a"\n')
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "facts" / "a-2.toml").read_text() == 'shipped = "yes"\nbrief = "a-2"\n'
+    assert not (parent / "facts" / "a.toml").exists()
+
+
+def test_a_facts_file_naming_no_brief_is_carried_unchanged(queues):
+    parent, child, env = queues
+    (parent / "ready" / "a.md").write_text("theirs\n")
+    _write_facts(child, "a", 'shipped = "yes"\n')
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "facts" / "a-2.toml").read_text() == 'shipped = "yes"\n'
+
+
+def test_facts_already_in_the_parent_are_kept_and_the_clash_is_reported(queues, capsys):
+    parent, child, env = queues
+    _write_facts(parent, "a", 'brief = "a"\n# theirs\n')
+    _write_facts(child, "a", 'brief = "a"\n# ours\n')
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "facts" / "a.toml").read_text().endswith("# theirs\n")
+    assert (child / "facts" / "a.toml").exists()
+    assert "was not carried" in capsys.readouterr().err

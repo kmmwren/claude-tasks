@@ -98,7 +98,7 @@ def test_config_validation(tmp_path, edit, message):
     new = text.replace(edit, 'colour = "purple"' if "colour" in edit else "")
     (q / "project.toml").write_text(new)
     with pytest.raises(pv.ProjectConfigError, match=message):
-        pv.load_project(q)
+        pv.read_project(q)
 
 
 def test_not_a_queue_is_refused(tmp_path):
@@ -124,12 +124,13 @@ def test_milestone_membership_comes_from_brief_frontmatter(tmp_path):
     assert ms["m1"]["briefs"] == ["b1"] and ms["m2"]["briefs"] == ["b2"]
 
 
-def test_a_legacy_briefs_list_on_a_milestone_is_ignored(tmp_path):
+def test_a_legacy_briefs_list_on_a_milestone_adds_its_briefs_to_the_frontmatter_ones(tmp_path):
     q = make_queue(tmp_path)
     toml = q / "project.toml"
     toml.write_text(toml.read_text().replace('title = "First"', 'title = "First"\nbriefs = ["b2"]'))
     ms = {x["id"]: x for x in model(q)["milestones"]}
-    assert ms["m1"]["briefs"] == ["b1"] and ms["m1"]["status"] == "done"
+    assert sorted(ms["m1"]["briefs"]) == ["b1", "b2"] and ms["m1"]["status"] == "active"
+    assert ms["m2"]["briefs"] == ["b2"]
 
 
 def test_release_is_read_and_shown_only_when_set(tmp_path):

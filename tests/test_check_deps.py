@@ -142,3 +142,53 @@ def test_blocked_brief_with_external_blocker_and_no_probe_is_flagged(tmp_path):
         tmp_path, {"a": {"status": "blocked", "blocked_by": "[external:x]", "probed": False}}
     )
     assert [p.kind for p in check_deps.check(root)] == ["blocked-no-probe"]
+
+
+# --------------------------------------------------------------------------- #
+# facts lint
+# --------------------------------------------------------------------------- #
+def _facts(root, stem, text):
+    (root / "facts").mkdir(exist_ok=True)
+    (root / "facts" / f"{stem}.toml").write_text(text)
+
+
+def test_a_facts_file_that_matches_its_brief_is_clean(tmp_path):
+    root = make_queue(tmp_path, {"a": {}})
+    _facts(root, "a", 'brief = "a"\n')
+    assert check_deps.check(root) == []
+
+
+def test_a_queue_without_a_facts_folder_is_clean(tmp_path):
+    assert check_deps.check(make_queue(tmp_path, {"a": {}})) == []
+
+
+def test_a_facts_file_with_no_brief_of_that_id_is_an_orphan(tmp_path):
+    root = make_queue(tmp_path, {"a": {}})
+    _facts(root, "gone", 'brief = "gone"\n')
+    assert _kinds(root) == [("facts-orphan", "gone")]
+
+
+def test_a_facts_file_naming_another_brief_is_a_mismatch(tmp_path):
+    root = make_queue(tmp_path, {"a": {}, "b": {}})
+    _facts(root, "a", 'brief = "b"\n')
+    problems = check_deps.check(root)
+    assert [(p.kind, p.brief) for p in problems] == [("facts-brief-mismatch", "a")]
+    assert "'b'" in problems[0].detail
+
+
+def test_a_facts_file_naming_no_brief_is_a_mismatch(tmp_path):
+    root = make_queue(tmp_path, {"a": {}})
+    _facts(root, "a", 'shipped = "yes"\n')
+    assert _kinds(root) == [("facts-brief-mismatch", "a")]
+
+
+def test_a_facts_file_that_is_not_toml_is_unreadable(tmp_path):
+    root = make_queue(tmp_path, {"a": {}})
+    _facts(root, "a", "this is = = not toml\n")
+    assert _kinds(root) == [("facts-unreadable", "a")]
+
+
+def test_an_orphan_that_is_also_unreadable_reports_both(tmp_path):
+    root = make_queue(tmp_path, {"a": {}})
+    _facts(root, "gone", "= bad\n")
+    assert _kinds(root) == [("facts-orphan", "gone"), ("facts-unreadable", "gone")]

@@ -123,3 +123,13 @@ def test_session_binding_heals_an_unreadable_session_file(tmp_path, capsys):
         _paths.resolve_root(env={**env, _paths.SESSION_ENV: "s1"}, cwd=tmp_path) == root.resolve()
     )
     assert "not valid TOML, rewriting it" in capsys.readouterr().err
+
+
+def test_gitignore_keeps_lock_files_out_of_the_repo(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    assert "*.lock" in (root / ".gitignore").read_text().splitlines()
+
+
+def test_a_prefix_that_is_not_letters_and_digits_is_refused(tmp_path):
+    with pytest.raises(SystemExit, match="--prefix must be letters and digits"):
+        init_queue.init_queue(tmp_path / "q", name="demo", prefix="1bad")

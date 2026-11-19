@@ -20,6 +20,17 @@
   project routing, the headroom check and the long-running-session branch are removed.
 
 ### Added
+- **Project facts are recorded as add-only files, written by `project_facts.py`.** Health, due-date
+  re-forecasts and CI readings are one new file each under `history/health`, `history/due` and
+  `history/ci`; per-brief flags, evidence, `shipped`, `shipped_on` and `release` live in
+  `facts/<brief>.toml`; `project.toml` takes an optional `initiative`, `[links]` and `[[releases]]`,
+  and a brief takes `architecture:` and `evidence: required`. `facts.py` reads them into typed rows
+  and derives the current health, the current due date and the slip (owner health is stale from 7
+  days). `project_facts.py --root <queue> set-health|set-due|set-ask|set-flag|add-evidence|set-shipped|set-ci`
+  exits 0 recorded, 1 invalid, 2 lock timeout. The project page reads all of it, and owner health is
+  now optional. A `briefs = [...]` list and a `[health]` table still read, with a deprecation
+  warning. Sync resolves the origin's default branch instead of assuming `main`, and holds back a
+  file carrying a signed or token-bearing link.
 - **Triage stops calling `claude` for the rest of a run once no account has capacity.** After a
   wrapper exit of 2, 3, 4 or 10, later batches return nothing without spawning; their briefs get
   no verdict, are not logged, stay untouched and are counted as `unclassified` in the report. Each

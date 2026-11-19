@@ -23,11 +23,13 @@ import pathlib
 import re
 import sys
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 import build_board
+import facts
+from _dates import parse_date
 from _paths import is_queue, warn
 from milestones import MilestonesError, MilestoneSpec, members, milestone_specs
 from requirements_check import check as check_queue
@@ -42,7 +44,8 @@ MEANING = {
     RED: "Off track. The outcome will be missed unless a decision or help arrives.",
 }
 STALE_DAYS = 7
-OWNER_STALE_DAYS = 14
+NOT_SET = "The owner has not set a status yet."
+OWNER_STALE_DAYS = 7
 BASELINE_DAYS = 7
 CI_RED_FLOOR = AMBER
 STALE_FLOOR = AMBER
@@ -86,7 +89,11 @@ def require_text(value: Any, field_name: str, hint: str = "") -> str:
 
 
 def read_project(queue: pathlib.Path) -> dict[str, Any]:
-    """project.toml with owner health optional, for readers that can say it is not set yet."""
+    """project.toml with owner health optional, for readers that can say it is not set yet.
+
+    `health` holds the newest health row (history rows, then the legacy table as the oldest) and is
+    absent when none is recorded.
+    """
     path = queue / "project.toml"
     if not path.is_file():
         raise ProjectConfigError(f"{path} does not exist")
@@ -98,6 +105,9 @@ def read_project(queue: pathlib.Path) -> dict[str, Any]:
         require_text(cfg["project"].get(key), f"[project] {key}")
     if "health" in cfg:
         _check_health(cfg["health"])
+    cfg.pop("health", None)
+    if (current := facts.current_health(queue)) is not None:
+        cfg["health"] = current.table()
     if "ask" in cfg and not isinstance(cfg["ask"], dict):
         raise ProjectConfigError("[ask] is a single table: a page carries at most one ask")
     return cfg
@@ -110,13 +120,6 @@ def _check_health(health: Any) -> None:
     if not isinstance(colour, str) or colour not in RANK:
         raise ProjectConfigError("[health] colour must be green, amber or red")
     require_text(health.get("reason"), "[health] reason", hint=": one line saying why")
-
-
-def load_project(queue: pathlib.Path) -> dict[str, Any]:
-    cfg = read_project(queue)
-    if "health" not in cfg:
-        raise ProjectConfigError("[health] is required")
-    return cfg
 
 
 def project_briefs(queue: pathlib.Path) -> list[dict[str, Any]]:
@@ -145,18 +148,19 @@ def _listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
     usable = []
     for number, m in enumerate(raw, 1):
         if _has_text_id(m):
-            _warn_if_listing_briefs(where, m)
+            _warn_if_listing_briefs(where, m, "milestone")
             usable.append(m)
         else:
             warn(f"{where} row {number} needs a text id; that row is left out")
     return usable
 
 
-def _warn_if_listing_briefs(where: str, row: dict[str, Any]) -> None:
-    # Membership comes only from each brief's frontmatter, so a listed row would sit at 0% unseen.
+def _warn_if_listing_briefs(where: str, row: dict[str, Any], field_name: str) -> None:
+    # A brief's own frontmatter is the membership; the list is read only so old queues keep working.
     if row.get("briefs"):
         warn(
-            f"{where} '{row['id']}' lists briefs, which are ignored; give each brief `milestone: {row['id']}`"
+            f"{where} '{row['id']}' lists briefs, which is deprecated; "
+            f"give each brief `{field_name}: {row['id']}`"
         )
 
 
@@ -172,16 +176,6 @@ def _file_milestones(queue: pathlib.Path) -> list[MilestoneSpec]:
     except (tomllib.TOMLDecodeError, ValueError, OSError, KeyError, TypeError) as e:
         warn(f"cannot read {queue / 'tasks.toml'} ({e}); the milestones file it names is left out")
     return []
-
-
-def parse_date(value: Any) -> dt.date | None:
-    if isinstance(value, dt.datetime):
-        return value.date()
-    if isinstance(value, dt.date):
-        return value
-    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()):
-        return dt.date.fromisoformat(value.strip())
-    return None
 
 
 def _utc(day: dt.date) -> dt.datetime:
@@ -200,6 +194,22 @@ def brief_state(b: dict[str, Any]) -> str:
 
 def _milestone_of(b: dict[str, Any]) -> str:
     return str(b["milestone"])
+
+
+def _legacy_ids(value: Any) -> set[str]:
+    """The brief ids a legacy `briefs` list holds; anything that is not a list of text is dropped."""
+    return {i for i in value if isinstance(i, str)} if isinstance(value, list) else set()
+
+
+def _belonging(
+    briefs: list[dict[str, Any]],
+    owner_id: str,
+    owner_of: Callable[[dict[str, Any]], str],
+    legacy: Any,
+) -> list[dict[str, Any]]:
+    """The briefs whose frontmatter names `owner_id`, plus any a legacy `briefs` list names."""
+    named = {b["id"] for b in members(briefs, owner_id, owner_of)} | _legacy_ids(legacy)
+    return [b for b in briefs if b["id"] in named]
 
 
 def _select(
@@ -239,7 +249,7 @@ def _milestone_row(
     m: dict[str, Any], briefs: list[dict[str, Any]], today: dt.date
 ) -> dict[str, Any]:
     spec = MilestoneSpec.parse(m["id"], m)
-    picked = members(briefs, spec.id, _milestone_of)
+    picked = _belonging(briefs, spec.id, _milestone_of, m.get("briefs"))
     roll = _rollup(picked)
     due = parse_date(m.get("due"))
     return {
@@ -332,14 +342,20 @@ def _rollout(
     return {"stages": stages, "targets": targets}
 
 
-def _arch_status(node: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> str:
-    chosen = [by_id[i] for i in node.get("briefs", []) if i in by_id]
+def _architecture_of(b: dict[str, Any]) -> str:
+    return str(b["architecture"])
+
+
+def _arch_status(node: dict[str, Any], briefs: list[dict[str, Any]]) -> str:
+    chosen = _belonging(briefs, node["id"], _architecture_of, node.get("briefs"))
     return _rollup(chosen)["status"] if chosen else "unmapped"
 
 
-def _architecture(cfg: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def _architecture(cfg: dict[str, Any], briefs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for n in cfg.get("architecture", []):
+        _warn_if_listing_briefs("project.toml: architecture", n, "architecture")
     nodes = {
-        n["id"]: dict(n, children=[], status=_arch_status(n, by_id))
+        n["id"]: dict(n, children=[], status=_arch_status(n, briefs))
         for n in cfg.get("architecture", [])
     }
     roots: list[dict[str, Any]] = []
@@ -502,12 +518,20 @@ def owner_health(
     return _health(cfg, found, now) if "health" in cfg else None
 
 
+def _link_rows(cfg: dict[str, Any], meta: facts.ProjectMeta) -> list[dict[str, str]]:
+    """The links tab rows: the legacy `[[links]]` rows, else the `[links]` name = url table."""
+    legacy = cfg.get("links")
+    if isinstance(legacy, list):
+        return [x for x in legacy if isinstance(x, dict)]
+    return [{"label": name, "url": url} for name, url in meta.links]
+
+
 def _health(
     cfg: dict[str, Any], signals_found: list[dict[str, str]], now: dt.datetime
 ) -> dict[str, Any]:
-    owner = cfg["health"]
+    owner = cfg.get("health", {"colour": "", "reason": ""})
     floor = max((s["floor"] for s in signals_found), key=RANK.__getitem__, default=GREEN)
-    effective = max(owner["colour"], floor, key=RANK.__getitem__)
+    effective = max(owner["colour"] or GREEN, floor, key=RANK.__getitem__)
     set_on = parse_date(owner.get("set_on"))
     age = (now.date() - set_on).days if set_on else None
     return {
@@ -520,8 +544,10 @@ def _health(
         "floor": floor,
         "signals": signals_found,
         "effective": effective,
-        "overridden": RANK[floor] > RANK[owner["colour"]],
-        "capping": [s for s in signals_found if RANK[s["floor"]] > RANK[owner["colour"]]],
+        "overridden": bool(owner["colour"]) and RANK[floor] > RANK[owner["colour"]],
+        "capping": [
+            s for s in signals_found if owner["colour"] and RANK[s["floor"]] > RANK[owner["colour"]]
+        ],
     }
 
 
@@ -591,7 +617,8 @@ def build_model(
 ) -> dict[str, Any]:
     if not is_queue(queue):
         raise ProjectConfigError(f"{queue} is not an initialised queue (no tasks.toml)")
-    cfg = load_project(queue)
+    cfg = read_project(queue)
+    meta = facts.load_project_meta(queue)
     briefs = project_briefs(queue)
     by_id = {b["id"]: b for b in briefs}
     milestones = milestone_rows(declared_milestones(queue, cfg), briefs, signals.now.date())
@@ -661,7 +688,7 @@ def build_model(
         "workstreams": workstreams,
         "prs": prs,
         "rollout": _rollout(cfg, by_id, signals.prs),
-        "architecture": _architecture(cfg, by_id),
+        "architecture": _architecture(cfg, briefs),
         "requirements": _requirements(queue, briefs),
         "decisions": _decisions(
             cfg, [*map(pathlib.Path, decision_dirs), queue.parent / "docs" / "adr"]
@@ -674,7 +701,9 @@ def build_model(
         "totals": totals,
         "jira": cfg.get("jira", []),
         "sessions": sessions,
-        "links": cfg.get("links", []),
+        "links": _link_rows(cfg, meta),
+        "initiative": meta.initiative or "",
+        "releases": [{"id": r.id, "date": r.date.isoformat()} for r in meta.releases],
         "ask": cfg.get("ask"),
         "last_movement": last.isoformat(timespec="seconds") if last else "",
         "unreadable_ci": sorted(p["key"] for p in prs if p["state"] == "UNKNOWN"),
@@ -792,7 +821,8 @@ def _header(m: dict[str, Any]) -> str:
     meta = []
     if h["age_days"] is not None:
         meta.append(f"Updated {_days_ago(h['age_days'])}")
-    meta.append(f"set by {h['set_by'] or 'the owner'}")
+    if h["owner"]:
+        meta.append(f"set by {h['set_by'] or 'the owner'}")
     if h["owner_stale"]:
         meta.append("not reconfirmed recently")
     note = ""
@@ -811,7 +841,7 @@ def _header(m: dict[str, Any]) -> str:
     return (
         f'<header class="top"><h1>{e(p["title"])}</h1><p class="goal">{e(p["outcome"])}</p>'
         f'<div class="health"><span class="pill {eff}">{e(HEALTH_WORD[eff])}</span>'
-        f'<div class="reason"><p>{e(h["reason"])}</p><p class="meta">{e(" · ".join(meta))}</p>{note}</div></div>'
+        f'<div class="reason"><p>{e(h["reason"] or NOT_SET)}</p><p class="meta">{e(" · ".join(meta))}</p>{note}</div></div>'
         f"{_since_line(m)}</header>"
     )
 

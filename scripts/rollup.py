@@ -33,6 +33,7 @@ from typing import Any, ClassVar
 
 import project_view as pv
 from _concurrency import atomic_write
+from _dates import parse_date
 from _paths import PROJECT_MARKER, is_queue, resolve_root, warn
 from config import load_config
 from deps import load_queue, unmet
@@ -366,7 +367,7 @@ class BriefSummary:
 
     @classmethod
     def of(cls, b: dict[str, Any], waiting: bool) -> "BriefSummary":
-        return cls(b["id"], b["title"], pv.brief_state(b), waiting, pv.parse_date(b["updated"]))
+        return cls(b["id"], b["title"], pv.brief_state(b), waiting, parse_date(b["updated"]))
 
     @property
     def updated_iso(self) -> str:

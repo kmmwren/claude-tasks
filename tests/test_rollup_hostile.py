@@ -228,8 +228,7 @@ def test_a_milestone_title_that_is_not_text_skips_only_that_milestone(tmp_path, 
     assert "The second thing works" in page and "The first thing works" not in page
 
 
-@pytest.mark.parametrize("value", ["5", "[[1]]", '["b2"]'])
-def test_a_milestone_brief_list_of_any_type_is_ignored_and_never_skips_the_project(tmp_path, value):
+def milestone_brief_ids(tmp_path, value):
     q = make_queue(tmp_path / "bad")
     project = q / "project.toml"
     project.write_text(
@@ -237,10 +236,18 @@ def test_a_milestone_brief_list_of_any_type_is_ignored_and_never_skips_the_proje
     )
     r = rollup.build([rollup.Source("S", tmp_path)], NOW)
     assert r.skipped == ()
-    assert [(m.id, [b.id for b in m.briefs]) for m in r.projects[0].milestones] == [
-        ("m1", ["b1"]),
-        ("m2", ["b2"]),
-    ]
+    return [(m.id, sorted(b.id for b in m.briefs)) for m in r.projects[0].milestones]
+
+
+@pytest.mark.parametrize("value", ["5", "[[1]]", "[1, true]", '"b2"'])
+def test_a_milestone_brief_list_of_the_wrong_type_is_ignored_and_never_skips_the_project(
+    tmp_path, value
+):
+    assert milestone_brief_ids(tmp_path, value) == [("m1", ["b1"]), ("m2", ["b2"])]
+
+
+def test_a_legacy_milestone_brief_list_still_names_its_briefs(tmp_path):
+    assert milestone_brief_ids(tmp_path, '["b2", 7]') == [("m1", ["b1", "b2"]), ("m2", ["b2"])]
 
 
 def test_skip_reasons_never_carry_an_absolute_path(tmp_path):

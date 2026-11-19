@@ -65,3 +65,15 @@ def test_load_queue_names_an_id_less_or_blank_id_brief_by_its_file_stem(tmp_path
     (tmp_path / "ready" / "no-id-here.md").write_text("---\ntitle: T\n---\n")
     (tmp_path / "ready" / "blank-id.md").write_text("---\nid:\ntitle: T\n---\n")
     assert [b.id for b in deps.load_queue(tmp_path)] == ["blank-id", "no-id-here"]
+
+
+def test_architecture_is_the_named_value_or_none():
+    assert deps.Brief("x", "ready", {"architecture": "lite-core"}).architecture == "lite-core"
+    assert deps.Brief("x", "ready", {"architecture": ""}).architecture is None
+    assert deps.Brief("x", "ready", {}).architecture is None
+
+
+def test_evidence_is_required_only_when_the_brief_says_required():
+    assert deps.Brief("x", "ready", {"evidence": "required"}).evidence_required
+    assert not deps.Brief("x", "ready", {"evidence": "optional"}).evidence_required
+    assert not deps.Brief("x", "ready", {}).evidence_required

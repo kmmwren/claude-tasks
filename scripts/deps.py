@@ -121,6 +121,16 @@ class Brief:
         return self.fields.get("milestone", "")
 
     @property
+    def architecture(self) -> str | None:
+        """The architecture the brief belongs to, None when it names none."""
+        return self.fields.get("architecture") or None
+
+    @property
+    def evidence_required(self) -> bool:
+        """True only for `evidence: required`; the brief then needs recorded evidence to be done."""
+        return self.fields.get("evidence") == "required"
+
+    @property
     def depends_tags(self) -> set[str]:
         return {
             t[len("depends:") :]

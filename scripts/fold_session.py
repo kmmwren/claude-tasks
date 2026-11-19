@@ -21,9 +21,10 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from _concurrency import atomic_write, repo_lock, reserve_name
-from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue
+from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue, warn
 from config import load_config
 from deps import Brief, fm, load_queue
+from facts import facts_path
 from git_sync import owns_repo, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
@@ -32,6 +33,7 @@ _FRONTMATTER = re.compile(r"\A---\n.*?\n---", re.DOTALL)
 _WORD = re.compile(r"(?<![\w:-])[\w-]+")
 _DEPENDS_TAG = re.compile(r"(?<=depends:)[\w-]+")
 _LIFECYCLE = re.compile(r'(?m)^lifecycle\s*=\s*"session"\s*$')
+_FACTS_BRIEF = re.compile(r'(?m)^brief\s*=\s*"[^"\n]*"')
 
 
 @dataclass(frozen=True)
@@ -87,13 +89,27 @@ class SessionQueue:
 
     def _move(self, move: Move, renames: Mapping[str, str]) -> None:
         text = move.source.read_text()
+        old_id = _brief_id(move.source)
+        new_id = renames.get(old_id, old_id)
         if renames:
-            text = _retarget(text, renames, renames.get(_brief_id(move.source)))
+            text = _retarget(text, renames, renames.get(old_id))
         atomic_write(move.dest, text)
+        self._carry_facts(old_id, new_id)
         atomic_write(
             move.source,
             f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n",
         )
+
+    def _carry_facts(self, old_id: str, new_id: str) -> None:
+        """Move a brief's facts file to the parent under its new id, so the facts follow the brief."""
+        source, dest = facts_path(self.root, old_id), facts_path(self.fold_to, new_id)
+        if not source.exists():
+            return
+        if dest.exists():
+            warn(f"{dest} already exists; {source} was not carried")
+            return
+        atomic_write(dest, _retarget_facts(source.read_text(), new_id))
+        source.unlink()
 
     def _carry_done_prerequisites(self, moves: list[Move]) -> None:
         """Copy done briefs the moved ones depend on, since the parent only counts its own done/ as met."""
@@ -129,6 +145,11 @@ def _retarget(text: str, renames: Mapping[str, str], own_id: str | None) -> str:
         return text
     lines = [_retarget_line(line, renames, own_id) for line in match.group().split("\n")]
     return "\n".join(lines) + text[match.end() :]
+
+
+def _retarget_facts(text: str, new_id: str) -> str:
+    """Point a facts file's `brief` at `new_id`; a file that names no brief is left as it is."""
+    return _FACTS_BRIEF.sub(lambda _: f'brief = "{new_id}"', text, count=1)
 
 
 def _retarget_line(line: str, renames: Mapping[str, str], own_id: str | None) -> str:

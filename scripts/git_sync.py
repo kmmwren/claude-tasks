@@ -23,6 +23,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import Deadline, HeldLock, repo_lock  # noqa: E402
+from _default_branch import default_branch  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
 from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
@@ -38,11 +39,28 @@ def owns_repo(root: pathlib.Path) -> bool:
     return top.returncode == 0 and pathlib.Path(top.stdout.strip()).resolve() == root.resolve()
 
 
+def host_repo_name(root: pathlib.Path) -> str | None:
+    """The name of the git repo that holds `root`, None when `root` is in no repo."""
+    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
+    return pathlib.Path(top.stdout.strip()).name if top.returncode == 0 else None
+
+
 # High-signal credential shapes only: a sweep stages whole files, so one that carries a key stays local.
+# The last group is a signed or token-bearing link (AWS presigned, Azure SAS, CloudFront, a bare token
+# parameter): it expires, so it must never sit in git history.
 _SECRET = re.compile(
     r"AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    r"|(?i:[?&]x-amz-(?:signature|credential)="
+    r"|(?=\S*[?&](?:se|sp)=)\S*[?&]sig="
+    r"|[?&](?:signature|key-pair-id|policy)="
+    r"|[?&](?:access_)?token=)"
 )
+
+
+def carries_credential(text: str) -> bool:
+    """True when `text` holds a credential or a signed link."""
+    return _SECRET.search(text) is not None
 
 
 def _split_z(output: str) -> list[str]:
@@ -66,7 +84,7 @@ def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
     found = []
     for rel in _split_z(out):
         try:
-            if _SECRET.search((root / rel).read_text(errors="ignore")):
+            if carries_credential((root / rel).read_text(errors="ignore")):
                 found.append(rel)
         except OSError:
             continue  # deleted or unreadable: nothing to leak
@@ -89,7 +107,7 @@ def _staged_secret_bearing(root: pathlib.Path) -> list[str]:
         (rel, _git(root, "show", f":{rel}", capture_output=True).stdout.decode(errors="ignore"))
         for rel in _split_z(out)
     )
-    return [rel for rel, content in staged if _SECRET.search(content)]
+    return [rel for rel, content in staged if carries_credential(content)]
 
 
 def _unstage(root: pathlib.Path, rels: Sequence[str]) -> None:
@@ -129,7 +147,7 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
 
 
 def _fetch_if_stale(root: pathlib.Path) -> None:
-    """Fetch origin/main unless the last fetch is under FETCH_MAX_AGE old."""
+    """Fetch origin's default branch unless the last fetch is under FETCH_MAX_AGE old."""
     fetch_head = _fetch_head(root)
     try:
         if fetch_head and time.time() - fetch_head.stat().st_mtime < FETCH_MAX_AGE:
@@ -140,12 +158,12 @@ def _fetch_if_stale(root: pathlib.Path) -> None:
         _fetch_origin(root, Deadline.in_(NETWORK_TIMEOUT))
     except subprocess.TimeoutExpired:
         print(
-            f"  (fetch timed out after {NETWORK_TIMEOUT:.0f}s; using origin/main as last fetched.)"
+            f"  (fetch timed out after {NETWORK_TIMEOUT:.0f}s; using the remote branch as last fetched.)"
         )
 
 
 def _shadowing_briefs(root: pathlib.Path) -> list[str]:
-    """New brief files whose id is already filed in another state dir, here or on origin/main.
+    """New brief files whose id is already filed in another state dir, here or on origin's default branch.
 
     A writer with a stale view would re-create a moved or closed id; a write never fetches, so a rival
     pushed since the last sweep is seen only by the next one.
@@ -158,7 +176,7 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
         "--relative",
         "--name-only",
         "--diff-filter=A",
-        "HEAD...origin/main",
+        f"HEAD...origin/{default_branch(root)}",
         capture_output=True,
         text=True,
     )
@@ -204,20 +222,22 @@ def _short_log(root: pathlib.Path, rev_range: str) -> str:
 
 
 def _report_divergence(root: pathlib.Path, why: str, parked: str = "") -> None:
+    branch = default_branch(root)
     print(
         f"  (push deferred: {why}. {parked + '. ' if parked else ''}"
-        f"Local commits kept, unpushed: {_short_log(root, 'origin/main..HEAD')}. "
-        f"Remote commits not integrated: {_short_log(root, 'HEAD..origin/main')}. "
-        f"Resolve on a detached worktree, never the checked-out main: {_recovery_steps(root)}.)"
+        f"Local commits kept, unpushed: {_short_log(root, f'origin/{branch}..HEAD')}. "
+        f"Remote commits not integrated: {_short_log(root, f'HEAD..origin/{branch}')}. "
+        f"Resolve on a detached worktree, never the checked-out {branch}: {_recovery_steps(root)}.)"
     )
 
 
 def _recovery_steps(root: pathlib.Path) -> str:
-    """Rebasing `main` itself from a second worktree leaves `root`'s index stale, so stay detached."""
+    """Rebasing the default branch itself from a second worktree leaves `root`'s index stale, so stay detached."""
     wt = f"{root}-recover"
+    branch = default_branch(root)
     return (
-        f"git -C {root} worktree add --detach {wt} HEAD; cd {wt}; git rebase origin/main; "
-        f"git push origin HEAD:main; git -C {root} merge --ff-only origin/main; "
+        f"git -C {root} worktree add --detach {wt} HEAD; cd {wt}; git rebase origin/{branch}; "
+        f"git push origin HEAD:{branch}; git -C {root} merge --ff-only origin/{branch}; "
         f"git -C {root} worktree remove {wt}"
     )
 
@@ -228,7 +248,7 @@ def _fetch_origin(root: pathlib.Path, deadline: Deadline) -> None:
         "fetch",
         "-q",
         "origin",
-        "main",
+        default_branch(root),
         capture_output=True,
         text=True,
         timeout=deadline.cap(NETWORK_TIMEOUT),
@@ -265,7 +285,7 @@ def _wip_branch() -> str:
 def _park_local_commits(root: pathlib.Path, deadline: Deadline) -> str:
     """Push the local commits to the wip branch so origin holds them; say where they went.
 
-    Only this sync writes the branch and local main only grows, so a forced push is a fast-forward
+    Only this sync writes the branch and the local default branch only grows, so a forced push is a fast-forward
     of the same history or a safe replace. A failed push leaves the commits local, and says so.
     """
     branch = _wip_branch()
@@ -291,7 +311,8 @@ def _park_local_commits(root: pathlib.Path, deadline: Deadline) -> str:
 
 
 def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -> bool:
-    rebased = Rebase.onto_origin(wt).run()
+    branch = default_branch(root)
+    rebased = Rebase.onto_origin(wt, branch).run()
     if not rebased.completed:
         _report_divergence(root, rebased.reason, _park_local_commits(root, deadline))
         return False
@@ -300,7 +321,7 @@ def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -
         "push",
         "-q",
         "origin",
-        "HEAD:main",
+        f"HEAD:{branch}",
         capture_output=True,
         text=True,
         timeout=deadline.cap(NETWORK_TIMEOUT),
@@ -311,23 +332,25 @@ def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -
 
 
 def _advance_checkout(root: pathlib.Path, deadline: Deadline) -> None:
+    branch = default_branch(root)
     try:
         _fetch_origin(root, deadline)
     except subprocess.TimeoutExpired:
         print(
             "  (pushed, but the checkout was not advanced: the fetch timed out; "
-            "run: git fetch origin main && git reset --keep origin/main)"
+            f"run: git fetch origin {branch} && git reset --keep origin/{branch})"
         )
         return
-    if _git(root, "reset", "--keep", "origin/main", capture_output=True, text=True).returncode != 0:
+    reset = _git(root, "reset", "--keep", f"origin/{branch}", capture_output=True, text=True)
+    if reset.returncode != 0:
         print(
             "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
-            "commit or move them, then run: git reset --keep origin/main)"
+            f"commit or move them, then run: git reset --keep origin/{branch})"
         )
 
 
 def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
-    """Rebase the local commits onto origin/main in a scratch worktree, push, then advance `root`.
+    """Rebase the local commits onto origin's default branch in a scratch worktree, push, then advance `root`.
 
     Nothing is stashed and the checkout's uncommitted edits are never touched: `reset --keep`
     refuses to move when an edit overlaps an incoming change.
@@ -365,13 +388,22 @@ REBASE_LOCK_WAIT = 30.0  # longest a rejected push waits for the queue lock befo
 
 
 def _ahead_of_origin(root: pathlib.Path) -> bool:
-    """True when main carries commits origin/main lacks; True too when that cannot be read."""
-    ahead = _git(root, "rev-list", "--count", "origin/main..HEAD", capture_output=True, text=True)
+    """True when the checkout carries commits origin lacks; True too when that cannot be read."""
+    ahead = _git(
+        root,
+        "rev-list",
+        "--count",
+        f"origin/{default_branch(root)}..HEAD",
+        capture_output=True,
+        text=True,
+    )
     return ahead.returncode != 0 or ahead.stdout.strip() != "0"
 
 
 def _push_main(root: pathlib.Path, deadline: Deadline) -> bool:
-    pushed = _git(root, "push", "-q", "origin", "main", timeout=deadline.cap(NETWORK_TIMEOUT))
+    pushed = _git(
+        root, "push", "-q", "origin", default_branch(root), timeout=deadline.cap(NETWORK_TIMEOUT)
+    )
     if pushed.returncode == 0:
         return True
     with repo_lock(root, timeout=deadline.cap(REBASE_LOCK_WAIT)) as acquired:
@@ -382,7 +414,7 @@ def _push_main(root: pathlib.Path, deadline: Deadline) -> bool:
 
 
 def _push(root: pathlib.Path, deadline: Deadline) -> bool:
-    """Push main, rebasing onto origin under the queue lock if it is rejected.
+    """Push the default branch, rebasing onto origin under the queue lock if it is rejected.
 
     A timeout is a failed push that restores the dirty mark, so the next sweep pushes again.
     """
@@ -484,40 +516,55 @@ def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequenc
                 "Re-run git_sync.py with the same message and ids to commit them.)"
             )
             return False
-        shadows = _shadowing_briefs(root)
-        for path in shadows:
-            print(
-                f"  (refused: {path} would re-create an id already filed in another state; "
-                "sharpen the existing brief instead. Left untracked.)"
-            )
-        staged_leaks = _staged_secret_bearing(root)
-        _unstage(root, staged_leaks)
-        leaks = list(
-            dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])])
-        )
-        if leaks:  # a count, not names: the paths come from scanning credential-bearing files
-            print(
-                f"  (refused: {len(leaks)} held back for looking like a credential. "
-                "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
-            )
-        refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
-        _stage_named_briefs(root, ids, refused)
-        if paths:
-            _git(root, "add", "--all", "--", *paths, *refused)
-        # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
-        _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
+        _commit_locked(message, root, ids, paths)
     return True
 
 
-def _commit_for_push(
+def _commit_locked(
     message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]
+) -> None:
+    """Stage and commit what the caller names; the caller holds the queue lock."""
+    shadows = _shadowing_briefs(root)
+    for path in shadows:
+        print(
+            f"  (refused: {path} would re-create an id already filed in another state; "
+            "sharpen the existing brief instead. Left untracked.)"
+        )
+    staged_leaks = _staged_secret_bearing(root)
+    _unstage(root, staged_leaks)
+    leaks = list(dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])]))
+    if leaks:  # a count, not names: the paths come from scanning credential-bearing files
+        print(
+            f"  (refused: {len(leaks)} held back for looking like a credential. "
+            "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
+        )
+    refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
+    _stage_named_briefs(root, ids, refused)
+    if paths:
+        _git(root, "add", "--all", "--", *paths, *refused)
+    # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
+    _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
+
+
+def _commit_for_push(
+    message: str,
+    root: pathlib.Path,
+    ids: Sequence[str],
+    paths: Sequence[str],
+    lock_held: bool = False,
 ) -> bool:
-    """Commit and mark the clone dirty; False if deferred or the queue belongs to another repo."""
+    """Commit and mark the clone dirty; False if deferred or the queue belongs to another repo.
+
+    `lock_held` means the caller already holds the queue lock around its own writes, so one hold
+    covers write and commit; taking it again would wait on itself.
+    """
     if not owns_repo(root):
         return False  # a project queue lives inside another repo, which ships it
     state = PushState(root)
     with state.writing():
-        if not _commit(message, root, ids, paths):
+        if lock_held:
+            _commit_locked(message, root, ids, paths)
+        elif not _commit(message, root, ids, paths):
             return False
         # An idle sweep, or a commit a running pusher already carried, needs no push.
         if _ahead_of_origin(root):
@@ -530,13 +577,15 @@ def sync_commit(
     root: pathlib.Path | None = None,
     ids: Sequence[str] = (),
     paths: Sequence[str] = (),
+    *,
+    lock_held: bool = False,
 ) -> bool:
     """Commit only the briefs `ids` and pathspecs `paths` name, under the lock; the push runs detached.
 
     False means deferred, and the caller re-runs with the same args.
     """
     root = resolve_root() if root is None else root
-    if not _commit_for_push(message, root, ids, paths):
+    if not _commit_for_push(message, root, ids, paths, lock_held):
         return False
     if PushState(root).is_dirty():
         request_push(root)
@@ -553,7 +602,7 @@ def sync_commit_and_push(
 def sweep(root: pathlib.Path | None = None) -> bool:
     """Commit every uncommitted change and push before returning: the net under every writer.
 
-    It is the one caller that refreshes origin/main, and dispatch relies on origin being current after it.
+    It is the one caller that refreshes origin, and dispatch relies on origin being current after it.
     True means nothing is left to push; False means deferred or the push failed.
     """
     root = resolve_root() if root is None else root

@@ -1182,3 +1182,68 @@ def test_an_unchanged_list_keeps_probes_and_a_new_probe_wins_for_its_number(root
         "1: exit 10",
         "2: exit 0",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Evidence warning on done
+# --------------------------------------------------------------------------- #
+EVIDENCE_ROW = """brief = "rotate-the-api-key"
+
+[[evidence]]
+kind = "screenshot"
+link = "https://example.test/key.png"
+caption = "The new key in use"
+access = "org"
+recorded_on = 2026-06-02
+"""
+
+
+def _require_evidence(root, bid="rotate-the-api-key"):
+    path = root / "ready" / f"{bid}.md"
+    path.write_text(path.read_text().replace("---\n", "---\nevidence: required\n", 1))
+
+
+def _record_facts(root, text):
+    (root / "facts").mkdir(exist_ok=True)
+    (root / "facts" / "rotate-the-api-key.toml").write_text(text)
+
+
+def test_done_without_evidence_warns_once_and_still_moves(root, capsys):
+    _require_evidence(root)
+    new_path = transition.move_brief("rotate-the-api-key", "done", root)
+    assert new_path == root / "done" / "rotate-the-api-key.md"
+    err = capsys.readouterr().err
+    assert err.count("rotate-the-api-key requires evidence") == 1
+
+
+def test_done_with_evidence_recorded_is_silent(root, capsys):
+    _require_evidence(root)
+    _record_facts(root, EVIDENCE_ROW)
+    transition.move_brief("rotate-the-api-key", "done", root)
+    assert capsys.readouterr().err == ""
+
+
+def test_done_without_the_requirement_is_silent(root, capsys):
+    transition.move_brief("rotate-the-api-key", "done", root)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_move_that_is_not_done_does_not_check_evidence(root, capsys):
+    _require_evidence(root)
+    transition.move_brief("rotate-the-api-key", "in-progress", root)
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_done_without_evidence_warns_and_exits_zero(root, monkeypatch, capsys):
+    _require_evidence(root)
+    monkeypatch.setattr(transition, "sync_commit", lambda *a, **k: None)
+    transition.main(["move", "rotate-the-api-key", "done", "--root", str(root), "--no-sync"])
+    captured = capsys.readouterr()
+    assert "rotate-the-api-key requires evidence" in captured.err
+    assert "rotate-the-api-key → done" in captured.out
+
+
+def test_a_move_whose_only_if_turns_false_under_the_lock_is_refused(root):
+    with pytest.raises(ValueError, match="changed while waiting for the lock"):
+        transition.move_brief("rotate-the-api-key", "done", root, only_if=lambda: False)
+    assert (root / "ready" / "rotate-the-api-key.md").exists()

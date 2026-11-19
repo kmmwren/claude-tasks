@@ -3,7 +3,7 @@ _log_conflict.py: finish a scratch-worktree rebase whose only conflicts are Exec
 
 `append_log.py` pushes a log line to origin while a local writer moves or logs the same brief, so
 the replayed commit and origin both edit the end of one file. `Rebase` resolves such a file as the
-union of both sides (`_log_merge`). A union built on an origin/main that has since moved is never
+union of both sides (`_log_merge`). A union built on an origin branch that has since moved is never
 published: the fast-forward-only push refuses it and the caller reports the divergence.
 """
 
@@ -59,8 +59,9 @@ class Rebase:
     onto: str
 
     @classmethod
-    def onto_origin(cls, worktree: pathlib.Path) -> "Rebase":
-        return cls(worktree, _run(worktree, "rev-parse", "origin/main").stdout.strip())
+    def onto_origin(cls, worktree: pathlib.Path, branch: str) -> "Rebase":
+        """A rebase onto origin's `branch`, the default branch the caller resolved once."""
+        return cls(worktree, _run(worktree, "rev-parse", f"origin/{branch}").stdout.strip())
 
     def run(self) -> RebaseResult:
         """Replay the local commits, resolving log-only conflicts; abort and say why otherwise."""

@@ -300,6 +300,69 @@ in order:
    queues you can check into a repo.
 3. `~/tasks` — the default.
 
+## Project facts
+
+A queue that backs a project page keeps its facts beside its briefs. Every fact that changes over
+time is a small file that is only ever added, so two writers never conflict and the history is the
+audit trail. The current value, the slip and the staleness are derived on every read and never
+stored.
+
+```
+project.toml                        baseline: title, outcome, milestones, optional keys below
+history/health/<date>-<8 hex>.toml  colour, reason, set_by, set_on
+history/due/<milestone>-<date>-<8 hex>.toml   milestone, due, set_on, set_by, reason
+history/ci/<date>-<8 hex>.toml      state (green or red), link, set_on
+facts/<brief>.toml                  flags, evidence, shipped, shipped_on, release
+```
+
+**`project.toml`** holds the baseline. Its optional keys are `initiative` (one line naming the
+programme the project belongs to), `[links]` (`name = "https://..."`), `[[releases]]` (`id`, `date`)
+and `[ask]` (one table: the question the owner needs answered). A milestone's `due` is the first
+date promised; each row in `history/due/` re-forecasts it, the newest row is the current date, and
+the slip is the current date minus the first one. A forecast one day past the first date is a slip
+of one day, with no grace.
+
+**Health** is the newest row in `history/health/`. The owner's statement is stale after 7 days:
+a row set 6 days ago is fresh, a row set 7 days ago is reported as not reconfirmed.
+
+**`facts/<brief>.toml`** names its brief (`brief = "<id>"`) and holds:
+
+- `[[flag]]`: `name`, `environment`, `state`, `changed_on`; the newest row per name and environment
+  is the current state.
+- `[[evidence]]`: `kind` (`screenshot` or `video`), `link` (https), `caption`,
+  `access` (`public`, `org` or `private`), `recorded_on`.
+- `shipped` (one line), `shipped_on` and `release` (an id from `[[releases]]`).
+
+**Brief frontmatter** names the project structure a brief belongs to: `milestone`, `architecture`
+(the id of an `[[architecture]]` node), and `evidence: required` for a brief that cannot count as
+done without recorded evidence (moving it to `done/` without any prints a warning; it never
+blocks).
+
+A row or file that cannot be read is skipped with one warning on stderr naming it. The older shapes
+still read: a `briefs = [...]` list on a milestone or architecture node and a `[health]` table in
+`project.toml` (read as the oldest health row, with no date required). The lists warn that they are
+deprecated; give each brief `milestone:` or `architecture:` instead.
+
+### Recording a fact: `project_facts.py`
+
+```
+python3 scripts/project_facts.py --root <queue-dir> <subcommand> [options]
+```
+
+| Subcommand | Records |
+|---|---|
+| `set-health --colour green\|amber\|red --reason <text> --set-by <name> [--on <date>]` | a health row |
+| `set-due --milestone <id> --due <date> --reason <text> --set-by <name> [--on <date>]` | a due-date re-forecast |
+| `set-ask --text <question>` or `set-ask --clear` | the project's `[ask]` |
+| `set-flag --brief <id> --name <flag> --environment <env> --state on\|off [--changed-on <date>]` | a flag row |
+| `add-evidence --brief <id> --kind screenshot\|video --link <https url> --caption <text> --access public\|org\|private [--recorded-on <date>]` | an evidence row |
+| `set-shipped --brief <id> --line <text> [--on <date>] [--release <id>]` | what shipped |
+| `set-ci --state green\|red --link <https url> [--on <date>]` | a CI reading |
+
+Dates are `YYYY-MM-DD` and default to today. The write and its commit happen inside one hold of the
+queue lock. Exit codes: `0` recorded; `1` an argument or an existing file failed validation, with
+one line on stderr naming it; `2` the queue lock was not acquired in time and nothing was written.
+
 ## Configuration
 
 Everything user-specific is a *value*, not code. `tasks.toml` at the queue root:

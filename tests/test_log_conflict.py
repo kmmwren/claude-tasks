@@ -80,7 +80,7 @@ def test_union_resolves_a_log_append_against_a_local_move(queue, tmp_path):
     queue.move_locally("2026-11-09: closed locally.\n")
     wt = queue.scratch(tmp_path)
 
-    assert Rebase.onto_origin(wt).run() == RebaseResult(True)
+    assert Rebase.onto_origin(wt, "main").run() == RebaseResult(True)
 
     merged = (wt / "done" / "b.md").read_text()
     assert "status: done" in merged
@@ -97,7 +97,7 @@ def test_a_conflict_outside_the_log_is_reported_not_unioned(queue, tmp_path):
     queue.write(queue.repo, "inbox/b.md", brief(goal="local rewrote the goal"))
     queue.commit(queue.repo, "edit goal")
 
-    result = Rebase.onto_origin(queue.scratch(tmp_path)).run()
+    result = Rebase.onto_origin(queue.scratch(tmp_path), "main").run()
 
     assert result == RebaseResult(False, conflict=("inbox/b.md",))
     assert result.reason == "rebase conflict in inbox/b.md"
@@ -112,7 +112,7 @@ def test_a_rebase_that_fails_without_a_conflict_says_so(queue, tmp_path):
 
 @pytest.mark.parametrize("path", ["scripts/tool.py", "elsewhere/b.md", "inbox/never-conflicted.md"])
 def test_only_a_conflicted_task_brief_is_resolved(queue, tmp_path, path):
-    assert Rebase.onto_origin(queue.scratch(tmp_path)).resolve(path) is Verdict.CONFLICT
+    assert Rebase.onto_origin(queue.scratch(tmp_path), "main").resolve(path) is Verdict.CONFLICT
 
 
 def test_the_stages_are_git_s_base_upstream_and_replayed_slots():
@@ -129,7 +129,7 @@ def test_a_later_replayed_commit_that_conflicts_after_an_earlier_one_resolved(
     queue.commit(queue.repo, "second")
     wt = queue.scratch(tmp_path)
 
-    assert Rebase.onto_origin(wt).run() == RebaseResult(True)
+    assert Rebase.onto_origin(wt, "main").run() == RebaseResult(True)
 
     assert (
         (wt / "done" / "b.md")
@@ -161,7 +161,7 @@ def test_a_brief_that_resolves_alongside_a_file_that_conflicts_aborts_as_a_confl
     queue.commit(queue.repo, "log b and edit c locally")
     wt = queue.scratch(tmp_path)
 
-    result = Rebase.onto_origin(wt).run()
+    result = Rebase.onto_origin(wt, "main").run()
 
     assert result == RebaseResult(False, conflict=("inbox/c.md",))
     assert git(wt, "status", "--porcelain") == ""
