@@ -18,6 +18,14 @@
   `$CLAUDE_TASKS_LAUNCHER` because no default launcher is assumed.
 - **`handoff` is generic.** An optional `~/.config/claude-tasks/handoff.md` adds personal steps; Step 0
   project routing, the headroom check and the long-running-session branch are removed.
+- **`action-task` records what shipped when a brief is done.** After `transition.py move <id> done`
+  the skill calls `project_facts.py set-shipped` with a one-line summary, and `--release` when the
+  project has a current `[[releases]]` row. Moving a brief marked `evidence: required` to `done/`
+  with no evidence row still succeeds and prints a warning from `transition.py`, so the warning holds
+  without the skill.
+- **The `rollup` skill names every field a roll-up carries** (including `outcome` and the automatic-check
+  text) and says that the Desktop Code tab generates and serves, while Desktop Chat and claude.ai
+  read the published files through **+ > Add from GitHub**; recheck that split after 2026-11-30.
 
 ### Added
 - **Project facts are recorded as add-only files, written by `project_facts.py`.** Health, due-date

@@ -12,16 +12,20 @@ It is generated from project queues (a queue with a `project.toml`) and has one 
   what shipped in the last 14 days.
 - **cto**: one table of every project: health, milestones done of total, next due, missed.
 
-Only titles, states and dates, the project's outcome, the owner's own health and ask, and the text
-of the automatic checks appear. Brief bodies and blocker text never do, so check that those fields
+Only these fields appear: each project's slug, title, source label and `outcome`; the owner's health
+colour, reason and date (never the owner's name); the project's `ask` and its deadline; the text of
+the automatic checks; milestone ids, titles, due dates, progress and counts; shipped brief ids,
+titles and dates; and the "Not shown" and "Source warnings" lines. Brief bodies and blocker text
+never appear, so check that the `outcome`, the health reason, the ask and the automatic-check text
 are safe for the audience before sharing a roll-up.
 
 ## Pick the mode
 
 - **Claude Code, or the Code tab in Claude Desktop, with the plugin installed**: generate it (below).
-  These run commands on the user's machine, so `serve` works here too.
-- **Desktop Chat tab or claude.ai chat**: read a published copy (further below). The skill loads
-  there, but chat cannot run the plugin's scripts on the user's machine, so never try `rollup.py` in chat.
+  The Desktop Code tab runs `generate` and `serve` on the user's machine like the terminal does.
+- **Desktop Chat tab or claude.ai chat**: read the published files (further below), attached with
+  **+ > Add from GitHub**. Chat cannot run the plugin's scripts on the user's machine, so never try
+  `rollup.py` in chat. This split is current as of 2026-11-19; recheck it after 2026-11-30.
 
 Ask the user which level they want only if they have not said; "how are my projects" is pm,
 "across everything" or "portfolio" is cto.

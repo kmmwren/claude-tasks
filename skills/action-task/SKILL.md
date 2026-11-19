@@ -69,6 +69,19 @@ Execute against the success criteria using the right approach (TDD for code, etc
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/transition.py" move <id> done --log "<one-line outcome + evidence>"
   ```
+  A brief with `evidence: required` and no evidence row in `facts/<id>.toml` still moves;
+  `transition.py` prints a warning naming it. Record the screenshot or video with
+  `project_facts.py add-evidence` (README, "Recording a fact"); the warning clears on the next move.
+
+  Then record what shipped, so the roll-up's shipped list says it in the project's own words:
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/project_facts.py" --root <queue> set-shipped \
+    --brief <id> --line "<one line saying what shipped>" [--release <release-id>]
+  ```
+  Pass `--release` when the project's `project.toml` has `[[releases]]` and one is current: the
+  release named by the brief's milestone, else the earliest release dated today or later. Leave it
+  out when there is none. Exit 1 means the line or id failed validation: fix it and rerun. The brief
+  is already done, so never undo the move.
 - **Escalate** (hit something only the user can decide or access): append the load-bearing
   token and pause, leaving the brief in in-progress so the work isn't lost —
   ```bash
