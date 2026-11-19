@@ -52,11 +52,12 @@
 - **`rollup.py` projects one or more queues' projects for readers above the engineer.** `pm` gives
   each project's health, ask, now/next/done and what shipped in the last 14 days; `cto` gives a table
   of health, milestones done of total, next due and missed. Output is JSON (schema
-  `claude-tasks.rollup/v1`) plus Markdown, written to a folder for GitHub (`write <dir>`) or served on a
+  `claude-tasks.rollup/v1`) plus Markdown, written to a folder for GitHub (`write --out <dir>`) or served on a
   loopback port (`serve`). Sources come from `~/.config/claude-tasks/rollup.toml` (or `--config`,
   `$CLAUDE_TASKS_ROLLUP_CONFIG`) and default to the current repository. Project text is escaped, never
   becomes a link or script; one bad queue file is skipped with a reason, and a queue or source that
-  cannot be read is reported as a "Not shown" row rather than stopping the run. A bad `[[source]]`
+  cannot be read, or one that holds no project, is reported as a "Not shown" row rather than
+  stopping the run (the JSON also gains `source_projects`, a project count per source). A bad `[[source]]`
   row or a malformed default config warns and the run carries on; only a config you named is an
   error. A source that is a git work tree behind its upstream gets a "N commits behind" warning
   (no fetch) in `sources`, the Markdown and HTML footers and the JSON `warnings`. `write` also

@@ -36,7 +36,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" sources
 ```
 
 Show the Markdown as it comes out; do not summarise it into a different shape. If a project is
-listed under "Not shown", say why in one line (the reason is printed) so the owner can fix it.
+listed under "Not shown", or a source is reported there as having no projects, say why in one line (the reason is printed) so the owner can fix it.
 When health says "Not set by owner", the colour shown is the automatic floor; say so. A "Source
 warnings" section means a source is behind its upstream (no fetch is made); tell the user to pull
 before relying on the status. Warnings on stderr (a skipped config row, a milestone left out) are
@@ -74,8 +74,8 @@ Run `rollup.py sources` to check which projects each source finds.
 
 ## Desktop or chat: read a published copy
 
-`rollup.py write <dir>` writes `README.md` (what the files are and how someone else gets their own
-view), `pm.md`, `pm.json`, `cto.md` and `cto.json`. It is the only command that takes a folder. It only
+`rollup.py write --out <dir>` writes `README.md` (what the files are and how someone else gets their own
+view), `pm.md`, `pm.json`, `cto.md` and `cto.json`. `--out` belongs to `write` alone. It only
 writes into a new or empty folder or one that already holds a roll-up (a `pm.json` with this
 schema), and leaves a file alone when only its generated-on line would change. Teams commit that
 folder to a GitHub repository so anyone can read it.

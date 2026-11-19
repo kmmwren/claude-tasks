@@ -185,6 +185,14 @@ def test_a_bad_default_config_warns_and_falls_back_to_the_current_repository(tmp
     assert "cannot read" in capsys.readouterr().err
 
 
+def test_a_config_row_with_an_unresolvable_home_is_skipped_like_any_bad_row(tmp_path, capsys):
+    cfg = tmp_path / "rollup.toml"
+    cfg.write_text('[[source]]\nlabel = "Gone"\npath = "~nouser-here/p"\n' + ONE_GOOD_ONE_BAD)
+    found = rollup.load_sources([], lazily(cfg))
+    assert [s.label for s in found] == ["Good"]
+    assert "cannot expand" in capsys.readouterr().err
+
+
 def test_a_default_config_with_no_usable_rows_falls_back_too(tmp_path, capsys):
     cfg = tmp_path / "rollup.toml"
     cfg.write_text('[[source]]\nlabel = "x"\n')
@@ -479,7 +487,7 @@ def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work)
         "Open `pm.md` or `cto.md` in this folder; GitHub shows them as formatted pages.",
         'Install the claude-tasks plugin, then ask "how are my projects going?".',
         "attach `pm.md` with **+ > Add from GitHub**",
-        "rollup.py write <dir> --source Label=path",
+        "rollup.py write --out <dir> --source Label=path",
         "use the schema `claude-tasks.rollup/v1`",
     ):
         assert line in text
@@ -543,7 +551,7 @@ def test_cli_prints_each_format(work, capsys):
 
 def test_cli_write_and_errors(work, tmp_path, capsys):
     out = tmp_path / "o"
-    assert rollup.main(["write", str(out), "--source", f"W={work}"], env={}) == 0
+    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
     assert (out / "pm.md").is_file()
     capsys.readouterr()
     assert rollup.main(["json", "--source", "bad"], env={}) == 2
@@ -551,9 +559,15 @@ def test_cli_write_and_errors(work, tmp_path, capsys):
 
 @pytest.mark.parametrize(
     "argv",
-    [["write", "--source", "W=/w"], ["json", "out", "--source", "W=/w"], ["sources", "out"], []],
+    [
+        ["write", "--source", "W=/w"],
+        ["write", "out", "--source", "W=/w"],
+        ["json", "--out", "out", "--source", "W=/w"],
+        ["sources", "--out", "out"],
+        [],
+    ],
 )
-def test_only_write_takes_an_output_folder(argv, capsys):
+def test_only_write_takes_an_output_option(argv, capsys):
     with pytest.raises(SystemExit) as exit_:
         rollup.parse(argv, {})
     assert exit_.value.code == 2 and "usage:" in capsys.readouterr().err
@@ -660,7 +674,7 @@ def test_write_refuses_a_folder_that_holds_something_else(work, tmp_path, held):
     (out / "notes.md").write_text("mine")
     with pytest.raises(rollup.RollupError, match="not an empty folder"):
         rollup.write(out, built(work))
-    assert rollup.main(["write", str(out), "--source", f"W={work}"], env={}) == 2
+    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 2
     assert (out / "notes.md").read_text() == "mine" and (out / "pm.json").read_text() == held
 
 
@@ -670,7 +684,7 @@ def test_write_reports_a_destination_it_cannot_create(work, tmp_path, capsys):
     out = blocker / "rollups"
     with pytest.raises(rollup.RollupError, match=r"cannot write .*rollups: Not a directory"):
         rollup.write(out, built(work))
-    assert rollup.main(["write", str(out), "--source", f"W={work}"], env={}) == 2
+    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 2
     assert capsys.readouterr().err.startswith("error: cannot write ")
 
 
@@ -685,7 +699,7 @@ def test_write_rewrites_only_what_changed_apart_from_the_timestamp(work, tmp_pat
     toml.write_text(toml.read_text().replace("Demo Project", "Renamed"))
     names = {p.name for p in rollup.write(out, rollup.build([rollup.Source("Work", work)], later))}
     assert names == {"pm.md", "pm.json", "cto.md", "cto.json"}
-    assert rollup.main(["write", str(out), "--source", f"W={work}"], env={}) == 0
+    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
 
 
 def test_a_port_in_use_or_out_of_range_is_a_one_line_error(work, capsys):
@@ -767,6 +781,22 @@ def test_two_sources_that_both_hold_projects_show_both_under_their_labels(work):
     pm = rollup.LEVELS["pm"].markdown(r)
     assert "*Alpha.*" in pm and "*Beta.*" in pm and "*Both.*" not in pm
     assert rollup.LEVELS["pm"].data(r)["sources"] == ["Alpha", "Beta", "Both"]
+
+
+def test_a_source_that_adds_no_projects_is_named_rather_than_left_out(work, tmp_path):
+    notes = make_queue(tmp_path / "home" / "notes")
+    (notes / "project.toml").unlink()  # briefs, but nothing declaring a project
+    r = rollup.build([rollup.Source("Work", work), rollup.Source("Home", notes.parent)], NOW)
+    assert [s.source for s in r.skipped] == ["Home"]
+    md = rollup.LEVELS["pm"].markdown(r)
+    assert "- Home: no projects (a project is a queue with a project.toml)" in md
+    data = rollup.LEVELS["cto"].data(r)
+    assert data["source_projects"] == [
+        {"source": "Work", "projects": 2},
+        {"source": "Home", "projects": 0},
+    ]
+    assert data["skipped"][0]["reason"] == rollup.NO_PROJECTS_IN_SOURCE
+    assert "Home: no projects" in rollup.LEVELS["pm"].html(r)
 
 
 def git(cwd, *args):

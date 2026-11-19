@@ -6,7 +6,7 @@ checks leave a queue; see skills/rollup.
 
   python scripts/rollup.py json|markdown|html [--level pm|cto] [--source LABEL=PATH ...]
   python scripts/rollup.py sources [--source LABEL=PATH ...]
-  python scripts/rollup.py write OUT_DIR [--source LABEL=PATH ...]
+  python scripts/rollup.py write --out OUT_DIR [--source LABEL=PATH ...]
   python scripts/rollup.py serve [--port 8788] [--source LABEL=PATH ...]
 """
 
@@ -47,7 +47,9 @@ SKIP_DIRS = frozenset({"node_modules", "venv", "__pycache__", "dist", "build"})
 SHIPPED_DAYS = 14
 GIT_TIMEOUT_SECONDS = 5
 BEHIND_TTL_SECONDS = 30
-NO_PROJECTS = "No projects found. A project is a queue with a project.toml."
+WHAT_A_PROJECT_IS = "a queue with a project.toml"
+NO_PROJECTS = f"No projects found. A project is {WHAT_A_PROJECT_IS}."
+NO_PROJECTS_IN_SOURCE = f"no projects (a project is {WHAT_A_PROJECT_IS})"
 WORD = {**pv.LABEL, "": "Not set by owner"}
 CSP = "default-src 'none'; style-src 'unsafe-inline'"
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
@@ -494,7 +496,8 @@ class Skipped:
     reason: str
 
     def line(self) -> str:
-        return f"{self.source} / {self.queue}: {self.reason}"
+        where = f"{self.source} / {self.queue}" if self.queue else self.source
+        return f"{where}: {self.reason}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -518,6 +521,10 @@ class Rollup:
     projects: tuple[Project, ...]
     skipped: tuple[Skipped, ...]
     warnings: tuple[SourceWarning, ...]
+
+    def project_counts(self) -> dict[str, int]:
+        counted = Counter(p.source for p in self.projects)
+        return {label: counted[label] for label in self.sources}
 
     def footnotes(self) -> tuple[Footnote, ...]:
         notes = (
@@ -622,11 +629,17 @@ def build(sources: list[Source], now: dt.datetime, behind: BehindCount = commits
         for s in sources
         if not s.path.is_dir()
     ]
+    # A source that adds nothing must say so, or the header names it and the reader assumes it did.
+    empty = [
+        Skipped(s.label, "", NO_PROJECTS_IN_SOURCE)
+        for s in sources
+        if s.path.is_dir() and not s.projects()
+    ]
     return Rollup(
         now.isoformat(timespec="seconds"),
         tuple(s.label for s in sources),
         tuple(o for o in outcomes if isinstance(o, Project)),
-        tuple(missing) + tuple(o for o in outcomes if isinstance(o, Skipped)),
+        tuple(missing) + tuple(empty) + tuple(o for o in outcomes if isinstance(o, Skipped)),
         tuple(w for s in sources if (w := s.warning(behind))),
     )
 
@@ -667,6 +680,9 @@ class Level(ABC):
             "level": self.name,
             "generated": r.generated,
             "sources": list(r.sources),
+            "source_projects": [
+                {"source": label, "projects": n} for label, n in r.project_counts().items()
+            ],
             "projects": [self.project(p) for p in r.projects],
             "skipped": [dataclasses.asdict(s) for s in r.skipped],
             "warnings": [
@@ -851,7 +867,7 @@ claude.ai chat, attach `pm.md` with **+ > Add from GitHub** first, then ask the 
 
 Point the generator at your own queues; repeat `--source` for each repository:
 
-    rollup.py write <dir> --source Label=path
+    rollup.py write --out <dir> --source Label=path
 
 ## The JSON is an API
 
@@ -1073,7 +1089,10 @@ def parse(argv: list[str], env: Mapping[str, str], now: Callable[[], dt.datetime
         shown.set_defaults(fmt=fmt)
     _command(commands, "sources", "list the projects each source finds", _list_sources)
     _command(commands, "write", "write the roll-up files into OUT_DIR", _write).add_argument(
-        "out", metavar="OUT_DIR"
+        "--out",
+        required=True,
+        metavar="OUT_DIR",
+        help="a new or empty folder, or an earlier roll-up",
     )
     _command(commands, "serve", "serve the roll-ups on localhost", _serve).add_argument(
         "--port", type=int, default=8788
