@@ -203,3 +203,17 @@ def test_warn_is_one_stderr_line_with_a_prefix_a_caller_can_change(capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.splitlines() == ["warning: one thing", "prioritise: another"]
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("queue/ready/a.md", True),
+        ("queue/done/a.md", True),
+        ("queue/docs/a.md", False),
+        ("queue/ready/a.txt", False),
+        ("queue/ready", False),
+    ],
+)
+def test_is_brief_needs_both_a_markdown_file_and_a_state_directory(path, expected):
+    assert _paths.is_brief(path) is expected
