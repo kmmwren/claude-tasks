@@ -3,6 +3,7 @@
 import datetime as dt
 
 import project_view as pv
+from _paths import QueueBriefs
 
 from tests.project_fixtures import make_rich
 
@@ -171,7 +172,9 @@ def test_unreadable_register_entry_and_untouched_workstream(tmp_path):
     (q / "in-progress" / "b-active.md").rename(q / "ready" / "b-active.md")
     m = pv.build_model(q, pv.Signals(now=NOW))
     assert {w["id"]: w["status"] for w in m["workstreams"]}["w"] == "active"
-    only_ready = pv._rollup([b for b in pv.build_board.load_briefs(q) if b["id"] == "b-active"])
+    only_ready = pv._rollup(
+        [b for b in pv.build_board.load_briefs(QueueBriefs.read(q)) if b["id"] == "b-active"]
+    )
     assert only_ready["status"] == "not-started" or only_ready["ticked"]
 
 
