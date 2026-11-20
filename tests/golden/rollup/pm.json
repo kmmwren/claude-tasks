@@ -1,0 +1,614 @@
+{
+  "schema": "claude-tasks.rollup/v1",
+  "level": "pm",
+  "generated": "2026-11-19T12:00:00+00:00",
+  "sources": [
+    "alpha-source",
+    "beta-source",
+    "idle-source"
+  ],
+  "source_projects": [
+    {
+      "source": "alpha-source",
+      "projects": 1
+    },
+    {
+      "source": "beta-source",
+      "projects": 2
+    },
+    {
+      "source": "idle-source",
+      "projects": 0
+    }
+  ],
+  "projects": [
+    {
+      "source": "alpha-source",
+      "slug": "atlas",
+      "title": "Atlas",
+      "outcome": "Teams see what shipped.",
+      "initiative": "Platform",
+      "as_at": {
+        "sha": "FULLSHA1",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "owner": "green",
+        "reason": "On course.",
+        "set_on": "2026-11-02",
+        "effective": "red",
+        "signals": [
+          "the latest build recorded in the queue is red (2026-11-18)",
+          "past its date and not done: m2"
+        ],
+        "stale": true,
+        "age_days": 17
+      },
+      "ask": {
+        "question": "Ship it?",
+        "deadline": "2026-11-25"
+      },
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA1",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Atlas is red; 1 of 4 milestones done; 1 past their date; next is The active thing due 2026-11-30."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA1",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "green",
+          "reason": "On course.",
+          "set_on": "2026-11-02",
+          "effective": "red",
+          "signals": [
+            "the latest build recorded in the queue is red (2026-11-18)",
+            "past its date and not done: m2"
+          ],
+          "stale": true,
+          "age_days": 17
+        },
+        "build": {
+          "state": "red",
+          "link": "https://example.test/ci/2",
+          "set_on": "2026-11-18"
+        },
+        "links": [
+          {
+            "label": "docs",
+            "url": "https://example.test/docs"
+          }
+        ]
+      },
+      "now": [
+        {
+          "id": "m2",
+          "title": "The active thing",
+          "percent_done": 50,
+          "due": "2026-11-30",
+          "missed": true,
+          "waiting": 1,
+          "stage": "now",
+          "release": null,
+          "baseline": "2026-11-10",
+          "slip_days": 20,
+          "late_days": 9,
+          "effort_days": 2.5,
+          "unestimated": 1,
+          "counts": {
+            "queued": 1,
+            "active": 1,
+            "unverified": 1
+          },
+          "blockers": [
+            {
+              "brief": "b3",
+              "waiting_on": [
+                "b4"
+              ]
+            }
+          ],
+          "flags": [
+            {
+              "environment": "dev",
+              "flags": [
+                {
+                  "brief": "b3",
+                  "name": "x",
+                  "state": "on",
+                  "changed_on": "2026-11-11"
+                }
+              ]
+            },
+            {
+              "environment": "prod",
+              "flags": [
+                {
+                  "brief": "b3",
+                  "name": "x",
+                  "state": "off",
+                  "changed_on": "2026-11-15"
+                }
+              ]
+            }
+          ],
+          "evidence": [
+            {
+              "brief": "b4",
+              "kind": "video",
+              "link": "https://example.test/clip",
+              "caption": "The demo",
+              "access": "org",
+              "recorded_on": "2026-11-15",
+              "inline": false
+            },
+            {
+              "brief": "b3",
+              "kind": "screenshot",
+              "link": "https://example.test/shot.png",
+              "caption": "The page",
+              "access": "public",
+              "recorded_on": "2026-11-14",
+              "inline": true
+            },
+            {
+              "brief": "b6",
+              "kind": "video",
+              "link": "https://example.test/clip.mp4",
+              "caption": "Walkthrough",
+              "access": "public",
+              "recorded_on": "2026-11-16",
+              "inline": true
+            }
+          ],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        },
+        {
+          "id": "m3",
+          "title": "Later",
+          "percent_done": 50,
+          "due": "",
+          "missed": false,
+          "waiting": 0,
+          "stage": "now",
+          "release": null,
+          "baseline": "",
+          "slip_days": null,
+          "late_days": 0,
+          "effort_days": 7.5,
+          "unestimated": 0,
+          "counts": {
+            "queued": 1,
+            "parked": 1
+          },
+          "blockers": [],
+          "flags": [],
+          "evidence": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "next": [
+        {
+          "id": "m4",
+          "title": "Empty",
+          "percent_done": 0,
+          "due": "",
+          "missed": false,
+          "waiting": 0,
+          "stage": "next",
+          "release": null,
+          "baseline": "",
+          "slip_days": null,
+          "late_days": 0,
+          "effort_days": 0,
+          "unestimated": 0,
+          "counts": {},
+          "blockers": [],
+          "flags": [],
+          "evidence": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "done": [
+        {
+          "id": "m1",
+          "title": "Shipping is done",
+          "percent_done": 100,
+          "due": "2026-11-05",
+          "missed": false,
+          "waiting": 0,
+          "stage": "done",
+          "release": "r1",
+          "baseline": "2026-11-05",
+          "slip_days": 0,
+          "late_days": 0,
+          "effort_days": 0,
+          "unestimated": 0,
+          "counts": {
+            "done": 2
+          },
+          "blockers": [],
+          "flags": [],
+          "evidence": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "shipped": [
+        {
+          "id": "b7",
+          "title": "B7 title",
+          "updated": "2026-11-18"
+        },
+        {
+          "id": "b8",
+          "title": "B8 title",
+          "updated": "2026-11-17"
+        },
+        {
+          "id": "b1",
+          "title": "B1 title",
+          "updated": "2026-11-12"
+        }
+      ],
+      "shipped_by_release": [
+        {
+          "release": "r1",
+          "date": "2026-11-01",
+          "lines": [
+            {
+              "brief": "b1",
+              "title": "B1 title",
+              "note": "Launched",
+              "shipped_on": "2026-11-13"
+            },
+            {
+              "brief": "b2",
+              "title": "B2 title",
+              "note": "",
+              "shipped_on": "2026-10-01"
+            }
+          ],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        },
+        {
+          "release": "r9",
+          "date": "",
+          "lines": [
+            {
+              "brief": "b7",
+              "title": "B7 title",
+              "note": "",
+              "shipped_on": "2026-11-18"
+            }
+          ],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "backlog": [
+        {
+          "milestone": "m2",
+          "title": "The active thing",
+          "briefs": [
+            {
+              "id": "b4",
+              "title": "B4 title",
+              "state": "queued",
+              "effort": "",
+              "due": "2026-11-12",
+              "waiting_on": [],
+              "as_at": {
+                "sha": "FULLSHA1",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            }
+          ]
+        },
+        {
+          "milestone": "m3",
+          "title": "Later",
+          "briefs": [
+            {
+              "id": "b5",
+              "title": "B5 title",
+              "state": "queued",
+              "effort": "l",
+              "due": "2026-11-25",
+              "waiting_on": [],
+              "as_at": {
+                "sha": "FULLSHA1",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            },
+            {
+              "id": "b12",
+              "title": "B12 title",
+              "state": "parked",
+              "effort": "s",
+              "due": "",
+              "waiting_on": [],
+              "as_at": {
+                "sha": "FULLSHA1",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            }
+          ]
+        },
+        {
+          "milestone": "",
+          "title": "No milestone",
+          "briefs": [
+            {
+              "id": "b10",
+              "title": "B10 title",
+              "state": "queued",
+              "effort": "",
+              "due": "2027-01-15",
+              "waiting_on": [
+                "b5"
+              ],
+              "as_at": {
+                "sha": "FULLSHA1",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            },
+            {
+              "id": "b9",
+              "title": "B9 title",
+              "state": "queued",
+              "effort": "",
+              "due": "",
+              "waiting_on": [],
+              "as_at": {
+                "sha": "FULLSHA1",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "beta-source",
+      "slug": "beta",
+      "title": "Beta",
+      "outcome": "Beta works.",
+      "initiative": "",
+      "as_at": {
+        "sha": "FULLSHA2",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "owner": "green",
+        "reason": "Fine.",
+        "set_on": "2026-11-18",
+        "effective": "green",
+        "signals": [],
+        "stale": false,
+        "age_days": 1
+      },
+      "ask": null,
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA2",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Beta is green; 1 of 1 milestone done."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA2",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "green",
+          "reason": "Fine.",
+          "set_on": "2026-11-18",
+          "effective": "green",
+          "signals": [],
+          "stale": false,
+          "age_days": 1
+        },
+        "build": null,
+        "links": []
+      },
+      "now": [],
+      "next": [],
+      "done": [
+        {
+          "id": "m1",
+          "title": "Only",
+          "percent_done": 100,
+          "due": "",
+          "missed": false,
+          "waiting": 0,
+          "stage": "done",
+          "release": null,
+          "baseline": "",
+          "slip_days": null,
+          "late_days": 0,
+          "effort_days": 0,
+          "unestimated": 0,
+          "counts": {
+            "done": 1
+          },
+          "blockers": [],
+          "flags": [],
+          "evidence": [],
+          "as_at": {
+            "sha": "FULLSHA2",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "shipped": [
+        {
+          "id": "b1",
+          "title": "B1 title",
+          "updated": "2026-11-18"
+        }
+      ],
+      "shipped_by_release": [],
+      "backlog": []
+    },
+    {
+      "source": "beta-source",
+      "slug": "gamma",
+      "title": "Gamma",
+      "outcome": "Gamma works.",
+      "initiative": "Growth",
+      "as_at": {
+        "sha": "FULLSHA3",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "owner": "",
+        "reason": "",
+        "set_on": "",
+        "effective": "",
+        "signals": [],
+        "stale": false,
+        "age_days": null
+      },
+      "ask": null,
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA3",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Gamma is not yet rated by its owner; 0 of 1 milestone done."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA3",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "",
+          "reason": "",
+          "set_on": "",
+          "effective": "",
+          "signals": [],
+          "stale": false,
+          "age_days": null
+        },
+        "build": null,
+        "links": []
+      },
+      "now": [
+        {
+          "id": "m1",
+          "title": "Only",
+          "percent_done": 50,
+          "due": "",
+          "missed": false,
+          "waiting": 0,
+          "stage": "now",
+          "release": null,
+          "baseline": "",
+          "slip_days": null,
+          "late_days": 0,
+          "effort_days": 0,
+          "unestimated": 1,
+          "counts": {
+            "queued": 1
+          },
+          "blockers": [],
+          "flags": [],
+          "evidence": [],
+          "as_at": {
+            "sha": "FULLSHA3",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "next": [],
+      "done": [],
+      "shipped": [],
+      "shipped_by_release": [],
+      "backlog": [
+        {
+          "milestone": "m1",
+          "title": "Only",
+          "briefs": [
+            {
+              "id": "g1",
+              "title": "G1 title",
+              "state": "queued",
+              "effort": "",
+              "due": "",
+              "waiting_on": [],
+              "as_at": {
+                "sha": "FULLSHA3",
+                "committed": "2026-11-19T09:00:00+00:00",
+                "stale": false
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "skipped": [
+    {
+      "source": "gone-source",
+      "queue": "",
+      "reason": "unreachable"
+    },
+    {
+      "source": "gone-source",
+      "queue": ".tasks",
+      "reason": "no project.toml"
+    }
+  ],
+  "warnings": [
+    {
+      "source": "gone-source",
+      "behind": {},
+      "message": "Showing a cached copy."
+    }
+  ]
+}

@@ -31,3 +31,11 @@ def _no_ambient_launcher(monkeypatch):
     for name in (LAUNCHER_ENV, LEGACY_LAUNCHER_ENV):
         monkeypatch.delenv(name, raising=False)
     reset_notices()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_snapshot_cache(tmp_path_factory, monkeypatch):
+    """Queues are read through a snapshot cache; no test may fill or read the real one."""
+    from queue_snapshot import CACHE_ENV
+
+    monkeypatch.setenv(CACHE_ENV, str(tmp_path_factory.mktemp("snapshot-cache")))

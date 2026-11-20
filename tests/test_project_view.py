@@ -2,6 +2,7 @@
 
 import datetime as dt
 
+import facts
 import project_view as pv
 import pytest
 
@@ -51,6 +52,39 @@ def test_red_ci_on_open_pr_caps_to_amber(tmp_path):
 def test_unreadable_ci_is_not_red(tmp_path):
     h = model(make_queue(tmp_path), prs={})["health"]
     assert h["effective"] == "green"
+
+
+def ci_row(state):
+    return facts.CiRow(state, "https://example.test/ci/1", dt.date(2026, 10, 22), "row.toml")
+
+
+def floor(ci=None):
+    return pv.computed_floor([], [], pv.Signals(now=NOW), ci)
+
+
+def test_a_red_build_recorded_in_the_queue_adds_a_red_ci_signal_at_the_amber_floor():
+    (found,) = floor(ci_row("red"))
+    assert found["signal"] == "red CI" and found["floor"] == pv.AMBER
+    assert found["detail"] == "the latest build recorded in the queue is red (2026-10-22)"
+
+
+@pytest.mark.parametrize("ci", [ci_row("green"), None])
+def test_a_green_or_absent_recorded_build_adds_no_signal(ci):
+    assert floor(ci) == []
+
+
+def test_the_recorded_build_is_optional_and_defaults_to_absent():
+    assert pv.computed_floor([], [], pv.Signals(now=NOW)) == floor(None) == []
+
+
+def test_a_red_recorded_build_is_listed_before_the_queue_signals(tmp_path):
+    q = make_queue(tmp_path, due='due = "2026-10-20"\n')
+    q.joinpath("done/b1.md").rename(q / "in-progress" / "b1.md")
+    rows = pv.milestone_rows(
+        pv.listed_milestones(q, pv.read_project(q)["milestones"]), pv.project_briefs(q), NOW.date()
+    )
+    got = pv.computed_floor(rows, pv.project_briefs(q), pv.Signals(now=NOW), ci_row("red"))
+    assert [s["signal"] for s in got] == ["red CI", "missed milestone date"]
 
 
 def test_missed_milestone_date_caps_to_red(tmp_path):

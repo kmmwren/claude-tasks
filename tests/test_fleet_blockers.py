@@ -113,6 +113,14 @@ def test_a_missing_directory_warns_once_and_falls_back_to_no_blockers(tmp_path, 
     assert err.count("fleet_blockers_dir") == 1 and "using no fleet blockers" in err
 
 
+def test_an_unreadable_tasks_toml_warns_and_ranks_with_no_blockers(tmp_path, capsys):
+    root = _queue(tmp_path, {"a": _brief("a", clears="x")})
+    (root / "tasks.toml").write_text("name = [unterminated\n")
+    assert FleetBlockers.for_queue(root).open == {}
+    assert _ids(prioritise.rank(root, today=TODAY)) == ["a"]
+    assert "cannot read tasks.toml" in capsys.readouterr().err
+
+
 def test_a_bad_record_is_skipped_with_one_warning_and_the_rest_still_load(tmp_path, capsys):
     _record(tmp_path, "good")
     (tmp_path / "torn.json").write_text("{not json")

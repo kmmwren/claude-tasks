@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from _paths import warn
-from config import load_config
+from config import load_config_or_defaults
 from deps import parse_list
 
 CONFIG_KEY = "fleet_blockers_dir"
@@ -67,7 +67,7 @@ class FleetBlockers:
 
     @classmethod
     def for_queue(cls, root: pathlib.Path) -> "FleetBlockers":
-        configured = str(load_config(root).get(CONFIG_KEY) or "")
+        configured = str(load_config_or_defaults(root, PREFIX).get(CONFIG_KEY) or "")
         if not configured:
             return cls({})
         path = pathlib.Path(configured).expanduser()

@@ -27,11 +27,13 @@ def _brief(
     criteria=None,
     goal="A goal.",
     assignee=None,
+    due=None,
 ):
     crit = "\n".join(criteria) if criteria else ""
     # assignee is omitted entirely unless given, so the default brief doubles as the
     # backwards-compatibility fixture for briefs written before the field existed.
     claim = "" if assignee is None else f"\nassignee: {assignee}"
+    claim += "" if due is None else f"\ndue: {due}"
     return f"""---
 id: {bid}
 title: {title}
@@ -120,6 +122,24 @@ def test_load_briefs_defaults_assignee_for_raw_inbox_item(tmp_path):
     _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
     briefs = {b["id"]: b for b in build_board.load_briefs(root)}
     assert briefs["raw"]["assignee"] == ""
+
+
+# ── due (the date a brief itself promises) ────────────────────────────────────
+
+
+def test_load_briefs_reads_due(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "dated.md", _brief("dated", due="2026-12-01"))
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["dated"]["due"] == "2026-12-01"
+
+
+def test_load_briefs_defaults_due_to_empty_when_field_absent(tmp_path):
+    root = init_queue.init_queue(tmp_path / "q", name="demo")
+    _write(root, "ready", "undated.md", _brief("undated"))
+    _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
+    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    assert briefs["undated"]["due"] == "" and briefs["raw"]["due"] == ""
 
 
 def test_search_text_joins_only_non_empty_parts():

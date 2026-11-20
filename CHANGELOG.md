@@ -27,7 +27,43 @@
   text) and says that the Desktop Code tab generates and serves, while Desktop Chat and claude.ai
   read the published files through **+ > Add from GitHub**; recheck that split after 2026-11-30.
 
+- **Breaking: `rollup.py` reads each project from its queue on the repository's GitHub default
+  branch, never from a local clone.** A source is `Source(label, repo, queue=".tasks")`: the flag is
+  `--source LABEL=REPO[#QUEUE]` (`REPO` a URL or a path git can read) and a `[[source]]` row takes
+  `label`, `repo` and an optional `queue`. The config key `path` is renamed `repo` (a row that still says `path` is read as the repo, with
+  the warning ``[[source]] row N: `path` is now `repo`; reading it as the repo``); directory search
+  is gone, so one source is one project. Each source is read through `queue_snapshot.read_queue`;
+  offline it shows the newest cached copy with a "Source warnings" line giving its as-at time, and
+  with no cache it is listed under "Not shown". Unpushed work does not appear. `serve` reads every
+  source on each request.
+- **The roll-up model is `rollup_model.py`'s.** `rollup.py` builds projects with `build_project` and
+  its `Project`, `Health`, `MilestoneSummary`, `Stage` and `Ask`; the behind-upstream check,
+  `find_queues`, `BehindCounts` and the contribution rules are removed. The JSON stays
+  `claude-tasks.rollup/v1`: `behind` is kept as an always-empty object on each warning, each project
+  gains `as_at` (`sha`, `committed`, `stale`), and a project's slug falls back to its source label.
+
 ### Added
+- **Roll-ups render through one document model, `rollup_views.py`, in three views and three formats.**
+  `rollup.py` builds a `Report` from its sources and `rollup_views.render(view, fmt, report)` writes
+  every output (written files, served routes, `html`, `markdown` and `json`), so a view is defined once.
+  The new `engineer` view lists ready briefs most urgent first, open bugs and the requirements no
+  brief covers; `pm` is project tiles (red, amber, stale or unset, then green, slip breaking ties), a
+  milestone table and a collapsed detail section; `cto` groups projects by initiative with one sentence
+  and a line per milestone. Each project shows its "Source: <label> @ <commit>, <date>" line once,
+  a gap reads as a sentence ("No open bugs.") and counts use correct singular and plural.
+  `--level` takes `engineer|pm|cto`; `write --out` writes `engineer`, `pm` and `cto` as `.md` and
+  `.json`, and `serve` answers `/engineer`, `/pm` and `/cto`. Pages carry
+  `default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; frame-ancestors 'none'`
+  (served as a header and written into the page), and links, images and video are shown only for
+  `https` addresses.
+- **The roll-up JSON stays `claude-tasks.rollup/v1` and only gains keys.** No key is removed or
+  renamed, `behind: {}` stays on each warning and `as_at` and the slug fallback are unchanged. Added:
+  per project `initiative`, `tile`, `board`, `backlog`, `shipped_by_release`, per milestone `stage`, `release`, `baseline`, `slip_days`, `late_days`, `effort_days`,
+  `unestimated`, `counts`, `blockers`, `flags` and `evidence`, the cto `initiatives`
+  and `milestone_lines`, and the engineer view's `ready`, `bugs` and `uncovered_requirements`.
+  The pm JSON and Markdown now name what each brief waits on (`blockers[].waiting_on`), so check
+  blocker names are safe for the audience before sharing a roll-up; brief bodies still never appear.
+- **The README that `write` generates describes the three views** and how someone else gets their own.
 - **Project facts are recorded as add-only files, written by `project_facts.py`.** Health, due-date
   re-forecasts and CI readings are one new file each under `history/health`, `history/due` and
   `history/ci`; per-brief flags, evidence, `shipped`, `shipped_on` and `release` live in
@@ -78,18 +114,16 @@
   cannot be read, or one that holds no project, is reported as a "Not shown" row rather than
   stopping the run (the JSON also gains `source_projects`, a project count per source). A bad `[[source]]`
   row or a malformed default config warns and the run carries on; only a config you named is an
-  error. A source that is a git work tree behind its upstream gets a "N commits behind" warning
-  (no fetch) in `sources`, the Markdown and HTML footers and the JSON `warnings`. `write` also
+  error. A source that could not be reached shows its cached copy with a warning in `sources`,
+  the Markdown and HTML footers and the JSON `warnings`. `write` also
   generates a `README.md` saying how someone else gets their own view. A pm milestone's `waiting` key counts
-  its briefs waiting on an unmet blocker. `serve` reuses each source's behind-upstream count for 30 seconds
-  rather than running git on every request. A destination `write` cannot create is a one-line error.
+  its briefs waiting on an unmet blocker. A destination `write` cannot create is a one-line error.
   A milestone's percent is the one the project page shows (from ticked criteria). An absent default
   config falls back to the current repository without a warning; a repeated source label, a `[[milestones]]`
   row without a text `id` and a `[project] slug` that is not text each warn and skip just that row
   (`--config` given with `--source` warns that it is ignored). Bare URLs and emails in project text are
   escaped so GitHub does not link them; `serve` also sends `X-Content-Type-Options: nosniff` and
-  `frame-ancestors 'none'`. A source whose projects another source already shows is named under "Not
-  shown". The `rollup` skill drives it.
+  `frame-ancestors 'none'`. The `rollup` skill drives it.
 - **Project views warn and skip a malformed milestones file**, and a `[[milestones]]` row without a text `id`,
   instead of stopping.
 - **One shared `warn` in `_paths.py`** replaces the copies in `project_view`, `seed_profile`, `headless`
@@ -134,6 +168,11 @@
   mapping that renamed stage labels is removed, so a header reads exactly as the project declares it.
 
 ### Fixed
+- **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
+  lookup and the priority weights warn `cannot read tasks.toml (...); using the defaults` and rank with them,
+  so the roll-up shows that project instead of listing it under "Not shown".
+- **Roll-up omission messages no longer carry the local queue path.** A queue that cannot be read is
+  named by its repository and queue path only.
 - **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits
   onto `origin/main` conflicts only because two writers each appended to one brief's Execution log
   (typically `append_log.py` on origin against a local move to `done/`), the file resolves as the base

@@ -1,23 +1,26 @@
-"""Roll-ups: sources, the typed model, the pm and cto projections, and every output surface."""
+"""Roll-ups: sources, reading each from its GitHub queue, the three views, every surface."""
 
-import datetime as dt
 import json
 import pathlib
 import socket
-import subprocess
 import sys
 import threading
 import urllib.error
 import urllib.request
 
-import project_view as pv
 import pytest
+import queue_snapshot as qs
 import rollup
+import rollup_model as model
+import rollup_views as rv
 from _paths import ENV_VAR
 
 from tests.project_fixtures import make_queue
+from tests.remote_queue import PUSHED_AT, publish, snapshot
+from tests.rollup_sources import NOW, projects, rollup_of, source_of, with_project_toml
 
-NOW = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)
+NOWHERE = "/nowhere/claude-tasks-test-repo"
+AS_AT = "2026-11-19T09:00:00+00:00"
 
 BETA = """
 [project]
@@ -32,6 +35,14 @@ deadline = "2026-11-01"
 id = "M0"
 title = "Zero"
 due = "2026-10-01"
+
+[[milestones]]
+id = "M1"
+title = "Start"
+
+[[milestones]]
+id = "M2"
+title = "Later"
 """
 
 
@@ -50,71 +61,70 @@ def brief(
     )
 
 
-def alpha(root: pathlib.Path) -> pathlib.Path:
-    q = make_queue(root / "alpha")
+def alpha(clone: pathlib.Path) -> None:
+    q = make_queue(clone)
     brief(q, "ready", "b3", "milestone: m2\nblocked_by: [external:vendor]\n")
     brief(q, "blocked", "b4", "milestone: m2\nblocked_by: [b2]\n")
-    brief(
-        q, "blocked", "b5", "milestone: m2\nblocked_by: [b1]\n"
-    )  # b1 is done, so b5 waits for nothing
-    return q
+    # b1 is done, so b5 waits for nothing
+    brief(q, "blocked", "b5", "milestone: m2\nblocked_by: [b1]\n")
 
 
-def beta(root: pathlib.Path) -> pathlib.Path:
-    q = root / "beta" / ".tasks"
+def beta(clone: pathlib.Path) -> None:
+    q = clone / ".tasks"
     for d in ("inbox", "ready", "done"):
         (q / d).mkdir(parents=True)
-    (q / "tasks.toml").write_text('name = "Beta"\nmilestones = "docs/milestones.toml"\n')
-    (q.parent / "docs").mkdir()
-    (q.parent / "docs" / "milestones.toml").write_text(
-        '[milestone.M1]\ntitle = "Start"\n[milestone.M2]\n'
-    )
+    (q / "tasks.toml").write_text('name = "Beta"\n')
     (q / "project.toml").write_text(BETA)
     brief(q, "done", "c1", "milestone: M1\n", updated="2026-09-01", crit="- [x] ok")
     brief(q, "ready", "c2", "milestone: M0\n", updated="2026-09-01")
-    return q
 
 
-@pytest.fixture
-def work(tmp_path):
-    root = tmp_path / "work"
-    alpha(root)
-    beta(root)
-    return root
+@pytest.fixture(scope="module")
+def work(tmp_path_factory):
+    """Two queues on two bare remotes, pushed once; no test changes them."""
+    root = tmp_path_factory.mktemp("remotes")
+    return [
+        source_of(root / "alpha", alpha, "Alpha"),
+        source_of(root / "beta", beta, "Beta"),
+    ]
 
 
 def built(work):
-    return rollup.build([rollup.Source("Work", work)], NOW)
+    return rollup.build(work, NOW)
+
+
+def only_source(path, build=None):
+    return [source_of(path, build or (lambda clone: make_queue(clone)))]
 
 
 # --- sources ---------------------------------------------------------------------------------
 
 
-def test_find_queues_is_bounded_and_skips_hidden_and_build_folders(tmp_path):
-    make_queue(tmp_path / "a")
-    make_queue(tmp_path / ".hidden")
-    make_queue(tmp_path / "node_modules" / "x")
-    make_queue(tmp_path / "1" / "2" / "3" / "4")
-    (tmp_path / "file.txt").write_text("")
-    assert rollup.find_queues(tmp_path) == [tmp_path / "a" / ".tasks"]
-    assert rollup.find_queues(tmp_path / "a" / ".tasks") == [tmp_path / "a" / ".tasks"]
-
-
-def test_only_queues_with_a_project_file_are_projects(tmp_path):
-    q = make_queue(tmp_path / "plain")
-    (q / "project.toml").unlink()
-    assert rollup.Source("x", tmp_path).projects() == []
-
-
-@pytest.mark.parametrize("spec", ["nolabel", "=path", "label=", " = "])
-def test_source_spec_needs_label_and_path(spec):
-    with pytest.raises(rollup.RollupError, match="LABEL=PATH"):
+@pytest.mark.parametrize("spec", ["nolabel", "=repo", "label=", " = ", "a=#q"])
+def test_source_spec_needs_label_and_repo(spec):
+    with pytest.raises(rollup.RollupError, match=r"LABEL=REPO\[#QUEUE\]"):
         rollup.Source.parse(spec)
 
 
-def test_source_spec_expands_home(monkeypatch, tmp_path):
+@pytest.mark.parametrize("spec", ["a=r#", "a=r#/abs", "a=r#../other"])
+def test_a_queue_must_be_a_folder_inside_its_repository(spec):
+    with pytest.raises(rollup.RollupError, match="must be a folder inside its repository"):
+        rollup.Source.parse(spec)
+
+
+def test_a_source_names_a_repo_and_optionally_the_queue_folder_in_it():
+    url = "https://example.test/o/r.git"
+    assert rollup.Source.parse(f"A={url}") == rollup.Source("A", url, ".tasks")
+    assert rollup.Source.parse(f" A = {url}#docs/q ") == rollup.Source("A", url, "docs/q")
+    assert rollup.Source("A", url).where == f"{url}#.tasks"
+
+
+def test_a_repo_path_is_made_absolute_and_home_is_expanded(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert rollup.Source.parse(" Home = ~/p ") == rollup.Source("Home", tmp_path / "p")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "here").mkdir()
+    assert rollup.Source.parse("A=here").repo == str((tmp_path / "here").resolve())
+    assert rollup.Source.parse(" Home = ~/p ") == rollup.Source("Home", str(tmp_path / "p"))
 
 
 def given(path, named=True):
@@ -125,24 +135,26 @@ def lazily(path, named=True):
     return lambda: given(path, named)
 
 
-def test_sources_come_from_flags_then_config_then_the_current_queue(tmp_path):
-    cfg = tmp_path / "rollup.toml"
-    cfg.write_text(
-        '[[source]]\nlabel = "Work"\npath = "/w"\n[[source]]\nlabel = "Home"\npath = "/h"\n'
-    )
-    here = lambda: tmp_path / "repo" / ".tasks"  # noqa: E731
-    assert rollup.load_sources(["A=/a"], lazily(cfg), here) == [
-        rollup.Source("A", pathlib.Path("/a"))
-    ]
-    assert [s.label for s in rollup.load_sources([], lazily(cfg), here)] == ["Work", "Home"]
-    assert rollup.load_sources(
-        [], lazily(tmp_path / "missing.toml", named=False), make_here(tmp_path)
-    ) == [rollup.Source("this repository", (tmp_path / "repo").resolve())]
-
-
 def make_here(tmp_path):
     make_queue(tmp_path / "repo")
     return lambda: tmp_path / "repo" / ".tasks"
+
+
+def test_sources_come_from_flags_then_config_then_the_current_queue(tmp_path):
+    cfg = tmp_path / "rollup.toml"
+    cfg.write_text(
+        '[[source]]\nlabel = "Work"\nrepo = "/w"\nqueue = "docs/q"\n'
+        '[[source]]\nlabel = "Home"\nrepo = "/h"\n'
+    )
+    here = lambda: tmp_path / "repo" / ".tasks"  # noqa: E731
+    assert rollup.load_sources([f"A={NOWHERE}"], lazily(cfg), here) == [rollup.Source("A", NOWHERE)]
+    assert rollup.load_sources([], lazily(cfg), here) == [
+        rollup.Source("Work", "/w", "docs/q"),
+        rollup.Source("Home", "/h"),
+    ]
+    assert rollup.load_sources(
+        [], lazily(tmp_path / "missing.toml", named=False), make_here(tmp_path)
+    ) == [rollup.Source("this repository", str((tmp_path / "repo").resolve()), ".tasks")]
 
 
 @pytest.mark.parametrize(
@@ -152,7 +164,8 @@ def make_here(tmp_path):
         ("source = 3", "tables"),
         ("source = [1]", "no usable"),
         ('[[source]]\nlabel = "x"\n', "no usable"),
-        ('[[source]]\npath = "/x"\n', "no usable"),
+        ('[[source]]\nrepo = "/x"\n', "no usable"),
+        ('[[source]]\nlabel = "x"\nrepo = "/x"\nqueue = "../y"\n', "no usable"),
     ],
 )
 def test_a_config_the_user_named_that_is_bad_says_what_is_wrong(tmp_path, body, message):
@@ -162,7 +175,7 @@ def test_a_config_the_user_named_that_is_bad_says_what_is_wrong(tmp_path, body, 
         rollup.load_sources([], lazily(cfg))
 
 
-ONE_GOOD_ONE_BAD = '[[source]]\nlabel = "Good"\npath = "/g"\n[[source]]\nlabel = "Label only"\n'
+ONE_GOOD_ONE_BAD = '[[source]]\nlabel = "Good"\nrepo = "/g"\n[[source]]\nlabel = "Label only"\n'
 
 
 @pytest.mark.parametrize("named", [True, False])
@@ -174,20 +187,20 @@ def test_a_bad_source_row_is_skipped_with_a_warning_and_the_rest_still_count(
     found = rollup.load_sources([], lazily(cfg, named))
     assert [s.label for s in found] == ["Good"]
     warning = capsys.readouterr().err
-    assert "row 2 needs a label and a path" in warning and "that row is skipped" in warning
+    assert "row 2 needs a label and a repo" in warning and "that row is skipped" in warning
 
 
 def test_a_bad_default_config_warns_and_falls_back_to_the_current_repository(tmp_path, capsys):
     cfg = tmp_path / "rollup.toml"
     cfg.write_text("not = [valid")
     found = rollup.load_sources([], lazily(cfg, named=False), make_here(tmp_path))
-    assert found == [rollup.Source("this repository", (tmp_path / "repo").resolve())]
+    assert [s.label for s in found] == ["this repository"]
     assert "cannot read" in capsys.readouterr().err
 
 
 def test_a_config_row_with_an_unresolvable_home_is_skipped_like_any_bad_row(tmp_path, capsys):
     cfg = tmp_path / "rollup.toml"
-    cfg.write_text('[[source]]\nlabel = "Gone"\npath = "~nouser-here/p"\n' + ONE_GOOD_ONE_BAD)
+    cfg.write_text('[[source]]\nlabel = "Gone"\nrepo = "~nouser-here/p"\n' + ONE_GOOD_ONE_BAD)
     found = rollup.load_sources([], lazily(cfg))
     assert [s.label for s in found] == ["Good"]
     assert "cannot expand" in capsys.readouterr().err
@@ -201,15 +214,15 @@ def test_a_default_config_with_no_usable_rows_falls_back_too(tmp_path, capsys):
     assert "no usable [[source]] rows" in capsys.readouterr().err
 
 
-REPEATED_LABELS = '[[source]]\nlabel = "A"\npath = "/a"\n[[source]]\nlabel = "A"\npath = "/b"\n'
+REPEATED_LABELS = '[[source]]\nlabel = "A"\nrepo = "/a"\n[[source]]\nlabel = "A"\nrepo = "/b"\n'
 
 
 @pytest.mark.parametrize("named", [True, False])
 def test_a_repeated_label_in_a_config_skips_the_later_row_with_a_warning(tmp_path, capsys, named):
     cfg = tmp_path / "rollup.toml"
-    cfg.write_text(REPEATED_LABELS + '[[source]]\nlabel = "B"\npath = "/c"\n')
+    cfg.write_text(REPEATED_LABELS + '[[source]]\nlabel = "B"\nrepo = "/c"\n')
     found = rollup.load_sources([], lazily(cfg, named))
-    assert found == [rollup.Source("A", pathlib.Path("/a")), rollup.Source("B", pathlib.Path("/c"))]
+    assert found == [rollup.Source("A", "/a"), rollup.Source("B", "/c")]
     warning = capsys.readouterr().err
     assert "used more than once" in warning and "'A'" in warning and "row is skipped" in warning
 
@@ -222,9 +235,30 @@ def test_an_absent_default_config_falls_back_silently(tmp_path, capsys):
     assert capsys.readouterr().err == ""
 
 
+LEGACY_ROW = '[[source]]\nlabel = "Old"\npath = "/old"\nqueue = "docs/q"\n'
+
+
+def test_a_source_row_that_still_says_path_is_read_as_the_repo_and_the_warning_names_it(
+    tmp_path, capsys
+):
+    cfg = tmp_path / "rollup.toml"
+    cfg.write_text(LEGACY_ROW)
+    assert rollup.load_sources([], lazily(cfg)) == [rollup.Source("Old", "/old", "docs/q")]
+    assert (
+        "[[source]] row 1: `path` is now `repo`; reading it as the repo" in capsys.readouterr().err
+    )
+
+
+def test_a_repo_wins_over_a_legacy_path_without_a_warning(tmp_path, capsys):
+    cfg = tmp_path / "rollup.toml"
+    cfg.write_text('[[source]]\nlabel = "New"\nrepo = "/new"\npath = "/old"\n')
+    assert rollup.load_sources([], lazily(cfg)) == [rollup.Source("New", "/new")]
+    assert capsys.readouterr().err == ""
+
+
 def test_a_config_is_read_as_bytes_so_the_locale_cannot_misdecode_it(tmp_path, monkeypatch):
     cfg = tmp_path / "rollup.toml"
-    cfg.write_text('[[source]]\nlabel = "Café"\npath = "/a"\n', encoding="utf-8")
+    cfg.write_text('[[source]]\nlabel = "Café"\nrepo = "/a"\n', encoding="utf-8")
 
     def no_text(*_args, **_kwargs):
         raise AssertionError("read_text uses the locale encoding")
@@ -233,19 +267,19 @@ def test_a_config_is_read_as_bytes_so_the_locale_cannot_misdecode_it(tmp_path, m
     assert [s.label for s in rollup.load_sources([], lazily(cfg))] == ["Café"]
 
 
-def test_config_is_ignored_when_sources_are_given_and_the_run_says_so(work, tmp_path, capsys):
+def test_config_is_ignored_when_sources_are_given_and_the_run_says_so(tmp_path, capsys):
     cfg = tmp_path / "ignored.toml"
-    assert rollup.main(["sources", "--source", f"W={work}", "--config", str(cfg)], env={}) == 0
+    assert rollup.main(["sources", "--source", f"W={NOWHERE}", "--config", str(cfg)], env={}) == 0
     err = capsys.readouterr().err.splitlines()
-    assert err == ["warning: --config is ignored because --source was given"]
+    assert err[0] == "warning: --config is ignored because --source was given"
 
 
-def test_the_default_config_is_not_looked_up_when_sources_are_given(work, monkeypatch, capsys):
+def test_the_default_config_is_not_looked_up_when_sources_are_given(monkeypatch, capsys):
     def unresolvable(explicit, env):
         raise rollup.RollupError("cannot expand '~': no home")
 
     monkeypatch.setattr(rollup, "config_file", unresolvable)
-    assert rollup.main(["sources", "--source", f"W={work}"], env={}) == 0
+    assert rollup.main(["sources", "--source", f"W={NOWHERE}"], env={}) == 0
     assert "W:" in capsys.readouterr().out
     assert rollup.main(["sources"], env={}) == 2
     assert "no home" in capsys.readouterr().err
@@ -293,15 +327,17 @@ def test_the_default_source_is_a_queue_used_directly_or_the_repository_of_a_dot_
     bare = tmp_path / "bare"
     bare.mkdir()
     (bare / "tasks.toml").write_text('name = "x"\n')
-    assert rollup._current(repo / ".tasks") == rollup.Source("this repository", repo.resolve())
-    assert rollup._current(bare) == rollup.Source("this repository", bare.resolve())
+    assert rollup._current(repo / ".tasks") == rollup.Source(
+        "this repository", str(repo.resolve()), ".tasks"
+    )
+    assert rollup._current(bare) == rollup.Source("this repository", str(bare.resolve()), ".")
     assert rollup._current(tmp_path / "nowhere").label == "this repository"
 
 
 def test_the_default_source_never_widens_to_the_home_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     queue = make_queue(tmp_path)
-    assert rollup._current(queue) == rollup.Source("this repository", queue.resolve())
+    assert rollup._current(queue) == rollup.Source("this repository", str(queue.resolve()), ".")
 
 
 def test_source_labels_must_be_unique(tmp_path):
@@ -309,204 +345,270 @@ def test_source_labels_must_be_unique(tmp_path):
         rollup.load_sources(["A=/a", "B=/b", "A=/c", "B=/d", "C=/e"], lazily(tmp_path / "x", False))
 
 
-def test_a_queue_reached_by_two_sources_is_one_project_under_the_first(tmp_path):
-    make_queue(tmp_path / "demo")
-    r = rollup.build(
-        [rollup.Source("Outer", tmp_path), rollup.Source("Inner", tmp_path / "demo")], NOW
+# --- reading a source: offline, never reached, a project that cannot be read ----------------
+
+
+def test_a_source_that_cannot_be_reached_and_was_never_read_is_listed_under_not_shown(capsys):
+    r = rollup.build([rollup.Source("Gone", NOWHERE)], NOW)
+    assert r.entries == () and r.notes == ()
+    assert r.omitted == (rv.Omission("Gone", ".tasks", rollup.NOT_READ),)
+    assert "- Gone / .tasks: its queue cannot be read" in rv.render("pm", "markdown", r)
+    assert NOWHERE in capsys.readouterr().err
+    assert NOWHERE not in rv.render("pm", "json", r)
+
+
+def test_an_unusable_cache_folder_skips_the_source_instead_of_stopping_the_run(
+    tmp_path, monkeypatch
+):
+    def unwritable(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied", "/secret/cache")
+
+    monkeypatch.setattr(rollup, "read_queue", unwritable)
+    r = rollup.build([rollup.Source("A", NOWHERE)], NOW)
+    assert [o.reason for o in r.omitted] == [rollup.NOT_READ]
+
+
+def stale_rollup(tmp_path):
+    """Read once while the remote is up, then again after it has gone away."""
+    source = source_of(tmp_path, alpha, "Work")
+    assert rollup.build([source], NOW).notes == ()
+    pathlib.Path(source.repo).rename(tmp_path / "gone")
+    return rollup.build([source], NOW)
+
+
+STALE = f"Work could not be reached; showing its queue as at {AS_AT}"
+
+
+def test_offline_with_a_cache_shows_the_cached_queue_and_says_when_it_is_as_at(tmp_path):
+    r = stale_rollup(tmp_path)
+    assert [p.slug for p in projects(r)] == ["demo"] and r.omitted == ()
+    assert [n.message for n in r.notes] == [STALE]
+    assert projects(r)[0].as_at.stale
+
+
+def test_a_stale_source_warns_in_json_markdown_and_html(tmp_path):
+    r = stale_rollup(tmp_path)
+    data = json.loads(rv.render("pm", "json", r))
+    assert data["warnings"] == [{"source": "Work", "behind": {}, "message": STALE}]
+    assert data["projects"][0]["as_at"]["stale"] is True
+    shown = (
+        f'<h2>Source warnings</h2><ul class="items"><li><div class="head">{STALE}</div></li></ul>'
     )
-    assert [(p.source, p.slug) for p in r.projects] == [("Outer", "demo")]
+    for view in rv.VIEWS:
+        assert f"## Source warnings\n\n- {STALE}\n" in rv.render(view, "markdown", r)
+        assert shown in rv.render(view, "html", r)
 
 
-def test_a_queue_reached_through_a_symlink_is_not_followed(tmp_path):
-    make_queue(tmp_path / "real")
-    (tmp_path / "link").symlink_to(tmp_path / "real", target_is_directory=True)
-    assert rollup.find_queues(tmp_path) == [tmp_path / "real" / ".tasks"]
+def test_sources_command_shows_the_projects_and_the_stale_warning(tmp_path, capsys):
+    source = source_of(tmp_path, alpha, "Work")
+    rollup.build([source], NOW)
+    pathlib.Path(source.repo).rename(tmp_path / "gone")
+    assert rollup.main(["sources", "--source", f"Work={source.repo}"], env={}) == 0
+    out = capsys.readouterr().out
+    assert f"Work: {source.repo}#.tasks\n  demo\n" in out and f"  warning: {STALE}" in out
 
 
-def test_a_folder_that_cannot_be_listed_is_skipped(tmp_path, monkeypatch):
-    make_queue(tmp_path / "ok")
-    (tmp_path / "locked").mkdir()
-    real = pathlib.Path.iterdir
-
-    def iterdir(self):
-        if self.name == "locked":
-            raise PermissionError("denied")
-        return real(self)
-
-    monkeypatch.setattr(pathlib.Path, "iterdir", iterdir)
-    assert rollup.find_queues(tmp_path) == [tmp_path / "ok" / ".tasks"]
+def test_sources_command_says_why_a_source_gave_nothing(capsys):
+    assert rollup.main(["sources", "--source", f"Gone={NOWHERE}"], env={}) == 0
+    assert f"Gone: {NOWHERE}#.tasks\n  {rollup.NOT_READ}" in capsys.readouterr().out
 
 
-def test_a_source_that_does_not_exist_is_listed_under_not_shown(tmp_path):
-    r = rollup.build([rollup.Source("Gone", tmp_path / "nope")], NOW)
-    assert r.skipped == (rollup.Skipped("Gone", "nope", "not a folder that exists"),)
-    assert "- Gone / nope: not a folder that exists" in rollup.LEVELS["pm"].markdown(r)
+def test_an_up_to_date_source_has_no_warning(work):
+    assert built(work).notes == ()
+
+
+def test_each_source_is_read_once_per_build(work, monkeypatch):
+    calls = []
+    real = rollup.read_queue
+    monkeypatch.setattr(rollup, "read_queue", lambda *a: calls.append(a[0]) or real(*a))
+    built(work)
+    assert calls == [s.repo for s in work]
+
+
+def test_broken_projects_are_skipped_with_the_reason(tmp_path):
+    noout = source_of(tmp_path / "noout", with_project_toml('[project]\ntitle = "T"\n'), "Noout")
+    badtoml = source_of(tmp_path / "badtoml", with_project_toml("not = [valid"), "Badtoml")
+    r = rollup.build([noout, badtoml], NOW)
+    assert r.entries == ()
+    assert [o.source for o in r.omitted] == ["Noout", "Badtoml"]
+    assert "outcome" in r.omitted[0].reason
+
+
+def test_a_queue_without_a_project_file_is_omitted_without_naming_where_it_was_cached(tmp_path):
+    def build(clone: pathlib.Path) -> None:
+        (make_queue(clone) / "project.toml").unlink()
+
+    r = rollup_of(tmp_path, build)
+    assert [o.reason for o in r.omitted] == ["project.toml does not exist"]
+    assert str(qs.cache_root()) not in "".join(rv.render("pm", "markdown", r))
+
+
+def test_a_broken_project_does_not_stop_the_sources_after_it(tmp_path, work):
+    bad = source_of(tmp_path, with_project_toml('[project]\ntitle = "T"\n'), "Bad")
+    r = rollup.build([bad, *work], NOW)
+    assert [p.source for p in projects(r)] == ["Alpha", "Beta"]
+    assert [o.source for o in r.omitted] == ["Bad"]
+
+
+def test_two_sources_that_both_hold_projects_show_both_under_their_labels(work):
+    r = built(work)
+    assert [(p.source, p.slug) for p in projects(r)] == [("Alpha", "demo"), ("Beta", "Beta")]
+    pm = rv.render("pm", "markdown", r)
+    assert "**Source:** Alpha @ " in pm and "**Source:** Beta @ " in pm
+    data = json.loads(rv.render("cto", "json", r))
+    assert data["sources"] == ["Alpha", "Beta"]
+    assert data["source_projects"] == [
+        {"source": "Alpha", "projects": 1},
+        {"source": "Beta", "projects": 1},
+    ]
 
 
 # --- model -----------------------------------------------------------------------------------
 
 
 def test_a_milestone_holds_the_briefs_whose_frontmatter_names_it(work):
-    a = next(p for p in built(work).projects if p.slug == "demo")
+    a = next(p for p in projects(built(work)) if p.slug == "demo")
     m2 = a.milestones[1]
     assert [s.id for s in m2.briefs] == ["b3", "b2", "b4", "b5"]
-    assert m2.waiting_count == 2 and m2.stage is rollup.Stage.NOW
+    assert m2.waiting_count == 2 and m2.stage is model.Stage.NOW
     assert [s.waiting for s in m2.briefs] == [True, False, True, False]
     assert m2.milestone.total == 4 and m2.milestone.done == 0
-    assert a.milestones[0].stage is rollup.Stage.DONE
+    assert a.milestones[0].stage is model.Stage.DONE
     assert [s.id for s in a.shipped] == ["b1"]
     assert a.health.owner == "green" and a.health.effective == "green"
     assert a.ask is None
 
 
-def test_milestones_file_adds_milestones_and_unset_health_shows_the_floor(work):
-    b = next(p for p in built(work).projects if p.slug == "beta")
+def test_unset_health_shows_the_floor(work):
+    b = next(p for p in projects(built(work)) if p.slug == "Beta")
     assert [(m.id, m.stage) for m in b.milestones] == [
-        ("M0", rollup.Stage.NEXT),
-        ("M1", rollup.Stage.DONE),
-        ("M2", rollup.Stage.NEXT),
+        ("M0", model.Stage.NEXT),
+        ("M1", model.Stage.DONE),
+        ("M2", model.Stage.NEXT),
     ]
     assert b.health.owner == "" and b.health.effective == "red"
-    assert b.ask == rollup.Ask("Ship it?", "2026-11-01")
+    assert b.ask == model.Ask("Ship it?", "2026-11-01")
     assert b.shipped == ()
 
 
-def test_unset_health_with_no_floor_is_blank():
-    h = rollup.Health.of({}, [], NOW)
-    assert (h.owner, h.effective, h.signals) == ("", "", ())
+def test_each_project_carries_the_commit_it_was_read_at(work):
+    alpha_read = projects(built(work))[0]
+    head = snapshot(pathlib.Path(work[0].repo), qs.cache_root())
+    assert (alpha_read.as_at.sha, alpha_read.as_at.stale) == (head.sha, False)
+    assert alpha_read.as_at.committed.isoformat() == AS_AT
 
 
-@pytest.mark.parametrize("raw", [None, {}, {"deadline": "x"}])
-def test_ask_needs_a_question(raw):
-    assert rollup.Ask.of(raw) is None
-
-
-def test_broken_projects_are_skipped_with_the_reason(tmp_path):
-    (make_queue(tmp_path / "noout") / "project.toml").write_text('[project]\ntitle = "T"\n')
-    (make_queue(tmp_path / "badtoml") / "project.toml").write_text("not = [valid")
-    r = rollup.build([rollup.Source("S", tmp_path)], NOW)
-    assert r.projects == ()
-    assert sorted(s.queue for s in r.skipped) == ["badtoml", "noout"]
-    assert any("outcome" in s.reason for s in r.skipped)
-
-
-def test_project_view_ignores_an_unreadable_milestones_file(tmp_path):
-    q = make_queue(tmp_path)
-    (q / "tasks.toml").write_text('name = "Demo"\nmilestones = "missing.toml"\n')
-    cfg = pv.read_project(q)
-    assert [m["id"] for m in pv.declared_milestones(q, cfg)] == ["m1", "m2"]
-
-
-def test_a_project_with_no_owner_health_reads_without_one(tmp_path):
-    q = make_queue(tmp_path)
-    (q / "project.toml").write_text('[project]\ntitle = "T"\noutcome = "O"\n')
-    assert "health" not in pv.read_project(q)
-
-
-@pytest.mark.parametrize(
-    "body,message",
-    [
-        ('title = "loose"\n', r"\[project\] is required"),
-        ('health = 3\n[project]\ntitle = "T"\noutcome = "O"\n', r"\[health\] is required"),
-    ],
-)
-def test_read_project_rejects_malformed_tables(tmp_path, body, message):
-    q = make_queue(tmp_path)
-    (q / "project.toml").write_text(body)
-    with pytest.raises(pv.ProjectConfigError, match=message):
-        pv.read_project(q)
-
-
-# --- levels ----------------------------------------------------------------------------------
+# --- views -----------------------------------------------------------------------------------
 
 
 def test_pm_json_is_the_api(work):
-    data = rollup.LEVELS["pm"].data(built(work))
-    assert data["schema"] == rollup.SCHEMA and data["level"] == "pm" and data["sources"] == ["Work"]
+    r = built(work)
+    data = json.loads(rv.render("pm", "json", r))
+    assert data["schema"] == rv.SCHEMA and data["level"] == "pm"
+    assert data["sources"] == ["Alpha", "Beta"]
     assert data["warnings"] == [] and data["skipped"] == []
     a, b = data["projects"]
     assert [e["id"] for e in a["now"]] == ["m2"] and [e["id"] for e in a["done"]] == ["m1"]
     assert a["now"][0]["waiting"] == 2 and [s["id"] for s in a["shipped"]] == ["b1"]
     assert "blocked" not in a["now"][0]
     assert b["ask"] == {"question": "Ship it?", "deadline": "2026-11-01"}
+    head = snapshot(pathlib.Path(work[0].repo), qs.cache_root())
+    assert a["as_at"] == {"sha": head.sha, "committed": AS_AT, "stale": False}
     text = json.dumps(data)
-    assert "Success criteria" not in text and "vendor" not in text
+    assert "Success criteria" not in text
+    assert {"brief": "b3", "waiting_on": ["external:vendor"]} in a["now"][0]["blockers"]
 
 
 def test_pm_markdown_reads_as_a_page(work):
-    md = rollup.LEVELS["pm"].markdown(built(work))
+    md = rv.render("pm", "markdown", built(work))
     assert "# Product roll-up" in md
-    assert "**Red**, not set by owner." in md and ".**." not in md
-    assert "Ship it? (by 2026-11-01)" in md
-    assert "missed" in md and "2 waiting" in md
+    assert "`Red` The owner has not set a health in project.toml." in md
+    assert "**Ask:** Ship it? (by 2026-11-01)" in md
+    assert "`missed`" in md and "`2 waiting`" in md
 
 
 def test_ask_without_deadline(tmp_path):
-    q = make_queue(tmp_path / "x")
-    text = (q / "project.toml").read_text()
-    (q / "project.toml").write_text(text + '\n[ask]\nquestion = "Q?"\n')
-    md = rollup.LEVELS["pm"].markdown(rollup.build([rollup.Source("S", tmp_path)], NOW))
-    assert "- Q?\n" in md
+    text = '[project]\ntitle = "T"\noutcome = "O"\n[ask]\nquestion = "Q?"\n'
+    md = rv.render("pm", "markdown", rollup_of(tmp_path, with_project_toml(text)))
+    assert "**Ask:** Q?\n" in md
 
 
-def test_cto_is_one_table_with_reasons(work):
+def test_cto_gives_each_project_a_sentence_and_its_reasons(work):
     r = built(work)
-    data = rollup.LEVELS["cto"].data(r)
+    data = json.loads(rv.render("cto", "json", r))
     a, b = data["projects"]
     assert a["milestones"] == {"done": 1, "total": 2} and a["missed"] == []
+    assert a["as_at"]["committed"] == AS_AT
     assert b["next_due"] == {"id": "M0", "title": "Zero", "due": "2026-10-01"}
     assert b["missed"] == [{"id": "M0", "title": "Zero", "due": "2026-10-01"}]
-    md = rollup.LEVELS["cto"].markdown(r)
-    assert "Beta \\| Two (Work)" in md and "1 of 3" in md
+    md = rv.render("cto", "markdown", r)
+    assert "Beta \\| Two is red; 1 of 3 milestones done; 1 past their date" in md
 
 
 def test_empty_and_skipped_are_said_plainly(tmp_path):
-    (make_queue(tmp_path / "bad") / "project.toml").write_text("[project]\n")
-    md = rollup.LEVELS["pm"].markdown(rollup.build([rollup.Source("S", tmp_path)], NOW))
-    assert "No projects found" in md and "## Not shown" in md and "S / bad" in md
+    r = rollup_of(tmp_path, with_project_toml("[project]\n"), "S")
+    md = rv.render("pm", "markdown", r)
+    assert "No projects found" in md and "## Not shown" in md and "S / .tasks" in md
 
 
 # --- HTML, files, server ---------------------------------------------------------------------
 
 
-def test_pm_html_is_built_from_the_model(work):
-    page = rollup.LEVELS["pm"].html(built(work))
+def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
+    page = rv.render("pm", "html", built(work))
     assert "<title>Product roll-up</title>" in page and "<h1>Product roll-up</h1>" in page
-    assert "<h2>Demo Project</h2>" in page and "<strong>Green</strong>" in page
-    assert "<h3>Now</h3>" in page and "<li>Ship it? (by 2026-11-01)</li>" in page
-    assert "<h3>Shipped in the last 14 days</h3>" in page and "<li>One (2026-10-22)</li>" in page
+    assert page.index("<h2>Projects</h2>") < page.index("<h2>Milestones</h2>")
+    assert page.index("<h2>Milestones</h2>") < page.index("<h2>Detail</h2>")
+    assert '<span class="chip chip-good">Green</span>' in page and "<table>" in page
+    assert "<details><summary>Show detail</summary>" in page
+    assert "<strong>Ask:</strong> Ship it? (by 2026-11-01)" in page
+    assert "<h5>No release named, last 14 days</h5>" in page and "One (2026-10-22)" in page
 
 
-def test_cto_html_is_one_table_and_the_reasons(work):
-    page = rollup.LEVELS["cto"].html(built(work))
-    assert page.count("<th>") == 5 and "<td>Beta | Two (Work)</td>" in page
-    assert "<td>1 of 3</td>" in page and "<strong>Red</strong>" in page
+def test_cto_html_groups_projects_by_initiative_with_a_sentence_each(work):
+    page = rv.render("cto", "html", built(work))
+    assert "<h2>No initiative</h2>" in page and "<h3>Beta | Two</h3>" in page
+    assert "<p>Beta | Two is red; 1 of 3 milestones done;" in page
+    assert '<span class="chip chip-bad">Red</span>' in page and "<table>" not in page
 
 
 def test_html_says_plainly_when_there_is_nothing_to_show(tmp_path):
-    (make_queue(tmp_path / "bad") / "project.toml").write_text("[project]\n")
-    page = rollup.LEVELS["pm"].html(rollup.build(only_source(tmp_path), NOW))
+    page = rv.render("pm", "html", rollup_of(tmp_path, with_project_toml("[project]\n")))
     assert "<p>No projects found." in page and "<h2>Not shown</h2>" in page
-    assert "<li>S / bad:" in page
+    assert '<div class="head">S / .tasks:' in page
+
+
+WRITTEN_FILES = [
+    "README.md",
+    "cto.json",
+    "cto.md",
+    "engineer.json",
+    "engineer.md",
+    "pm.json",
+    "pm.md",
+]
 
 
 def test_write_produces_a_folder_github_renders(work, tmp_path):
     out = tmp_path / "out" / "rollups"
     paths = rollup.write(out, built(work))
-    assert sorted(p.name for p in paths) == ["README.md", "cto.json", "cto.md", "pm.json", "pm.md"]
+    assert sorted(p.name for p in paths) == WRITTEN_FILES
     assert "(pm.md)" in (out / "README.md").read_text()
-    assert json.loads((out / "cto.json").read_text())["level"] == "cto"
+    for view in rv.VIEWS:
+        assert json.loads((out / f"{view}.json").read_text())["level"] == view
+        assert (out / f"{view}.md").read_text().startswith("# ")
 
 
 def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work):
-    text = " ".join(rollup.readme_markdown(built(work)).split())
+    text = " ".join(rv.render_contents("markdown", built(work), with_guide=True).split())
     for line in (
-        "[Product roll-up](pm.md) ([JSON](pm.json))",
-        "[Portfolio roll-up](cto.md) ([JSON](cto.json))",
-        "Open `pm.md` or `cto.md` in this folder; GitHub shows them as formatted pages.",
+        "[Engineering roll-up](engineer.md) [JSON](engineer.json)",
+        "[Product roll-up](pm.md) [JSON](pm.json)",
+        "[Portfolio roll-up](cto.md) [JSON](cto.json)",
+        "Open `engineer.md`, `pm.md` or `cto.md` in this folder; GitHub shows them as formatted pages.",
         'Install the claude-tasks plugin, then ask "how are my projects going?".',
-        "attach `pm.md` with **+ > Add from GitHub**",
-        "rollup.py write --out <dir> --source Label=path",
+        "attach `pm.md` with `+ > Add from GitHub`",
+        "rollup.py write --out <dir> --source Label=repo",
         "use the schema `claude-tasks.rollup/v1`",
     ):
         assert line in text
@@ -515,9 +617,12 @@ def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work)
 @pytest.mark.parametrize(
     "path,ctype,needle",
     [
-        ("/", "text/html", "pm"),
+        ("/", "text/html", '<a href="pm"'),
+        ("/engineer", "text/html", "Engineering roll-up"),
         ("/pm", "text/html", "Product roll-up"),
-        ("/cto", "text/html", "<table>"),
+        ("/cto", "text/html", "Portfolio roll-up"),
+        ("/engineer.json", "application/json", '"engineer"'),
+        ("/pm.json", "application/json", '"pm"'),
         ("/cto.json", "application/json", '"cto"'),
     ],
 )
@@ -533,9 +638,7 @@ def test_unknown_routes(work, path):
 
 def test_server_answers_on_localhost(work, capsys):
     holder = {}
-    rollup.Serve([rollup.Source("Work", work)], lambda: NOW, 0).run(
-        block=lambda srv: holder.setdefault("srv", srv)
-    )
+    rollup.Serve(work, lambda: NOW, 0).run(block=lambda srv: holder.setdefault("srv", srv))
     srv = holder["srv"]
     assert srv.server_address[0] == "127.0.0.1"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -555,23 +658,29 @@ def test_server_answers_on_localhost(work, capsys):
 # --- CLI -------------------------------------------------------------------------------------
 
 
+def sources_args(work):
+    return [arg for s in work for arg in ("--source", f"{s.label}={s.repo}")]
+
+
 def test_cli_prints_each_format(work, capsys):
-    src = ["--source", f"Work={work}"]
+    src = sources_args(work)
     assert rollup.main(["json", "--level", "cto", *src], env={}) == 0
     assert json.loads(capsys.readouterr().out)["level"] == "cto"
     assert rollup.main(["markdown", *src], env={}) == 0
     assert "# Product roll-up" in capsys.readouterr().out
+    assert rollup.main(["markdown", "--level", "engineer", *src], env={}) == 0
+    assert "# Engineering roll-up" in capsys.readouterr().out
     assert rollup.main(["html", *src], env={}) == 0
     assert "<html" in capsys.readouterr().out.lower()
-    assert rollup.main(["sources", *src, "--source", f"Empty={work / 'none'}"], env={}) == 0
+    assert rollup.main(["sources", *src, "--source", f"Empty={NOWHERE}"], env={}) == 0
     out = capsys.readouterr().out
-    assert "Work" in out and "Empty" in out
+    assert "Alpha" in out and "Empty" in out
 
 
 def test_cli_write_and_errors(work, tmp_path, capsys):
     out = tmp_path / "o"
-    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
-    assert (out / "pm.md").is_file()
+    assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 0
+    assert all((out / name).is_file() for name in WRITTEN_FILES)
     capsys.readouterr()
     assert rollup.main(["json", "--source", "bad"], env={}) == 2
 
@@ -595,7 +704,7 @@ def test_only_write_takes_an_output_option(argv, capsys):
 @pytest.mark.parametrize(
     "argv,command",
     [
-        (["json", "--level", "cto"], rollup.ShowJson),
+        (["json", "--level", "engineer"], rollup.ShowJson),
         (["markdown"], rollup.ShowMarkdown),
         (["html"], rollup.ShowHtml),
         (["sources"], rollup.ListSources),
@@ -603,8 +712,8 @@ def test_only_write_takes_an_output_option(argv, capsys):
         (["serve", "--port", "0"], rollup.Serve),
     ],
 )
-def test_each_subcommand_parses_to_its_own_command(argv, command, work):
-    assert type(rollup.parse([*argv, "--source", f"W={work}"], {})) is command
+def test_each_subcommand_parses_to_its_own_command(argv, command):
+    assert type(rollup.parse([*argv, "--source", f"W={NOWHERE}"], {})) is command
 
 
 @pytest.mark.parametrize(
@@ -628,54 +737,14 @@ def test_command_names_are_unique():
 
 def test_cli_reads_config_from_the_environment(work, tmp_path, capsys, monkeypatch):
     cfg = tmp_path / "c.toml"
-    cfg.write_text(f'[[source]]\nlabel = "Cfg"\npath = "{work}"\n')
+    cfg.write_text(f'[[source]]\nlabel = "Cfg"\nrepo = "{work[0].repo}"\nqueue = ".tasks"\n')
     monkeypatch.setenv(rollup.CONFIG_ENV, str(cfg))
     monkeypatch.setattr(sys, "argv", ["rollup.py", "sources"])
     assert rollup.main() == 0
     assert "Cfg" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    ("health", "markdown"),
-    [
-        (rollup.Health("", "", "", "", ()), "**Not set by owner**."),
-        (
-            rollup.Health("", "", "", "amber", ("CI red",)),
-            "**Amber**, not set by owner. Automatic checks: CI red.",
-        ),
-        (
-            rollup.Health("green", "On track.", "2026-11-01", "green", ()),
-            "**Green**, set 2026-11-01: On track.",
-        ),
-        (
-            rollup.Health("green", "Fine", "2026-11-01", "red", ("2 missed",)),
-            "**Red**, capped by automatic checks (owner said Green on 2026-11-01: Fine). Automatic checks: 2 missed.",
-        ),
-    ],
-)
-def test_health_markdown_bolds_only_the_colour(health, markdown):
-    assert health.markdown() == markdown
-
-
-def test_health_html_bolds_only_the_colour_and_escapes_the_rest():
-    health = rollup.Health("green", "<b>Fine</b>", "2026-11-01", "green", ("a & b",))
-    assert health.html() == (
-        "<strong>Green</strong>, set 2026-11-01: &lt;b&gt;Fine&lt;/b&gt;. "
-        "Automatic checks: a &amp; b."
-    )
-
-
-def test_cto_explains_only_projects_with_something_to_say(work):
-    md = rollup.LEVELS["cto"].markdown(built(work))
-    bullets = [line for line in md.splitlines() if line.startswith("- **")]
-    assert bullets and not any(line.endswith("**Not set by owner**.") for line in bullets)
-
-
-# --- failures, dates, writing, ports, wording -------------------------------------------------
-
-
-def only_source(path):
-    return [rollup.Source("S", path)]
+# --- failures, dates, writing, ports ----------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -689,34 +758,37 @@ def only_source(path):
     ],
 )
 def test_any_read_failure_skips_the_queue_naming_the_error(tmp_path, monkeypatch, error):
-    make_queue(tmp_path / "x")
-
     def fail(*_args):
         raise error
 
-    monkeypatch.setattr(rollup, "project_of", fail)
-    [skipped] = rollup.build(only_source(tmp_path), NOW).skipped
-    assert skipped.reason.startswith(type(error).__name__)
+    monkeypatch.setattr(rollup, "build_project", fail)
+    [omitted] = rollup.build(only_source(tmp_path), NOW).omitted
+    assert omitted.reason.startswith(type(error).__name__)
 
 
 def test_an_undecodable_project_file_is_skipped_not_fatal(tmp_path):
-    (make_queue(tmp_path / "x") / "project.toml").write_bytes(b"\xff\xfe")
-    r = rollup.build(only_source(tmp_path), NOW)
-    assert r.projects == () and "UnicodeDecodeError" in r.skipped[0].reason
+    def undecodable(clone):
+        (make_queue(clone) / "project.toml").write_bytes(b"\xff\xfe")
+
+    r = rollup.build(only_source(tmp_path, undecodable), NOW)
+    assert r.entries == () and "UnicodeDecodeError" in r.omitted[0].reason
 
 
 def test_story_dates_are_dates_and_undated_briefs_are_not_shipped(tmp_path):
-    q = make_queue(tmp_path / "x")
-    brief(q, "done", "b8", updated="soon, ask Sam", crit="- [x] ok")
-    brief(q, "done", "b9", updated="2026-10-20", crit="- [x] ok")
-    r = rollup.build(only_source(tmp_path), NOW)
-    assert [s.id for s in r.projects[0].shipped] == ["b1", "b9"]
-    assert rollup.LEVELS["pm"].data(r)["projects"][0]["shipped"][1] == {
+    def build(clone):
+        q = make_queue(clone)
+        brief(q, "done", "b8", updated="soon, ask Sam", crit="- [x] ok")
+        brief(q, "done", "b9", updated="2026-10-20", crit="- [x] ok")
+
+    r = rollup.build(only_source(tmp_path, build), NOW)
+    assert [s.id for s in projects(r)[0].shipped] == ["b1", "b9"]
+    data = json.loads(rv.render("pm", "json", r))
+    assert data["projects"][0]["shipped"][1] == {
         "id": "b9",
         "title": "B9",
         "updated": "2026-10-20",
     }
-    assert "Sam" not in json.dumps(rollup.LEVELS["pm"].data(r))
+    assert "Sam" not in json.dumps(data)
 
 
 @pytest.mark.parametrize("held", ["not json", "[1]", '{"schema": "other"}'])
@@ -727,7 +799,7 @@ def test_write_refuses_a_folder_that_holds_something_else(work, tmp_path, held):
     (out / "notes.md").write_text("mine")
     with pytest.raises(rollup.RollupError, match="not an empty folder"):
         rollup.write(out, built(work))
-    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 2
+    assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 2
     assert (out / "notes.md").read_text() == "mine" and (out / "pm.json").read_text() == held
 
 
@@ -737,73 +809,67 @@ def test_write_reports_a_destination_it_cannot_create(work, tmp_path, capsys):
     out = blocker / "rollups"
     with pytest.raises(rollup.RollupError, match=r"cannot write .*rollups: Not a directory"):
         rollup.write(out, built(work))
-    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 2
+    assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 2
     assert capsys.readouterr().err.startswith("error: cannot write ")
 
 
 def test_write_rewrites_only_what_changed_apart_from_the_timestamp(work, tmp_path):
     out = tmp_path / "empty"
     out.mkdir()
-    assert len(rollup.write(out, built(work))) == 5
-    later = dt.datetime(2026, 10, 23, 13, 0, tzinfo=dt.timezone.utc)
-    assert rollup.write(out, rollup.build([rollup.Source("Work", work)], later)) == []
+    assert len(rollup.write(out, built(work))) == len(WRITTEN_FILES)
+    later = NOW.replace(hour=13)
+    assert rollup.write(out, rollup.build(work, later)) == []
     assert "Generated 2026-10-23T12:00:00" in (out / "pm.md").read_text()
-    toml = work / "alpha" / ".tasks" / "project.toml"
-    toml.write_text(toml.read_text().replace("Demo Project", "Renamed"))
-    names = {p.name for p in rollup.write(out, rollup.build([rollup.Source("Work", work)], later))}
-    assert names == {"pm.md", "pm.json", "cto.md", "cto.json"}
-    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
+
+    def renamed(clone):
+        alpha(clone)
+        toml = clone / ".tasks" / "project.toml"
+        toml.write_text(toml.read_text().replace("Demo Project", "Renamed"))
+
+    changed = [source_of(tmp_path / "changed", renamed, "Alpha"), work[1]]
+    names = {p.name for p in rollup.write(out, rollup.build(changed, later))}
+    assert names == {"pm.md", "pm.json", "cto.md", "cto.json", "engineer.md", "engineer.json"}
+    assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 0
 
 
 def test_a_port_in_use_or_out_of_range_is_a_one_line_error(work, capsys):
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
-        assert (
-            rollup.main(
-                ["serve", "--port", str(taken.getsockname()[1]), "--source", f"W={work}"], env={}
-            )
-            == 2
-        )
-    assert rollup.main(["serve", "--port", "70000", "--source", f"W={work}"], env={}) == 2
+        argv = ["serve", "--port", str(taken.getsockname()[1]), *sources_args(work)]
+        assert rollup.main(argv, env={}) == 2
+    assert rollup.main(["serve", "--port", "70000", *sources_args(work)], env={}) == 2
     err = capsys.readouterr().err.splitlines()
     assert len(err) == 2 and all(line.startswith("error: cannot listen on port") for line in err)
 
 
-def test_health_markdown_omits_the_date_clause_when_the_owner_gave_none():
-    capped = rollup.Health("green", "Fine.", "", "red", ("2 missed",))
-    assert capped.markdown() == (
-        "**Red**, capped by automatic checks (owner said Green: Fine). Automatic checks: 2 missed."
-    )
-    assert (
-        rollup.Health("green", "Fine.", "", "green", ()).markdown()
-        == "**Green**, set by owner: Fine."
-    )
-
-
 def test_the_index_links_pages_by_file_in_a_folder_and_by_route_on_the_server(work):
     r = built(work)
-    assert "[Product roll-up](pm.md)" in rollup.readme_markdown(r)
+    assert "[Product roll-up](pm.md)" in rv.render_contents("markdown", r, with_guide=True)
     got = rollup.route("/", r)
-    assert got is not None and '<a href="pm">' in got[1] and '<a href="cto.json">' in got[1]
+    assert got is not None and '<a href="pm"' in got[1] and '<a href="cto.json"' in got[1]
 
 
-def zoned(root, zone):
-    q = make_queue(root)
-    toml = q / "project.toml"
-    toml.write_text(
-        toml.read_text().replace('release = "2026.12"', 'release = "2026.12"\ndue = "2026-10-23"')
-    )
-    brief(q, "done", "b7", updated="2026-10-09", crit="- [x] ok")
-    (q / "tasks.toml").write_text(f'name = "Demo"\ntimezone = "{zone}"\n')
-    return rollup.build(only_source(root), NOW).projects[0]
+def zoned(tmp_path, zone):
+    def build(clone):
+        q = make_queue(clone)
+        toml = q / "project.toml"
+        toml.write_text(
+            toml.read_text().replace(
+                'release = "2026.12"', 'release = "2026.12"\ndue = "2026-10-23"'
+            )
+        )
+        brief(q, "done", "b7", updated="2026-10-09", crit="- [x] ok")
+        (q / "tasks.toml").write_text(f'name = "Demo"\ntimezone = "{zone}"\n')
+
+    return projects(rollup.build(only_source(tmp_path, build), NOW))[0]
 
 
 def test_today_missed_and_the_shipped_window_follow_the_queue_timezone(tmp_path):
     utc = zoned(tmp_path / "u", "UTC")
     ahead = zoned(
         tmp_path / "k", "Pacific/Kiritimati"
-    )  # already 24 October when UTC says 23rd, 12:00
+    )  # already 24 October at 12:00 UTC on the 23rd
     assert (utc.milestones[1].missed, [s.id for s in utc.shipped]) == (False, ["b1", "b7"])
     assert (ahead.milestones[1].missed, [s.id for s in ahead.shipped]) == (True, ["b1"])
 
@@ -815,186 +881,10 @@ def test_an_unknown_timezone_warns_and_falls_back_to_utc(tmp_path, capsys):
 
 
 def test_an_unreadable_tasks_file_still_gives_a_utc_roll_up(tmp_path):
-    q = make_queue(tmp_path)
-    (q / "tasks.toml").write_text("not = [valid")
-    assert [p.slug for p in rollup.build(only_source(tmp_path), NOW).projects] == ["demo"]
+    def build(clone):
+        (make_queue(clone) / "tasks.toml").write_text("not = [valid")
 
-
-# --- two sources, and sources that are behind their upstream ----------------------------------
-
-
-def test_two_sources_that_both_hold_projects_show_both_under_their_labels(work):
-    sources = [
-        rollup.Source("Alpha", work / "alpha"),
-        rollup.Source("Beta", work / "beta"),
-        rollup.Source("Both", work),  # reaches the same two queues again
-    ]
-    r = rollup.build(sources, NOW)
-    assert [(p.source, p.slug) for p in r.projects] == [("Alpha", "demo"), ("Beta", "beta")]
-    pm = rollup.LEVELS["pm"].markdown(r)
-    assert "*Alpha.*" in pm and "*Beta.*" in pm and "*Both.*" not in pm
-    assert rollup.LEVELS["pm"].data(r)["sources"] == ["Alpha", "Beta", "Both"]
-
-
-def test_a_source_that_adds_no_projects_is_named_rather_than_left_out(work, tmp_path):
-    notes = make_queue(tmp_path / "home" / "notes")
-    (notes / "project.toml").unlink()  # briefs, but nothing declaring a project
-    r = rollup.build([rollup.Source("Work", work), rollup.Source("Home", notes.parent)], NOW)
-    assert [s.source for s in r.skipped] == ["Home"]
-    md = rollup.LEVELS["pm"].markdown(r)
-    assert "- Home: no projects (a project is a queue with a project.toml)" in md
-    data = rollup.LEVELS["cto"].data(r)
-    assert data["source_projects"] == [
-        {"source": "Work", "projects": 2},
-        {"source": "Home", "projects": 0},
-    ]
-    assert data["skipped"][0]["reason"] == rollup.NO_PROJECTS_IN_SOURCE
-    assert "Home: no projects" in rollup.LEVELS["pm"].html(r)
-
-
-def git(cwd, *args):
-    identity = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
-    subprocess.run(["git", *identity, "-C", str(cwd), *args], check=True, capture_output=True)
-
-
-def commit(cwd, name):
-    (cwd / name).write_text(name)
-    git(cwd, "add", name)
-    git(cwd, "commit", "-m", name)
-
-
-@pytest.fixture
-def tracked(tmp_path):
-    """A work tree whose upstream is a bare repository, with nothing yet to pull."""
-    bare = tmp_path / "upstream.git"
-    bare.mkdir()
-    git(bare, "init", "--bare", "-b", "main")
-    mine = tmp_path / "mine"
-    mine.mkdir()
-    git(mine, "init", "-b", "main")
-    commit(mine, "first")
-    git(mine, "remote", "add", "origin", str(bare))
-    git(mine, "push", "-u", "origin", "main")
-    return mine
-
-
-def fall_behind(tracked, commits):
-    other = tracked.parent / "other"
-    git(tracked.parent, "clone", str(tracked.parent / "upstream.git"), str(other))
-    for n in range(commits):
-        commit(other, f"later{n}")
-    git(other, "push")
-    git(tracked, "fetch")
-
-
-def test_commits_behind_counts_what_the_upstream_has_and_never_fetches(tracked):
-    assert rollup.commits_behind(tracked) == 0
-    fall_behind(tracked, 1)
-    assert rollup.commits_behind(tracked) == 1
-
-
-def test_commits_behind_is_unknown_without_an_upstream_or_a_repository(tmp_path):
-    lonely = tmp_path / "lonely"
-    lonely.mkdir()
-    git(lonely, "init", "-b", "main")
-    commit(lonely, "x")
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    assert rollup.commits_behind(lonely) is None
-    assert rollup.commits_behind(plain) is None
-
-
-@pytest.mark.parametrize(
-    "error", [FileNotFoundError("git"), subprocess.TimeoutExpired("git", 5), PermissionError("x")]
-)
-def test_commits_behind_never_raises_when_git_is_missing_or_slow(tmp_path, monkeypatch, error):
-    def fail(*_args, **_kwargs):
-        raise error
-
-    monkeypatch.setattr(subprocess, "run", fail)
-    assert rollup.commits_behind(tmp_path) is None
-
-
-@pytest.mark.parametrize("count,noun", [(1, "1 commit"), (2, "2 commits")])
-def test_the_warning_names_the_source_and_the_remedy(count, noun):
-    assert rollup.SourceWarning("Work", count).message == (
-        f"Work is {noun} behind its upstream; pull for current status"
-    )
-
-
-def test_an_up_to_date_source_has_no_warning(tracked):
-    assert rollup.Source("S", tracked).warning() is None
-
-
-def stale(tracked):
-    make_queue(tracked / "demo")
-    fall_behind(tracked, 2)
-    return rollup.build([rollup.Source("S", tracked)], NOW)
-
-
-def test_a_stale_source_warns_in_json_markdown_and_html(tracked):
-    r = stale(tracked)
-    message = "S is 2 commits behind its upstream; pull for current status"
-    assert rollup.LEVELS["pm"].data(r)["warnings"] == [
-        {"source": "S", "behind": 2, "message": message}
-    ]
-    for level in rollup.LEVELS.values():
-        assert f"## Source warnings\n\n- {message}\n" in level.markdown(r)
-        assert f"<h2>Source warnings</h2><ul><li>{message}</li></ul>" in level.html(r)
-
-
-def test_sources_command_shows_the_stale_warning(tracked, capsys):
-    stale(tracked)
-    assert rollup.main(["sources", "--source", f"S={tracked}"], env={}) == 0
-    assert "  warning: S is 2 commits behind its upstream; pull for current status" in (
-        capsys.readouterr().out
-    )
-
-
-def test_a_source_that_is_not_a_repository_is_silent(work, capsys):
-    assert rollup.build([rollup.Source("Work", work)], NOW).warnings == ()
-    assert rollup.main(["sources", "--source", f"Work={work}"], env={}) == 0
-    assert "warning" not in capsys.readouterr().out
-
-
-# --- the server remembers how far behind a source is, briefly ---------------------------------
-
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
-
-
-def test_the_server_asks_git_once_per_source_per_ttl_window(work):
-    calls = []
-    clock = Clock()
-
-    def behind(path):
-        calls.append(path)
-        return 2
-
-    serve = rollup.Serve(
-        [rollup.Source("Work", work), rollup.Source("Other", work / "alpha")],
-        lambda: NOW,
-        0,
-        behind=rollup.BehindCounts(behind, clock),
-    )
-    first = serve.rollup()
-    clock.now += rollup.BEHIND_TTL_SECONDS - 1
-    assert serve.rollup() == first and len(calls) == 2
-    assert [w.behind for w in first.warnings] == [2, 2]
-    clock.now += 1
-    serve.rollup()
-    assert len(calls) == 4
-
-
-def test_a_source_git_cannot_read_is_remembered_as_unknown(tmp_path):
-    clock, calls = Clock(), []
-    counts = rollup.BehindCounts(lambda path: calls.append(path), clock)
-    assert counts(tmp_path) is None and counts(tmp_path) is None and calls == [tmp_path]
+    assert [p.slug for p in projects(rollup.build(only_source(tmp_path, build), NOW))] == ["demo"]
 
 
 # --- what a milestone says, and the rows a project file gets wrong ----------------------------
@@ -1003,13 +893,9 @@ HEAD = '[project]\ntitle = "T"\noutcome = "O"\n'
 
 
 def test_a_milestone_percent_is_the_one_the_project_view_computes(tmp_path):
-    q = make_queue(tmp_path / "demo")
-    declared = pv.declared_milestones(q, pv.read_project(q))
-    rows = pv.milestone_rows(declared, pv.project_briefs(q), NOW.date())
     r = rollup.build(only_source(tmp_path), NOW)
-    assert [m.percent_done for m in r.projects[0].milestones] == [100, 50]
-    assert [m.percent_done for m in r.projects[0].milestones] == [x["percent_done"] for x in rows]
-    pm = rollup.LEVELS["pm"].data(r)["projects"][0]
+    assert [m.percent_done for m in projects(r)[0].milestones] == [100, 50]
+    pm = json.loads(rv.render("pm", "json", r))["projects"][0]
     assert [m["percent_done"] for m in pm["now"]] == [50]
 
 
@@ -1024,54 +910,33 @@ def test_a_milestone_percent_is_the_one_the_project_view_computes(tmp_path):
 def test_a_milestone_row_without_a_text_id_is_dropped_and_the_project_still_shows(
     tmp_path, capsys, body
 ):
-    q = make_queue(tmp_path / "demo")
-    (q / "project.toml").write_text(HEAD + body)
-    r = rollup.build(only_source(tmp_path), NOW)
-    assert r.skipped == () and [m.id for m in r.projects[0].milestones] == ["m1"]
+    r = rollup.build(only_source(tmp_path, with_project_toml(HEAD + body)), NOW)
+    assert r.omitted == () and [m.id for m in projects(r)[0].milestones] == ["m1"]
     warning = capsys.readouterr().err
     assert "milestones row 2 needs a text id" in warning and "that row is left out" in warning
 
 
 @pytest.mark.parametrize("value", ['"m1"', "3"])
 def test_milestones_that_are_not_a_list_warn_and_are_left_out(tmp_path, capsys, value):
-    q = make_queue(tmp_path / "demo")
-    (q / "project.toml").write_text(f"milestones = {value}\n{HEAD}")
-    r = rollup.build(only_source(tmp_path), NOW)
-    assert r.skipped == () and r.projects[0].milestones == ()
+    r = rollup.build(only_source(tmp_path, with_project_toml(f"milestones = {value}\n{HEAD}")), NOW)
+    assert r.omitted == () and projects(r)[0].milestones == ()
     assert "milestones must be [[milestones]] tables" in capsys.readouterr().err
 
 
 def test_milestone_entries_that_are_not_tables_are_dropped_one_by_one(tmp_path, capsys):
-    q = make_queue(tmp_path / "demo")
-    (q / "project.toml").write_text(f"milestones = [1, 2]\n{HEAD}")
-    r = rollup.build(only_source(tmp_path), NOW)
-    assert r.skipped == () and r.projects[0].milestones == ()
+    r = rollup.build(only_source(tmp_path, with_project_toml(f"milestones = [1, 2]\n{HEAD}")), NOW)
+    assert r.omitted == () and projects(r)[0].milestones == ()
     assert "milestones row 1 needs a text id" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("value", ["5", '""', '["a"]'])
-def test_a_slug_that_is_not_text_falls_back_to_the_folder_name_with_a_warning(
+def test_a_slug_that_is_not_text_falls_back_to_the_source_label_with_a_warning(
     tmp_path, capsys, value
 ):
-    q = make_queue(tmp_path / "folder")
-    (q / "project.toml").write_text(HEAD.replace("[project]", f"[project]\nslug = {value}"))
-    assert rollup.build(only_source(tmp_path), NOW).projects[0].slug == "folder"
+    toml = HEAD.replace("[project]", f"[project]\nslug = {value}")
+    r = rollup_of(tmp_path, with_project_toml(toml), "Label")
+    assert projects(r)[0].slug == "Label"
     assert "slug must be text" in capsys.readouterr().err
-
-
-def test_a_title_of_only_whitespace_is_missing(tmp_path):
-    q = make_queue(tmp_path)
-    (q / "project.toml").write_text('[project]\ntitle = "  "\noutcome = "O"\n')
-    with pytest.raises(pv.ProjectConfigError, match=r"\[project\] title is required"):
-        pv.read_project(q)
-
-
-@pytest.mark.parametrize("colour", ['["red"]', "5", "{ a = 1 }"])
-def test_a_health_colour_that_is_not_text_is_a_config_error_not_a_crash(tmp_path, colour):
-    q = make_queue(tmp_path)
-    (q / "project.toml").write_text(f'{HEAD}[health]\ncolour = {colour}\nreason = "r"\n')
-    with pytest.raises(pv.ProjectConfigError, match="green, amber or red"):
-        pv.read_project(q)
 
 
 # --- writing over files that are not ours -----------------------------------------------------
@@ -1084,35 +949,11 @@ def test_an_existing_file_that_is_not_utf8_is_replaced_not_fatal(work, tmp_path)
     (out / "pm.md").write_bytes(b"\xff\xfe")
     assert [p.name for p in rollup.write(out, built(work))] == ["pm.md"]
     assert "Product roll-up" in (out / "pm.md").read_text()
-    assert rollup.main(["write", "--out", str(out), "--source", f"W={work}"], env={}) == 0
+    assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 0
 
 
-# --- sources that add nothing -----------------------------------------------------------------
-
-
-def test_a_source_whose_projects_all_sit_under_an_earlier_source_is_named(tmp_path):
-    make_queue(tmp_path / "d")
-    sources = [rollup.Source("A", tmp_path / "d"), rollup.Source("B", tmp_path / "d" / ".tasks")]
-    r = rollup.build(sources, NOW)
-    assert [(s.source, s.reason) for s in r.skipped] == [("B", rollup.SHOWN_UNDER_ANOTHER_SOURCE)]
-    assert rollup.LEVELS["pm"].data(r)["source_projects"] == [
-        {"source": "A", "projects": 1},
-        {"source": "B", "projects": 0},
-    ]
-    assert "- B: every project it finds is already shown under another source" in (
-        rollup.LEVELS["pm"].markdown(r)
-    )
-
-
-def test_a_build_walks_each_source_once(work, tmp_path, monkeypatch):
-    calls = []
-    real = rollup.Source.projects
-
-    def counted(self):
-        calls.append(self.label)
-        return real(self)
-
-    monkeypatch.setattr(rollup.Source, "projects", counted)
-    (tmp_path / "empty").mkdir()
-    rollup.build([rollup.Source("A", work), rollup.Source("B", tmp_path / "empty")], NOW)
-    assert sorted(calls) == ["A", "B"]
+def test_the_snapshot_time_is_the_commit_time_not_the_time_of_the_run(tmp_path):
+    source = source_of(tmp_path, alpha, "Work")
+    later = NOW.replace(year=2027)
+    assert projects(rollup.build([source], later))[0].as_at.committed.isoformat() == PUSHED_AT
+    assert publish  # the fixture module is the one place a queue reaches a remote

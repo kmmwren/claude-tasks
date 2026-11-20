@@ -1,0 +1,255 @@
+{
+  "schema": "claude-tasks.rollup/v1",
+  "level": "cto",
+  "generated": "2026-11-19T12:00:00+00:00",
+  "sources": [
+    "alpha-source",
+    "beta-source",
+    "idle-source"
+  ],
+  "source_projects": [
+    {
+      "source": "alpha-source",
+      "projects": 1
+    },
+    {
+      "source": "beta-source",
+      "projects": 2
+    },
+    {
+      "source": "idle-source",
+      "projects": 0
+    }
+  ],
+  "projects": [
+    {
+      "source": "alpha-source",
+      "slug": "atlas",
+      "title": "Atlas",
+      "outcome": "Teams see what shipped.",
+      "initiative": "Platform",
+      "as_at": {
+        "sha": "FULLSHA1",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "effective": "red",
+        "owner": "green",
+        "reason": "On course."
+      },
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA1",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Atlas is red; 1 of 4 milestones done; 1 past their date; next is The active thing due 2026-11-30."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA1",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "green",
+          "reason": "On course.",
+          "set_on": "2026-11-02",
+          "effective": "red",
+          "signals": [
+            "the latest build recorded in the queue is red (2026-11-18)",
+            "past its date and not done: m2"
+          ],
+          "stale": true,
+          "age_days": 17
+        },
+        "build": {
+          "state": "red",
+          "link": "https://example.test/ci/2",
+          "set_on": "2026-11-18"
+        },
+        "links": [
+          {
+            "label": "docs",
+            "url": "https://example.test/docs"
+          }
+        ]
+      },
+      "milestones": {
+        "done": 1,
+        "total": 4
+      },
+      "next_due": {
+        "id": "m2",
+        "title": "The active thing",
+        "due": "2026-11-30"
+      },
+      "missed": [
+        {
+          "id": "m2",
+          "title": "The active thing",
+          "due": "2026-11-30"
+        }
+      ],
+      "milestone_lines": [
+        "Shipping is done",
+        "The active thing (50%, due 2026-11-30, missed, 1 waiting)",
+        "Later (50%)",
+        "Empty (0%)"
+      ]
+    },
+    {
+      "source": "beta-source",
+      "slug": "beta",
+      "title": "Beta",
+      "outcome": "Beta works.",
+      "initiative": "",
+      "as_at": {
+        "sha": "FULLSHA2",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "effective": "green",
+        "owner": "green",
+        "reason": "Fine."
+      },
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA2",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Beta is green; 1 of 1 milestone done."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA2",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "green",
+          "reason": "Fine.",
+          "set_on": "2026-11-18",
+          "effective": "green",
+          "signals": [],
+          "stale": false,
+          "age_days": 1
+        },
+        "build": null,
+        "links": []
+      },
+      "milestones": {
+        "done": 1,
+        "total": 1
+      },
+      "next_due": null,
+      "missed": [],
+      "milestone_lines": [
+        "Only"
+      ]
+    },
+    {
+      "source": "beta-source",
+      "slug": "gamma",
+      "title": "Gamma",
+      "outcome": "Gamma works.",
+      "initiative": "Growth",
+      "as_at": {
+        "sha": "FULLSHA3",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "health": {
+        "effective": "",
+        "owner": "",
+        "reason": ""
+      },
+      "board": {
+        "as_at": {
+          "sha": "FULLSHA3",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "text": "Gamma is not yet rated by its owner; 0 of 1 milestone done."
+      },
+      "tile": {
+        "as_at": {
+          "sha": "FULLSHA3",
+          "committed": "2026-11-19T09:00:00+00:00",
+          "stale": false
+        },
+        "health": {
+          "owner": "",
+          "reason": "",
+          "set_on": "",
+          "effective": "",
+          "signals": [],
+          "stale": false,
+          "age_days": null
+        },
+        "build": null,
+        "links": []
+      },
+      "milestones": {
+        "done": 0,
+        "total": 1
+      },
+      "next_due": null,
+      "missed": [],
+      "milestone_lines": [
+        "Only (50%)"
+      ]
+    }
+  ],
+  "initiatives": [
+    {
+      "initiative": "Platform",
+      "projects": [
+        {
+          "source": "alpha-source",
+          "slug": "atlas"
+        }
+      ]
+    },
+    {
+      "initiative": "Growth",
+      "projects": [
+        {
+          "source": "beta-source",
+          "slug": "gamma"
+        }
+      ]
+    },
+    {
+      "initiative": "",
+      "projects": [
+        {
+          "source": "beta-source",
+          "slug": "beta"
+        }
+      ]
+    }
+  ],
+  "skipped": [
+    {
+      "source": "gone-source",
+      "queue": "",
+      "reason": "unreachable"
+    },
+    {
+      "source": "gone-source",
+      "queue": ".tasks",
+      "reason": "no project.toml"
+    }
+  ],
+  "warnings": [
+    {
+      "source": "gone-source",
+      "behind": {},
+      "message": "Showing a cached copy."
+    }
+  ]
+}

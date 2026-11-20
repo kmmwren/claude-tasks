@@ -51,7 +51,7 @@ from collections.abc import Callable
 from typing import Any
 
 from _paths import require_queue, resolve_root
-from config import load_config
+from config import load_config_or_defaults
 from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
 from scope import SCOPE_HELP, AllScope, Scope, parse_scope
@@ -187,7 +187,7 @@ class Weights:
     @classmethod
     def for_queue(cls, root: pathlib.Path) -> "Weights":
         """A bad setting falls back to the defaults, keeping tag_weights, rather than failing."""
-        table = load_config(root).get("priority", {})
+        table = load_config_or_defaults(root, "prioritise").get("priority", {})
         try:
             return cls.from_priority(table)
         except (ValueError, TypeError, AttributeError) as err:

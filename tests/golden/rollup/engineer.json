@@ -1,0 +1,185 @@
+{
+  "schema": "claude-tasks.rollup/v1",
+  "level": "engineer",
+  "generated": "2026-11-19T12:00:00+00:00",
+  "sources": [
+    "alpha-source",
+    "beta-source",
+    "idle-source"
+  ],
+  "source_projects": [
+    {
+      "source": "alpha-source",
+      "projects": 1
+    },
+    {
+      "source": "beta-source",
+      "projects": 2
+    },
+    {
+      "source": "idle-source",
+      "projects": 0
+    }
+  ],
+  "projects": [
+    {
+      "source": "alpha-source",
+      "slug": "atlas",
+      "title": "Atlas",
+      "outcome": "Teams see what shipped.",
+      "initiative": "Platform",
+      "as_at": {
+        "sha": "FULLSHA1",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "ready": [
+        {
+          "rank": 1,
+          "id": "b4",
+          "title": "B4 title",
+          "kind": "feature",
+          "effort": "",
+          "due": "2026-11-12",
+          "days_to_due": -7,
+          "overdue": true,
+          "waiting_on": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        },
+        {
+          "rank": 2,
+          "id": "b5",
+          "title": "B5 title",
+          "kind": "feature",
+          "effort": "l",
+          "due": "2026-11-25",
+          "days_to_due": 6,
+          "overdue": false,
+          "waiting_on": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        },
+        {
+          "rank": 3,
+          "id": "b10",
+          "title": "B10 title",
+          "kind": "feature",
+          "effort": "",
+          "due": "2027-01-15",
+          "days_to_due": 57,
+          "overdue": false,
+          "waiting_on": [
+            "b5"
+          ],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "bugs": [
+        {
+          "rank": 4,
+          "id": "b9",
+          "title": "B9 title",
+          "kind": "bug",
+          "effort": "",
+          "due": "",
+          "days_to_due": null,
+          "overdue": false,
+          "waiting_on": [],
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "uncovered_requirements": [
+        {
+          "id": "ATL-R003",
+          "words": "Nobody covers this",
+          "as_at": {
+            "sha": "FULLSHA1",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ]
+    },
+    {
+      "source": "beta-source",
+      "slug": "beta",
+      "title": "Beta",
+      "outcome": "Beta works.",
+      "initiative": "",
+      "as_at": {
+        "sha": "FULLSHA2",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "ready": [],
+      "bugs": [],
+      "uncovered_requirements": []
+    },
+    {
+      "source": "beta-source",
+      "slug": "gamma",
+      "title": "Gamma",
+      "outcome": "Gamma works.",
+      "initiative": "Growth",
+      "as_at": {
+        "sha": "FULLSHA3",
+        "committed": "2026-11-19T09:00:00+00:00",
+        "stale": false
+      },
+      "ready": [
+        {
+          "rank": 1,
+          "id": "g1",
+          "title": "G1 title",
+          "kind": "feature",
+          "effort": "",
+          "due": "",
+          "days_to_due": null,
+          "overdue": false,
+          "waiting_on": [],
+          "as_at": {
+            "sha": "FULLSHA3",
+            "committed": "2026-11-19T09:00:00+00:00",
+            "stale": false
+          }
+        }
+      ],
+      "bugs": [],
+      "uncovered_requirements": []
+    }
+  ],
+  "skipped": [
+    {
+      "source": "gone-source",
+      "queue": "",
+      "reason": "unreachable"
+    },
+    {
+      "source": "gone-source",
+      "queue": ".tasks",
+      "reason": "no project.toml"
+    }
+  ],
+  "warnings": [
+    {
+      "source": "gone-source",
+      "behind": {},
+      "message": "Showing a cached copy."
+    }
+  ]
+}

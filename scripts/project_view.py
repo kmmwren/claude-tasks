@@ -130,7 +130,7 @@ def project_briefs(queue: pathlib.Path) -> list[dict[str, Any]]:
 
 def declared_milestones(queue: pathlib.Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """project.toml milestones in order, then any further ids the queue's milestones file declares."""
-    listed = _listed_milestones(queue, cfg.get("milestones", []))
+    listed = listed_milestones(queue, cfg.get("milestones", []))
     known = {m["id"] for m in listed}
     return listed + [
         {"id": m.id, "title": m.title, "release": m.release or ""}
@@ -139,7 +139,7 @@ def declared_milestones(queue: pathlib.Path, cfg: dict[str, Any]) -> list[dict[s
     ]
 
 
-def _listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
+def listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
     """The `[[milestones]]` rows that carry a text id; each other row is named and left out."""
     where = f"{queue / 'project.toml'}: milestones"
     if not isinstance(raw, list):
@@ -505,11 +505,23 @@ def _floor(
     return found
 
 
+def _recorded_ci(ci: facts.CiRow | None) -> list[dict[str, str]]:
+    """A red build recorded in the queue caps health; a green or absent one adds nothing."""
+    if ci is None or ci.state != "red":
+        return []
+    detail = f"the latest build recorded in the queue is red ({ci.set_on.isoformat()})"
+    return [{"signal": "red CI", "floor": CI_RED_FLOOR, "detail": detail}]
+
+
 def computed_floor(
-    milestones: list[dict[str, Any]], briefs: list[dict[str, Any]], signals: Signals
+    milestones: list[dict[str, Any]],
+    briefs: list[dict[str, Any]],
+    signals: Signals,
+    ci: facts.CiRow | None = None,
 ) -> list[dict[str, str]]:
-    """The floor from the queue alone: staleness and missed dates, without PR or session signals."""
-    return _floor(milestones, [], _last_movement(briefs, [], signals, []), signals)
+    """The floor from the queue alone: its recorded build, staleness and missed dates."""
+    movement = _floor(milestones, [], _last_movement(briefs, [], signals, []), signals)
+    return [*_recorded_ci(ci), *movement]
 
 
 def owner_health(

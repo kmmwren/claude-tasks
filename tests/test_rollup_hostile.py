@@ -1,6 +1,5 @@
 """Roll-ups read text the project owner typed, so none of it may become markup, links or script."""
 
-import datetime as dt
 import http.client
 import json
 import re
@@ -8,33 +7,41 @@ import threading
 from pathlib import Path
 
 import pytest
+import queue_snapshot as qs
 import rollup
+import rollup_views as rv
 
 from tests.project_fixtures import make_queue
+from tests.rollup_sources import NOW, projects, rollup_of, source_of, with_project_toml
 
-NOW = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)
 SAFE_TARGET = re.compile(r"[\w./-]+")
-CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
-HOSTILE_PROJECT = """
-[project]
-title = "[x](javascript:alert(1))"
-outcome = '[y](" onmouseover="alert(2))'
-
-[health]
-colour = "green"
-reason = "[z](javascript:alert(3))"
-"""
+CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; "
+    "frame-ancestors 'none'"
+)
 INJECTED_PROJECT = """
 [project]
 title = "A\\n# Injected\\n| x | y |\\n- bullet"
 outcome = "O\\n## Two"
 """
+BENIGN_PROJECT = '[project]\ntitle = "A"\noutcome = "O"\n'
 
 
-def build_from(tmp_path, project_toml):
-    q = make_queue(tmp_path / "evil")
-    (q / "project.toml").write_text(project_toml)
-    return rollup.build([rollup.Source("S", tmp_path)], NOW)
+def text_in_every_field(z):
+    """A queue whose every owner-typed field, and one brief title, holds `z`."""
+
+    def build(clone):
+        q = make_queue(clone)
+        (q / "project.toml").write_text(
+            f"[project]\ntitle = {json.dumps(z)}\noutcome = {json.dumps(z)}\n"
+            f'[health]\ncolour = "amber"\nreason = {json.dumps(z)}\n'
+            f"[ask]\nquestion = {json.dumps(z)}\ndeadline = {json.dumps(z)}\n"
+            f'[[milestones]]\nid = "m1"\ntitle = {json.dumps(z)}\n'
+        )
+        done = q / "done" / "b1.md"
+        done.write_text(done.read_text().replace("title: One", f"title: {json.dumps(z)}"))
+
+    return build
 
 
 # --- HTML --------------------------------------------------------------------------------
@@ -47,24 +54,17 @@ ESCAPED_TITLE = (
 
 
 def hostile_everywhere(tmp_path):
-    z = HOSTILE_TITLE
-    q = make_queue(tmp_path / "evil")
-    (q / "project.toml").write_text(
-        f"[project]\ntitle = {json.dumps(z)}\noutcome = {json.dumps(z)}\n"
-        f'[health]\ncolour = "amber"\nreason = {json.dumps(z)}\n'
-        f"[ask]\nquestion = {json.dumps(z)}\ndeadline = {json.dumps(z)}\n"
-        f'[[milestones]]\nid = "m1"\ntitle = {json.dumps(z)}\n'
-    )
-    done = q / "done" / "b1.md"
-    done.write_text(done.read_text().replace("title: One", f"title: {json.dumps(z)}"))
-    return rollup.build([rollup.Source(z, tmp_path)], NOW)
+    return rollup_of(tmp_path, text_in_every_field(HOSTILE_TITLE), HOSTILE_TITLE)
 
 
-@pytest.mark.parametrize("level", ["pm", "cto"])
-def test_hostile_text_never_becomes_markup_in_html(tmp_path, level):
-    page = rollup.LEVELS[level].html(hostile_everywhere(tmp_path))
+ESCAPED_AT_LEAST = {"engineer": 2, "pm": 6, "cto": 3}
+
+
+@pytest.mark.parametrize("view", rv.VIEWS)
+def test_hostile_text_never_becomes_markup_in_html(tmp_path, view):
+    page = rv.render(view, "html", hostile_everywhere(tmp_path))
     assert "<script" not in page and "onmouseover" not in page.replace(ESCAPED_TITLE, "")
-    assert page.count(ESCAPED_TITLE) >= (6 if level == "pm" else 3)
+    assert page.count(ESCAPED_TITLE) >= ESCAPED_AT_LEAST[view]
     assert "<a " not in page
 
 
@@ -75,15 +75,19 @@ def test_html_on_the_server_front_page_links_only_to_fixed_targets(tmp_path):
     assert hrefs and all(SAFE_TARGET.fullmatch(href) for href in hrefs)
 
 
-def test_skip_reasons_and_warnings_are_escaped_in_html():
-    r = rollup.Rollup(
-        "now",
+def hostile_notes() -> rv.Report:
+    return rv.Report(
+        NOW,
         ("S",),
         (),
-        (rollup.Skipped("S", "q", "<b>bad</b>"),),
-        (rollup.SourceWarning("<i>S</i>", 1),),
+        (rv.Omission("S", "q", "<b>bad</b>"),),
+        (rv.SourceNote("<i>S</i>", "<i>S</i> could not be reached"),),
     )
-    page = rollup.LEVELS["pm"].html(r)
+
+
+@pytest.mark.parametrize("view", rv.VIEWS)
+def test_skip_reasons_and_warnings_are_escaped_in_html(view):
+    page = rv.render(view, "html", hostile_notes())
     assert "&lt;b&gt;bad&lt;/b&gt;" in page and "&lt;i&gt;S&lt;/i&gt;" in page
     assert "<b>" not in page and "<i>" not in page
 
@@ -103,9 +107,8 @@ def get(address, path, host=None):
 
 @pytest.fixture
 def listening(tmp_path):
-    make_queue(tmp_path / "demo")
     holder = {}
-    rollup.Serve([rollup.Source("W", tmp_path)], lambda: NOW, 0).run(
+    rollup.Serve([source_of(tmp_path, make_queue, "W")], lambda: NOW, 0).run(
         block=lambda srv: holder.setdefault("srv", srv)
     )
     srv = holder["srv"]
@@ -116,10 +119,16 @@ def listening(tmp_path):
 
 
 def test_server_sends_a_content_security_policy_on_every_answer(listening):
-    for path in ("/pm", "/pm.json", "/nope"):
+    for path in ("/", "/engineer", "/pm", "/cto.json", "/nope"):
         headers = get(listening, path)[1]
         assert headers["Content-Security-Policy"] == CSP
         assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_the_policy_forbids_framing_and_every_remote_load_but_https_media():
+    assert rv.HTML_CSP == CSP and "frame-ancestors 'none'" in CSP
+    page = rv.render("pm", "html", hostile_notes())
+    assert f'content="{CSP.replace(chr(39), "&#x27;")}"' in page
 
 
 @pytest.mark.parametrize(
@@ -157,39 +166,48 @@ def test_server_refuses_a_request_with_no_host_header(listening):
 
 
 def test_escaping_flattens_whitespace_and_escapes_markup():
-    assert rollup.escape_md("a *b* _c_ [d] <e> `f` | g\\\n\t h") == (
+    assert rv.escape_md("a *b* _c_ [d] <e> `f` | g\\\n\t h") == (
         "a \\*b\\* \\_c\\_ \\[d\\] \\<e\\> \\`f\\` \\| g\\\\ h"
     )
 
 
-@pytest.mark.parametrize("level", ["pm", "cto"])
-def test_a_title_with_newlines_cannot_add_headings_rows_or_bullets(tmp_path, level):
-    lines = rollup.LEVELS[level].markdown(build_from(tmp_path, INJECTED_PROJECT)).splitlines()
-    assert len([x for x in lines if x.startswith("#")]) == (2 if level == "pm" else 1)
-    assert not any(x.startswith(("- bullet", "| x")) for x in lines)
+def headings(lines):
+    return [x for x in lines if x.startswith("#")]
+
+
+@pytest.mark.parametrize("view", rv.VIEWS)
+def test_a_title_with_newlines_cannot_add_headings_rows_or_bullets(tmp_path, view):
+    r = rollup_of(tmp_path / "bad", with_project_toml(INJECTED_PROJECT))
+    plain = rollup_of(tmp_path / "ok", with_project_toml(BENIGN_PROJECT))
+    lines = rv.render(view, "markdown", r).splitlines()
+    assert len(headings(lines)) == len(headings(rv.render(view, "markdown", plain).splitlines()))
+    assert not any(x.startswith(("# Injected", "## Two", "- bullet", "| x")) for x in lines)
     assert len({len(re.findall(r"(?<!\\)\|", x)) for x in lines if x.startswith("|")}) <= 1
+
+
+ESCAPED_AT_LEAST_MD = {"engineer": 2, "pm": 8, "cto": 4}
 
 
 def test_every_user_sourced_string_is_escaped_in_markdown(tmp_path):
     z = "Z*Z"
-    q = make_queue(tmp_path / z)
-    (q / "project.toml").write_text(
-        f'[project]\ntitle = "{z}"\noutcome = "{z}"\n[health]\ncolour = "amber"\nreason = "{z}"\n'
-        f'[ask]\nquestion = "{z}"\ndeadline = "{z}"\n'
-        f'[[milestones]]\nid = "m1"\ntitle = "{z}"\n'
+    shown = rollup.build(
+        [
+            source_of(tmp_path / "z", text_in_every_field(z), z),
+            source_of(tmp_path / "y", with_project_toml("[project]\n"), "Y*Y"),
+        ],
+        NOW,
     )
-    done = q / "done" / "b1.md"
-    done.write_text(done.read_text().replace("title: One", f"title: {z}"))
-    (make_queue(tmp_path / "Y*Y") / "project.toml").write_text("[project]\n")
-    r = rollup.build([rollup.Source(z, tmp_path)], NOW)
-    pm, cto = (rollup.LEVELS[name].markdown(r) for name in ("pm", "cto"))
-    assert "Z*Z" not in pm + cto and "Y*Y" not in pm + cto
-    assert pm.count("Z\\*Z") >= 8 and cto.count("Z\\*Z") >= 4
+    pages = {view: rv.render(view, "markdown", shown) for view in rv.VIEWS}
+    everything = "".join(pages.values())
+    assert "Z*Z" not in everything and "Y*Y" not in everything
+    assert all(pages[view].count("Z\\*Z") >= n for view, n in ESCAPED_AT_LEAST_MD.items())
+    assert "Y\\*Y" in pages["pm"]
 
 
-def test_skip_reasons_are_escaped():
-    note = rollup.Footnote("Not shown", (rollup.Skipped("S", "q", "bad *x* | y").line(),))
-    assert "- S / q: bad \\*x\\* \\| y" in note.markdown()
+@pytest.mark.parametrize("view", rv.VIEWS)
+def test_skip_reasons_are_escaped(view):
+    r = rv.Report(NOW, ("S",), (), (rv.Omission("S", "q", "bad *x* | y"),))
+    assert "- S / q: bad \\*x\\* \\| y" in rv.render(view, "markdown", r)
 
 
 # --- fields of the wrong type, and shareable skip reasons -----------------------------------
@@ -204,39 +222,46 @@ def test_skip_reasons_are_escaped():
     ],
 )
 def test_a_field_of_the_wrong_type_skips_only_that_project(tmp_path, old, new, field_name):
-    bad = make_queue(tmp_path / "bad")
-    project = bad / "project.toml"
-    project.write_text(project.read_text().replace(old, new))
-    make_queue(tmp_path / "good")
-    r = rollup.build([rollup.Source("S", tmp_path)], NOW)
-    assert [s.queue for s in r.skipped] == ["bad"]
-    assert field_name in r.skipped[0].reason and "must be text" in r.skipped[0].reason
-    assert [p.slug for p in r.projects] == ["demo"]
+    def bad(clone):
+        project = make_queue(clone) / "project.toml"
+        project.write_text(project.read_text().replace(old, new))
+
+    r = rollup.build(
+        [source_of(tmp_path / "bad", bad, "Bad"), source_of(tmp_path / "good", make_queue, "Good")],
+        NOW,
+    )
+    assert [o.source for o in r.omitted] == ["Bad"]
+    assert field_name in r.omitted[0].reason and "must be text" in r.omitted[0].reason
+    assert [p.source for p in projects(r)] == ["Good"]
 
 
 def test_a_milestone_title_that_is_not_text_skips_only_that_milestone(tmp_path, capsys):
-    q = make_queue(tmp_path / "demo")
-    project = q / "project.toml"
-    project.write_text(project.read_text().replace('plain = "The first thing works"', "plain = 5"))
-    r = rollup.build([rollup.Source("S", tmp_path)], NOW)
-    assert r.skipped == () and [p.slug for p in r.projects] == ["demo"]
-    assert [m.id for m in r.projects[0].milestones] == ["m2"]
+    def build(clone):
+        project = make_queue(clone) / "project.toml"
+        project.write_text(
+            project.read_text().replace('plain = "The first thing works"', "plain = 5")
+        )
+
+    r = rollup_of(tmp_path, build)
+    assert r.omitted == () and [p.slug for p in projects(r)] == ["demo"]
+    assert [m.id for m in projects(r)[0].milestones] == ["m2"]
     warning = capsys.readouterr().err
-    assert "S / demo" in warning and "m1" in warning and "that milestone is left out" in warning
+    assert "m1" in warning and "that milestone is left out" in warning
     assert "milestone m1 plain or title must be text, not int" in warning
-    page = rollup.LEVELS["pm"].html(r)
+    page = rv.render("pm", "html", r)
     assert "The second thing works" in page and "The first thing works" not in page
 
 
 def milestone_brief_ids(tmp_path, value):
-    q = make_queue(tmp_path / "bad")
-    project = q / "project.toml"
-    project.write_text(
-        project.read_text().replace('title = "First"', f'title = "First"\nbriefs = {value}')
-    )
-    r = rollup.build([rollup.Source("S", tmp_path)], NOW)
-    assert r.skipped == ()
-    return [(m.id, sorted(b.id for b in m.briefs)) for m in r.projects[0].milestones]
+    def build(clone):
+        project = make_queue(clone) / "project.toml"
+        project.write_text(
+            project.read_text().replace('title = "First"', f'title = "First"\nbriefs = {value}')
+        )
+
+    r = rollup_of(tmp_path, build)
+    assert r.omitted == ()
+    return [(m.id, sorted(b.id for b in m.briefs)) for m in projects(r)[0].milestones]
 
 
 @pytest.mark.parametrize("value", ["5", "[[1]]", "[1, true]", '"b2"'])
@@ -251,17 +276,19 @@ def test_a_legacy_milestone_brief_list_still_names_its_briefs(tmp_path):
 
 
 def test_skip_reasons_never_carry_an_absolute_path(tmp_path):
-    q = make_queue(tmp_path / "demo")
-    brief = q / "in-progress" / "b2.md"
+    source = source_of(tmp_path, make_queue)
+    warm = rollup.build([source], NOW)
+    assert warm.omitted == ()
+    (brief,) = qs.cache_root().rglob("in-progress/b2.md")
     brief.chmod(0)
     try:
-        r = rollup.build([rollup.Source("S", tmp_path)], NOW)
+        r = rollup.build([source], NOW)
     finally:
         brief.chmod(0o644)
-    assert [s.queue for s in r.skipped] == ["demo"]
-    reason = r.skipped[0].reason
+    assert [o.source for o in r.omitted] == ["S"]
+    reason = r.omitted[0].reason
     assert "PermissionError" in reason and str(Path("in-progress") / "b2.md") in reason
-    shared = json.dumps(rollup.LEVELS["pm"].data(r)) + rollup.LEVELS["pm"].markdown(r)
+    shared = "".join(rv.render("pm", fmt, r) for fmt in rv.FORMATS)
     assert str(tmp_path) not in shared
 
 
@@ -276,9 +303,17 @@ def test_os_reason_hides_paths_outside_the_queue(tmp_path, error, expected):
     assert rollup._os_reason(error, tmp_path) == expected
 
 
+def test_an_unreachable_source_never_puts_its_address_in_a_shared_line(tmp_path):
+    secret = str(tmp_path / "secret-host" / "repo")
+    r = rollup.build([rollup.Source("S", secret)], NOW)
+    shared = "".join(rv.render("cto", fmt, r) for fmt in rv.FORMATS)
+    assert "secret-host" not in shared and "- S / .tasks: its queue cannot be read" in shared
+
+
 # --- links a Markdown renderer would make on its own -------------------------------------------
 
-AUTOLINK = re.compile(r"(?i)https?://|www\.|@(?!⁠)")
+# A mention needs a name straight after the @; the source line's "label @ commit" has a space.
+AUTOLINK = re.compile(r"(?i)https?://|www\.|@(?=\S)(?!⁠)")
 
 
 @pytest.mark.parametrize(
@@ -292,17 +327,20 @@ AUTOLINK = re.compile(r"(?i)https?://|www\.|@(?!⁠)")
     ],
 )
 def test_text_that_a_renderer_would_autolink_is_neutralised(text):
-    assert not AUTOLINK.search(rollup.escape_md(text))
+    assert not AUTOLINK.search(rv.escape_md(text))
 
 
-@pytest.mark.parametrize("level", ["pm", "cto"])
-def test_project_text_never_becomes_a_live_link_in_markdown(tmp_path, level):
+@pytest.mark.parametrize("view", rv.VIEWS)
+def test_project_text_never_becomes_a_live_link_in_markdown(tmp_path, view):
     z = "http://e.example www.e.example a@e.example"
-    q = make_queue(tmp_path / "evil")
-    (q / "project.toml").write_text(
-        f"[project]\ntitle = {json.dumps(z)}\noutcome = {json.dumps(z)}\n"
-        f'[health]\ncolour = "amber"\nreason = {json.dumps(z)}\n'
-        f"[ask]\nquestion = {json.dumps(z)}\n"
-    )
-    text = rollup.LEVELS[level].markdown(rollup.build([rollup.Source(z, tmp_path)], NOW))
+
+    def build(clone):
+        q = make_queue(clone)
+        (q / "project.toml").write_text(
+            f"[project]\ntitle = {json.dumps(z)}\noutcome = {json.dumps(z)}\n"
+            f'[health]\ncolour = "amber"\nreason = {json.dumps(z)}\n'
+            f"[ask]\nquestion = {json.dumps(z)}\n"
+        )
+
+    text = rv.render(view, "markdown", rollup_of(tmp_path, build, z))
     assert "e.example" in text and not AUTOLINK.search(text)

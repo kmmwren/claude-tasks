@@ -13,6 +13,8 @@ import pathlib
 import tomllib
 from typing import Any
 
+from _paths import warn
+
 DEFAULTS: dict[str, Any] = {
     "name": "tasks",
     "domains": [],
@@ -29,3 +31,12 @@ def load_config(root: str | os.PathLike[str]) -> dict[str, Any]:
         with path.open("rb") as fh:
             cfg.update(tomllib.load(fh))
     return cfg
+
+
+def load_config_or_defaults(root: str | os.PathLike[str], reader: str) -> dict[str, Any]:
+    """`load_config`, but an unreadable tasks.toml warns under `reader` and yields the defaults."""
+    try:
+        return load_config(root)
+    except (OSError, ValueError) as e:
+        warn(f"cannot read tasks.toml ({e}); using the defaults", reader)
+        return dict(DEFAULTS)

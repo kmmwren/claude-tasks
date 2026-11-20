@@ -96,7 +96,7 @@ is run with it, it exits with a message telling you which interpreters to use in
 | "show the board" / `/tasks-board` | — | regenerates `view/board.html` |
 | "I'm done, hand off" | **handoff** | the session's open work flows to the queue |
 | "recap" | **recap** | a quick in-chat status summary |
-| "how are my projects going?" / "portfolio status" | **rollup** | a read-only project roll-up for a product manager or CTO, over any queues (JSON milestones carry `waiting`); Claude Code and the Desktop Code tab generate it, Desktop Chat and claude.ai read the published files |
+| "how are my projects going?" / "portfolio status" | **rollup** | a read-only project roll-up in three views (engineer: ranked ready briefs, bugs and uncovered requirements; pm: project tiles, a milestone table and collapsed detail; cto: projects by initiative, one sentence and a line per milestone), read from each project's queue on its GitHub default branch (`--source LABEL=REPO[#QUEUE]`, `--level engineer\|pm\|cto`; each view is HTML, Markdown and JSON, and JSON milestones carry `waiting`, projects carry `as_at`); Claude Code and the Desktop Code tab generate it, Desktop Chat and claude.ai read the published files |
 
 ### Priorities and dependencies
 
