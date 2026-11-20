@@ -26,11 +26,12 @@ def _isolated_pick_state(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_ambient_launcher(monkeypatch):
     """A launcher in the developer's environment must not change what a test calls; each test sees its own notices."""
-    from headless import LAUNCHER_ENV, LEGACY_LAUNCHER_ENV, reset_notices
+    from _paths import forget_warnings
+    from headless import LAUNCHER_ENV, LEGACY_LAUNCHER_ENV
 
     for name in (LAUNCHER_ENV, LEGACY_LAUNCHER_ENV):
         monkeypatch.delenv(name, raising=False)
-    reset_notices()
+    forget_warnings()
 
 
 @pytest.fixture(autouse=True)

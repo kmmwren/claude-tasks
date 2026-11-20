@@ -503,6 +503,37 @@ class Write(Command):
         print("\n".join(map(str, written)) if written else f"{self.out} is up to date")
 
 
+class RollupServer(http.server.ThreadingHTTPServer):
+    """Localhost only; each request rebuilds the roll-ups, so a page is never older than the default branch."""
+
+    def __init__(self, port: int, rollup: Callable[[], rv.Report]) -> None:
+        super().__init__(("127.0.0.1", port), RollupRequest)
+        self.rollup = rollup
+
+
+class RollupRequest(http.server.BaseHTTPRequestHandler):
+    server: RollupServer
+
+    def do_GET(self) -> None:
+        # A rebinding page reaches this loopback port under its own name; only ours pass.
+        if not LOCAL_HOST.fullmatch(self.headers.get("Host", "")):
+            return self._send(403, "text/plain; charset=utf-8", "forbidden host")
+        got = route(self.path.split("?")[0], self.server.rollup())
+        ctype, body = got or ("text/plain; charset=utf-8", "not found")
+        self._send(200 if got else 404, ctype, body)
+
+    def _send(self, status: int, ctype: str, body: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Security-Policy", rv.HTML_CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body.encode())
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
 @dataclasses.dataclass(frozen=True)
 class Serve(Command):
     name = "serve"
@@ -518,31 +549,8 @@ class Serve(Command):
     def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Serve":
         return cls(SourceOptions.load(args, env), now, args.port)
 
-    def server(self) -> http.server.ThreadingHTTPServer:
-        """Localhost only, rebuilt on every request so the page is never older than the default branch."""
-        run = self
-
-        class RollupRequest(http.server.BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                # A rebinding page reaches this loopback port under its own name; only ours pass.
-                if not LOCAL_HOST.fullmatch(self.headers.get("Host", "")):
-                    return self._send(403, "text/plain; charset=utf-8", "forbidden host")
-                got = route(self.path.split("?")[0], run.rollup())
-                ctype, body = got or ("text/plain; charset=utf-8", "not found")
-                self._send(200 if got else 404, ctype, body)
-
-            def _send(self, status: int, ctype: str, body: str) -> None:
-                self.send_response(status)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Security-Policy", rv.HTML_CSP)
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.end_headers()
-                self.wfile.write(body.encode())
-
-            def log_message(self, format: str, *args: Any) -> None:
-                pass
-
-        return http.server.ThreadingHTTPServer(("127.0.0.1", self.port), RollupRequest)
+    def server(self) -> "RollupServer":
+        return RollupServer(self.port, self.rollup)
 
     def run(self, block: Callable[[http.server.ThreadingHTTPServer], None] | None = None) -> None:
         try:

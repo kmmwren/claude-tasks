@@ -22,7 +22,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 
-from _paths import TASK_DIRS, is_queue, strip_comment
+from _paths import TASK_DIRS, is_queue, read_briefs, strip_comment
 from requirements_register import ID_PATTERN, parse_register, register_path
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.DOTALL)
@@ -70,8 +70,8 @@ def load_briefs(queue: pathlib.Path) -> list[Brief]:
     """Every brief in the lifecycle folders. A brief without `---` fences is read whole."""
     briefs: list[Brief] = []
     for folder in TASK_DIRS:
-        for path in sorted((queue / folder).glob("*.md")):
-            text = path.read_text()
+        for brief in read_briefs(queue / folder):
+            path, text = brief.path, brief.text
             match = _FRONTMATTER.match(text)
             header, body = (match[1], match[2]) if match else (text, text)
             section = _CRITERIA_SECTION.search(body)

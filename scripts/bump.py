@@ -16,7 +16,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _paths import require_queue, resolve_root  # noqa: E402
+from _paths import BriefFile, read_briefs, require_queue, resolve_root  # noqa: E402
 from deps import fm  # noqa: E402
 from git_sync import sync_commit  # noqa: E402
 from picks import note_choice  # noqa: E402
@@ -31,21 +31,19 @@ def tag_for(ref: str) -> str:
 
 def find(root: pathlib.Path, tag: str) -> pathlib.Path | None:
     tagged = [
-        path
-        for folder in FOLDERS
-        for path in sorted((root / folder).glob("*.md"))
-        if tag in tags(path)
+        brief for folder in FOLDERS for brief in read_briefs(root / folder) if tag in tags(brief)
     ]
-    return next((p for p in tagged if owned_by_pr_queue(p, tag)), tagged[0] if tagged else None)
+    owned = next((b for b in tagged if owned_by_pr_queue(b, tag)), tagged[0] if tagged else None)
+    return owned.path if owned else None
 
 
-def tags(path: pathlib.Path) -> set[str]:
-    return {t.strip() for t in fm(path.read_text()).get("tags", "").strip().strip("[]").split(",")}
+def tags(brief: BriefFile) -> set[str]:
+    return {t.strip() for t in fm(brief.text).get("tags", "").strip().strip("[]").split(",")}
 
 
-def owned_by_pr_queue(path: pathlib.Path, tag: str) -> bool:
+def owned_by_pr_queue(brief: BriefFile, tag: str) -> bool:
     """The PR-queue sync titles its own brief `PR <ref>: ...`; a session's brief on the same PR copies the tag, not the title."""
-    return tag.startswith("pr:") and fm(path.read_text()).get("title", "").strip('"').startswith(
+    return tag.startswith("pr:") and fm(brief.text).get("title", "").strip('"').startswith(
         f"PR {tag[3:]}: "
     )
 

@@ -224,7 +224,7 @@ NOT_UTF8 = b"\xff\xfe\x00bad"
 
 def _folder_with_a_bad_brief(tmp_path):
     folder = tmp_path / "ready"
-    folder.mkdir()
+    folder.mkdir(parents=True)
     (folder / "b.md").write_text("# fine\n")
     (folder / "a.md").write_text("# fine too\n")
     (folder / "bad.md").write_bytes(NOT_UTF8)
@@ -232,25 +232,60 @@ def _folder_with_a_bad_brief(tmp_path):
     return folder
 
 
-def test_is_utf8_tells_text_from_bytes_that_do_not_decode(tmp_path):
-    good, bad = tmp_path / "good.md", tmp_path / "bad.md"
-    good.write_text("café\n")
-    bad.write_bytes(NOT_UTF8)
-    assert (_paths.is_utf8(good), _paths.is_utf8(bad)) == (True, False)
-
-
-def test_readable_briefs_leaves_out_a_brief_that_is_not_utf8_and_warns_once(tmp_path, capsys):
+def test_read_briefs_reads_each_brief_once_and_names_one_that_is_not_utf8_once(tmp_path, capsys):
     folder = _folder_with_a_bad_brief(tmp_path)
-    first = _paths.readable_briefs(folder)
-    second = _paths.readable_briefs(folder)
-    assert first == second == [folder / "a.md", folder / "b.md"]
+    first = _paths.read_briefs(folder)
+    second = _paths.read_briefs(folder)
+    expected = [
+        _paths.BriefFile(folder / "a.md", "# fine too\n"),
+        _paths.BriefFile(folder / "b.md", "# fine\n"),
+    ]
+    assert first == second == expected
     line = f"warning: {folder / 'bad.md'}: is not valid UTF-8; that brief is skipped\n"
     assert capsys.readouterr().err == line
 
 
-def test_a_claimed_brief_is_not_warned_about_again(tmp_path, capsys):
+def test_read_briefs_names_a_bad_brief_as_shown(tmp_path, capsys):
     folder = _folder_with_a_bad_brief(tmp_path)
-    assert _paths.claim_unreadable_briefs(folder) == [folder / "bad.md"]
-    assert _paths.claim_unreadable_briefs(folder) == []
-    assert _paths.readable_briefs(folder) == [folder / "a.md", folder / "b.md"]
-    assert capsys.readouterr().err == ""
+    _paths.read_briefs(folder, shown_as="S/ready")
+    assert (
+        capsys.readouterr().err
+        == "warning: S/ready/bad.md: is not valid UTF-8; that brief is skipped\n"
+    )
+
+
+def test_a_file_already_named_is_not_named_again_under_another_name(tmp_path, capsys):
+    folder = _folder_with_a_bad_brief(tmp_path)
+    _paths.read_briefs(folder, shown_as="S/ready")
+    _paths.read_briefs(folder)
+    assert capsys.readouterr().err.count("not valid UTF-8") == 1
+
+
+def test_the_same_message_about_another_copy_of_the_file_is_not_said_again(tmp_path, capsys):
+    """A served roll-up reads each request into a fresh directory; the label keeps the warning to one."""
+    first, second = (
+        _folder_with_a_bad_brief(tmp_path / "1"),
+        _folder_with_a_bad_brief(tmp_path / "2"),
+    )
+    _paths.read_briefs(first, shown_as="S/ready")
+    _paths.read_briefs(second, shown_as="S/ready")
+    assert capsys.readouterr().err.count("not valid UTF-8") == 1
+
+
+def test_warn_once_says_a_message_once_until_forgotten(capsys):
+    _paths.warn_once("odd", prefix="claude-tasks")
+    _paths.warn_once("odd", prefix="claude-tasks")
+    _paths.forget_warnings()
+    _paths.warn_once("odd", prefix="claude-tasks")
+    assert capsys.readouterr().err == "claude-tasks: odd\nclaude-tasks: odd\n"
+
+
+def test_warn_once_from_many_threads_says_it_once(capsys):
+    import threading
+
+    threads = [threading.Thread(target=_paths.warn_once, args=("race",)) for _ in range(32)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert capsys.readouterr().err == "warning: race\n"

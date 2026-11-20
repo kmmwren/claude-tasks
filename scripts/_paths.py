@@ -22,10 +22,12 @@ stray run can never silently scatter folders into the wrong place.
 import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
 
 # isort: split
+import dataclasses
 import os
 import pathlib
 import re
 import sys
+import threading
 import tomllib
 from collections.abc import Mapping
 
@@ -60,31 +62,52 @@ def is_brief(path: str | os.PathLike[str]) -> bool:
     return pure.suffix == ".md" and pure.parent.name in TASK_DIRS
 
 
-def is_utf8(path: pathlib.Path) -> bool:
+_SAID: set[str | pathlib.Path] = set()
+_SAID_LOCK = threading.Lock()
+
+
+def warn_once(message: str, about: pathlib.Path | None = None, prefix: str = "warning") -> None:
+    """`warn`, unless this message, or one `about` the same file, was already said in this process."""
+    keys: set[str | pathlib.Path] = {message} if about is None else {message, about}
+    with _SAID_LOCK:
+        repeat = not keys.isdisjoint(_SAID)
+        _SAID.update(keys)
+    if not repeat:
+        warn(message, prefix)
+
+
+def forget_warnings() -> None:
+    """Let every warning be said again, for a fresh run or test."""
+    with _SAID_LOCK:
+        _SAID.clear()
+
+
+def warn_undecodable(path: pathlib.Path, shown_as: str, consequence: str) -> None:
+    """Name a file that is not UTF-8 once, as `shown_as`, and what was done without it."""
+    warn_once(f"{shown_as}: is not valid UTF-8; {consequence}", about=path)
+
+
+@dataclasses.dataclass(frozen=True)
+class BriefFile:
+    path: pathlib.Path
+    text: str
+
+
+def read_briefs(folder: pathlib.Path, shown_as: str | None = None) -> list[BriefFile]:
+    """The briefs in `folder` by name, each read once; one that is not UTF-8 is left out and named once."""
+    found = (
+        _read_brief(path, f"{shown_as or folder}/{path.name}")
+        for path in sorted(folder.glob("*.md"))
+    )
+    return [brief for brief in found if brief is not None]
+
+
+def _read_brief(path: pathlib.Path, shown_as: str) -> BriefFile | None:
     try:
-        path.read_bytes().decode("utf-8")
+        return BriefFile(path, path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        return False
-    return True
-
-
-_NAMED_UNREADABLE: set[pathlib.Path] = set()
-
-
-def claim_unreadable_briefs(folder: pathlib.Path) -> list[pathlib.Path]:
-    """The briefs in `folder` that are not UTF-8 and nobody has warned about; the caller now names them."""
-    found = [
-        f for f in sorted(folder.glob("*.md")) if not is_utf8(f) and f not in _NAMED_UNREADABLE
-    ]
-    _NAMED_UNREADABLE.update(found)
-    return found
-
-
-def readable_briefs(folder: pathlib.Path) -> list[pathlib.Path]:
-    """The briefs in `folder` by name; one that is not UTF-8 is warned about once and left out."""
-    for brief in claim_unreadable_briefs(folder):
-        warn(f"{brief}: is not valid UTF-8; that brief is skipped")
-    return [f for f in sorted(folder.glob("*.md")) if is_utf8(f)]
+        warn_undecodable(path, shown_as, "that brief is skipped")
+        return None
 
 
 def strip_comment(value: str) -> str:

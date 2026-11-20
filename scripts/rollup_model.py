@@ -16,7 +16,7 @@ from typing import Any
 import facts
 import project_view as pv
 from _dates import parse_date
-from _paths import TASK_DIRS, claim_unreadable_briefs, warn
+from _paths import TASK_DIRS, read_briefs, warn
 from config import load_config_or_defaults
 from deps import load_queue, unmet
 from milestones import Milestone
@@ -344,10 +344,9 @@ def _zone(settings: dict[str, Any], label: str) -> zoneinfo.ZoneInfo:
 
 
 def _name_skipped_briefs(label: str, queue: pathlib.Path) -> None:
-    """Every reader leaves out a brief that is not UTF-8, so it is named once, here."""
+    """Name each brief that is not UTF-8 under the source label first, so later readers stay silent."""
     for folder in TASK_DIRS:
-        for brief in claim_unreadable_briefs(queue / folder):
-            warn(f"{label}/{folder}/{brief.name}: is not valid UTF-8; that brief is skipped")
+        read_briefs(queue / folder, shown_as=f"{label}/{folder}")
 
 
 def open_blockers(queue: pathlib.Path) -> dict[str, tuple[str, ...]]:

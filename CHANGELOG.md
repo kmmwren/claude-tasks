@@ -36,12 +36,6 @@
   offline it shows the newest cached copy with a "Source warnings" line giving its as-at time, and
   with no cache it is listed under "Not shown". Unpushed work does not appear. `serve` reads every
   source on each request.
-- **The roll-up chooses behaviour by type, not by string.** `rollup_views.render` and `render_contents`
-  are replaced by `Format.render(view, report)` and the `Index` and `Readme` pages; `Format.filename(view)`
-  names every written file and served route; `NumberedBullets` and `TileSection` replace the `ordered`
-  and `kind` arguments; `Project.next_due()` is the one soonest open dated milestone, used by the
-  board sentence and both views; `rollup.py` resolves `--level` to a view once, and `--help` shows the
-  usage lines. Output is unchanged byte for byte.
 - **The roll-up model is `rollup_model.py`'s.** `rollup.py` reads each queue snapshot once with
   `rollup_views.Entry.read`, which builds the project and its board from one `QueueRead`, and uses its `Project`, `Health`, `MilestoneSummary`, `Stage` and `Ask`; the behind-upstream check,
   `find_queues`, `BehindCounts` and the contribution rules are removed. The JSON stays
@@ -179,8 +173,10 @@
 - **A file that is not UTF-8 no longer drops a project from the roll-up.** A `requirements.md` that
   cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are read
   from it` and the engineer view lists none; a brief that cannot be decoded warns
-  `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped` once, and every reader
-  (board, ranking, blockers) leaves it out, so the project still renders.
+  `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped`. Each file is named once
+  per process, so `serve` does not repeat it on every request. The board, ranking, blockers, duplicate
+  check, requirements check and `bump` leave the brief out; `fold_session.py` still stops on it, since
+  folding without it would strand the brief.
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".

@@ -12,7 +12,6 @@ Stdlib only.
 """
 
 import dataclasses
-import functools
 import json
 import os
 import pathlib
@@ -23,7 +22,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from _paths import warn
+from _paths import warn_once
 from config import load_config
 
 LAUNCHER_ENV = "CLAUDE_TASKS_LAUNCHER"
@@ -40,20 +39,14 @@ def reset_capacity() -> None:
     _no_capacity.clear()
 
 
-@functools.cache
-def warn_once(message: str) -> None:
-    warn(message, prefix="claude-tasks")
-
-
-def reset_notices() -> None:
-    """Forget which notices were printed, so each test or run can see them again."""
-    warn_once.cache_clear()
+def notice(message: str) -> None:
+    warn_once(message, prefix="claude-tasks")
 
 
 def _named_launchers(configured: str | None) -> list[str]:
     """Every launcher path the user named, most specific first."""
     if os.environ.get(LEGACY_LAUNCHER_ENV):
-        warn_once(f"${LEGACY_LAUNCHER_ENV} is deprecated; set ${LAUNCHER_ENV}")
+        notice(f"${LEGACY_LAUNCHER_ENV} is deprecated; set ${LAUNCHER_ENV}")
     names = (configured, os.environ.get(LAUNCHER_ENV), os.environ.get(LEGACY_LAUNCHER_ENV))
     return [name for name in names if name]
 
@@ -68,7 +61,7 @@ def launcher_script(configured: str | None = None) -> pathlib.Path | None:
     named = _named_launchers(configured)
     usable = next(filter(None, map(_executable, named)), None)
     if named and not usable:
-        warn_once(f"launcher {named[0]} not found or not executable; using claude -p")
+        notice(f"launcher {named[0]} not found or not executable; using claude -p")
     return usable
 
 
@@ -138,7 +131,7 @@ def rank_table(root: str | os.PathLike[str]) -> dict[str, Any]:
     table = dict(load_config(root).get("rank", {}))
     _drop_unusable_launcher(table)
     if "local_ok" in table:
-        warn_once(_local_ok_notice(table.get("launcher")))
+        notice(_local_ok_notice(table.get("launcher")))
         table.setdefault("local_reason", legacy_reason(str(table["local_ok"])))
     return table
 
@@ -146,7 +139,7 @@ def rank_table(root: str | os.PathLike[str]) -> dict[str, Any]:
 def _drop_unusable_launcher(table: dict[str, Any]) -> None:
     launcher = table.get("launcher")
     if launcher is not None and not isinstance(launcher, str):
-        warn_once(f"[rank] launcher must be a path, ignoring {launcher!r}")
+        notice(f"[rank] launcher must be a path, ignoring {launcher!r}")
         del table["launcher"]
 
 

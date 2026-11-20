@@ -14,6 +14,7 @@ import dataclasses
 import pathlib
 import re
 
+from _paths import read_briefs
 from deps import fm
 from readiness import EXECUTION_LOG, raw_title
 from slack_links import permalink_key
@@ -71,10 +72,9 @@ def index(root: pathlib.Path) -> dict[Fingerprint, list[Located]]:
     """Every active brief grouped by fingerprint, the one to keep first in each group."""
     groups: dict[Fingerprint, list[Located]] = {}
     for folder in ACTIVE_FOLDERS:
-        for path in sorted((root / folder).glob("*.md")):
-            text = path.read_text()
-            where = Located(path.stem, folder, path, fm(text).get("created", ""))
-            groups.setdefault(Fingerprint.of_text(text), []).append(where)
+        for brief in read_briefs(root / folder):
+            where = Located(brief.path.stem, folder, brief.path, fm(brief.text).get("created", ""))
+            groups.setdefault(Fingerprint.of_text(brief.text), []).append(where)
     return {fp: sorted(members, key=lambda m: m.rank) for fp, members in groups.items()}
 
 

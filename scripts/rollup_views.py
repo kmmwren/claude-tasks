@@ -22,7 +22,7 @@ import prioritise
 import project_view as pv
 import rollup_model as rm
 from _dates import parse_date
-from _paths import warn
+from _paths import warn_undecodable
 from queue_snapshot import QueueSnapshot
 from requirements_register import parse_register, register_path
 from rollup_model import plural
@@ -136,9 +136,11 @@ def _gaps(read: rm.QueueRead) -> tuple[Gap, ...]:
     if not register.is_file():
         return ()
     try:
-        text = register.read_text()
+        text = register.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        warn(f"{read.label}/{register.name}: is not valid UTF-8; no requirements are read from it")
+        warn_undecodable(
+            register, f"{read.label}/{register.name}", "no requirements are read from it"
+        )
         return ()
     cited = {r for b in read.briefs for r in b["requirements"]}
     return tuple(
@@ -521,14 +523,18 @@ def paragraph(*parts: Inline | str) -> Paragraph:
     return Paragraph(row(*parts))
 
 
-def bullets(items: Iterable[Item], gap: str, block: type[Bullets] = Bullets) -> Block:
+def bullets(items: Iterable[Item], gap: str) -> Block:
     """The items as a list, or `gap` saying what is missing, so a section is never blank."""
+    return _listed(Bullets, items, gap)
+
+
+def _listed(block: type[Bullets], items: Iterable[Item], gap: str) -> Block:
     listed = tuple(items)
     return block(listed) if listed else paragraph(gap)
 
 
 def numbered(items: Iterable[Item], gap: str) -> Block:
-    return bullets(items, gap, NumberedBullets)
+    return _listed(NumberedBullets, items, gap)
 
 
 def lines(rows: Iterable[Row], gap: str) -> Block:
