@@ -173,25 +173,25 @@
 
 ### Fixed
 - **A file that is not UTF-8 no longer drops a project from the roll-up.** A `requirements.md` that
-  cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are read
-  from it` and the engineer view lists none; a brief that cannot be decoded warns
-  `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped`. Each file is named once
-  per process, so `serve` does not repeat it on every request. The files the scripts read or write
+  cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are
+  read from it` and the engineer view lists none; a brief that cannot be decoded warns `<source
+  label>/<folder>/<file>: is not valid UTF-8; that brief is skipped`. Each file is named once per
+  process, so `serve` does not repeat it on every request. The files the scripts read or write
   (briefs, `tasks.toml`, `project.toml`, facts, the requirements register, JSON state, logs), the
   output of `git` and of the headless `claude` runs, and anything piped on standard input are decoded
   as UTF-8 whatever the locale; piped input keeps text mode's `\n` line endings, and input that is
-  not UTF-8 exits naming the bad byte. A test fails when a script opens a file, runs a command in
-  text mode or reads standard input without naming the encoding. The roll-up reads each queue's
-  briefs once and hands them to the board, the blockers and the ranking, and every other command
-  reads a state folder only when it searches it, so a bad brief
-  in a folder the command never looks in is not warned about. The board, ranking, blockers, duplicate
-  check, requirements check, `bump`, the brief search in `transition.py`, `check_deps.py`, the
-  releasing half of `unblock.py`, inbox triage and the headless `rank.py` leave the brief out; moving
-  or resolving a brief named by id (`transition.py`, `unblock.py`) stops on it, since it has to
-  rewrite that brief. `fold_session.py` checks, before it writes anything, that every brief in the
-  session queue and every brief in the parent queue's lifecycle folders (not its inbox) decodes, and
-  stops naming the files if one does not, with nothing moved. A moved brief's facts file that is not
-  UTF-8 stays in the session queue with a warning, as one the parent already has does.
+  not UTF-8 exits naming the bad byte. A test fails when a script opens a file or temporary file,
+  runs a command in text mode, or reads standard input or `input()` without naming the encoding. The
+  roll-up reads each queue's briefs once and hands them to the board, the blockers and the ranking,
+  and every other command reads a state folder only when it searches it, so a bad brief in a folder
+  the command never looks in is not warned about. The board, ranking, blockers, duplicate check,
+  requirements check, `bump`, the brief search in `transition.py`, `check_deps.py`, the releasing
+  half of `unblock.py`, inbox triage and the headless `rank.py` leave the brief out; moving or
+  resolving a brief named by id (`transition.py`, `unblock.py`) stops on it, since it has to rewrite
+  that brief. `fold_session.py` checks, before it writes anything, that every brief in the session
+  queue and every brief in the parent queue's lifecycle folders (not its inbox) decodes, and stops
+  naming the files if one does not, with nothing moved. A moved brief's facts file that is not UTF-8
+  stays in the session queue with a warning, as one the parent already has does.
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".

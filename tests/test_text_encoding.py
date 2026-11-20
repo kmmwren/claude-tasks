@@ -15,15 +15,19 @@ BUILTIN_RECEIVERS = {"io", "builtins"}  # open(path, mode); a Path's own open ta
 CODECS_RECEIVERS = {"codecs"}
 # errors= implies text mode for subprocess
 TEXT_MODE_FLAGS = {"text", "universal_newlines", "errors"}
-# bytes.decode and str.encode take errors=; replace's keywords name dataclass fields, such as text=
-NOT_MODE_KEYWORDS = {"decode", "encode", "replace"}
+# bytes.decode, str() and str.encode take errors= but decode as UTF-8; replace and _replace take
+# fields such as text=; mkstemp(text=True) returns a descriptor, which fdopen is caught opening
+NOT_MODE_KEYWORDS = {"decode", "encode", "str", "replace", "_replace", "mkstemp"}
+# A capitalised call builds an object whose text= is a field; Popen is the one that runs a command
+SUBPROCESS_CLASSES = {"Popen"}
+STDIN_NAMES = {"stdin", "__stdin__"}
 # .buffer is bytes; isatty and fileno read nothing
 BINARY_STDIN_ATTRS = {"buffer", "isatty", "fileno"}
 
 
 class Signature(NamedTuple):
-    encoding: int  # positional index of the encoding parameter
-    mode: int | None = None  # positional index of the mode; None when the call is always text
+    encoding: int | None  # positional index of the encoding parameter; None when keyword-only
+    mode: int | None = None  # positional index of the mode; None when only a keyword sets it
     default: str = "r"  # mode when none is given
 
 
@@ -36,20 +40,27 @@ FACTORIES = {
     "NamedTemporaryFile": Signature(encoding=2, mode=0, default="w+b"),
     "TemporaryFile": Signature(encoding=2, mode=0, default="w+b"),
     "SpooledTemporaryFile": Signature(encoding=3, mode=1, default="w+b"),
+    "TextIOWrapper": Signature(encoding=1),
+    "FileType": Signature(encoding=2, mode=0),
+}
+QUALIFIED_FACTORIES = {
+    ("os", "popen"): Signature(encoding=None, mode=1),
+    ("fileinput", "input"): Signature(encoding=None),
+    ("gzip", "open"): Signature(encoding=3, mode=1, default="rb"),
+    ("bz2", "open"): Signature(encoding=3, mode=1, default="rb"),
+    ("lzma", "open"): Signature(encoding=None, mode=1, default="rb"),
 }
 PATH_TEXT_METHODS = {"read_text": Signature(encoding=0), "write_text": Signature(encoding=1)}
 
 
-def _mode(call: ast.Call, signature: Signature) -> str:
-    for keyword in call.keywords:
-        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
-            return str(keyword.value.value)
-    position = signature.mode
-    if position is not None and len(call.args) > position:
-        argument = call.args[position]
-        if isinstance(argument, ast.Constant):
-            return str(argument.value)
-    return signature.default
+def _mode(call: ast.Call, signature: Signature) -> str | None:
+    """The mode the call opens with, or None when it is computed and so cannot be known here."""
+    given = [k.value for k in call.keywords if k.arg == "mode"]
+    if signature.mode is not None and len(call.args) > signature.mode:
+        given.append(call.args[signature.mode])
+    if not given:
+        return signature.default
+    return str(given[0].value) if isinstance(given[0], ast.Constant) else None
 
 
 def _name(call: ast.Call) -> tuple[str, ast.expr | None] | None:
@@ -84,6 +95,8 @@ def _open_signature(name: str, receiver: ast.expr | None) -> Signature | None:
 
 
 def _signature(name: str, receiver: ast.expr | None) -> Signature | None:
+    if isinstance(receiver, ast.Name) and (receiver.id, name) in QUALIFIED_FACTORIES:
+        return QUALIFIED_FACTORIES[receiver.id, name]
     if name == "open":
         return _open_signature(name, receiver)
     if name in PATH_TEXT_METHODS:
@@ -94,19 +107,25 @@ def _signature(name: str, receiver: ast.expr | None) -> Signature | None:
 def _names_encoding(call: ast.Call, signature: Signature | None) -> bool:
     if any(k.arg == "encoding" and not _is_none(k.value) for k in call.keywords):
         return True
-    if signature is None or len(call.args) <= signature.encoding:
+    position = None if signature is None else signature.encoding
+    if position is None or len(call.args) <= position:
         return False
-    return not _is_none(call.args[signature.encoding])
+    return not _is_none(call.args[position])
+
+
+def _builds_an_object(name: str) -> bool:
+    return name[:1].isupper() and name not in SUBPROCESS_CLASSES
 
 
 def _asks_for_text(call: ast.Call, name: str) -> bool:
-    if name in NOT_MODE_KEYWORDS:
+    if name in NOT_MODE_KEYWORDS or _builds_an_object(name):
         return False
     return any(k.arg in TEXT_MODE_FLAGS and not _is_off(k.value) for k in call.keywords)
 
 
 def _opens_text(call: ast.Call, signature: Signature) -> bool:
-    return signature.mode is None or "b" not in _mode(call, signature)
+    mode = _mode(call, signature)
+    return mode is None or "b" not in mode
 
 
 def is_text_io_without_encoding(call: ast.Call) -> bool:
@@ -126,7 +145,17 @@ def is_text_io_without_encoding(call: ast.Call) -> bool:
 
 def _is_stdin(node: ast.AST) -> bool:
     return (
-        isinstance(node, ast.Attribute) and node.attr == "stdin" and _is_name(node.value, {"sys"})
+        isinstance(node, ast.Attribute)
+        and node.attr in STDIN_NAMES
+        and _is_name(node.value, {"sys"})
+    )
+
+
+def _imports_stdin(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.ImportFrom)
+        and node.module == "sys"
+        and any(alias.name in STDIN_NAMES for alias in node.names)
     )
 
 
@@ -136,11 +165,13 @@ def _locale_stdin_lines(nodes: list[ast.AST]) -> list[int]:
         for n in nodes
         if isinstance(n, ast.Attribute) and n.attr in BINARY_STDIN_ATTRS and _is_stdin(n.value)
     }
-    return [
+    reads = [
         n.lineno
         for n in nodes
         if isinstance(n, ast.Attribute) and _is_stdin(n) and id(n) not in binary
     ]
+    imports = [n.lineno for n in nodes if isinstance(n, ast.ImportFrom) and _imports_stdin(n)]
+    return reads + imports
 
 
 def unspecified(source: str) -> list[int]:
@@ -186,6 +217,17 @@ def test_every_text_read_and_write_names_its_encoding(path):
         "json.load(sys.stdin)",
         "input()",
         "input('> ')",
+        "io.TextIOWrapper(b)",
+        "os.popen(cmd)",
+        "argparse.FileType('r')",
+        "fileinput.input()",
+        "gzip.open(p, 'rt')",
+        "lzma.open(p, 'wt')",
+        "from sys import stdin",
+        "sys.__stdin__.read()",
+        "tempfile.NamedTemporaryFile(mode)",
+        "tempfile.TemporaryFile(mode=wanted)",
+        "subprocess.Popen(cmd, text=True)",
     ],
 )
 def test_the_guard_catches_a_text_call_without_an_encoding(line):
@@ -230,6 +272,17 @@ def test_the_guard_reports_the_line_of_a_stdin_read_inside_a_longer_call():
         "sys.stdin.fileno()",
         "sys.stdin.buffer.read()",
         "f.read()",
+        "BriefFile(p, text=x)",
+        "brief._replace(text=x)",
+        "tempfile.mkstemp(text=True)",
+        "str(b, errors='replace')",
+        "io.TextIOWrapper(b, 'utf-8')",
+        "argparse.FileType('rb')",
+        "fileinput.input(encoding='utf-8')",
+        "gzip.open(p)",
+        "gzip.open(p, 'rt', 9, 'utf-8')",
+        "lzma.open(p, 'rt', encoding='utf-8')",
+        "from sys import argv",
     ],
 )
 def test_the_guard_passes_binary_and_encoded_calls(line):
