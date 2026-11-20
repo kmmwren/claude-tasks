@@ -50,7 +50,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from _paths import require_queue, resolve_root
+from _paths import readable_briefs, require_queue, resolve_root
 from config import load_config_or_defaults
 from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
@@ -384,7 +384,7 @@ def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
     edges: set[tuple[str, str]] = set()
     blocks_edges: set[tuple[str, str]] = set()
     for d in INDEX_DIRS:
-        for f in (root / d).glob("*.md"):
+        for f in readable_briefs(root / d):
             b = fm(f.read_text())
             bid = brief_id(b, f.stem)
             status_by_id[bid] = d
@@ -637,8 +637,8 @@ def _load_fields(path: pathlib.Path) -> dict[str, Any]:
 def _brief_files(root: pathlib.Path, ids: frozenset[str] | None) -> list[pathlib.Path]:
     """ready/ briefs, or the named briefs wherever they are live."""
     if ids is None:
-        return sorted((root / "ready").glob("*.md"))
-    live = (f for d in LIVE_DIRS for f in sorted((root / d).glob("*.md")))
+        return readable_briefs(root / "ready")
+    live = (f for d in LIVE_DIRS for f in readable_briefs(root / d))
     return [f for f in live if brief_id(fm(f.read_text()), f.stem) in ids]
 
 

@@ -327,7 +327,7 @@ def test_a_queue_without_a_ready_directory_has_nothing_ready(report: rv.Report) 
 
 
 def test_an_engineer_page_names_each_gap_instead_of_leaving_it_blank(report: rv.Report) -> None:
-    text = rv.render("engineer", "markdown", report)
+    text = rv.MARKDOWN.render(rv.VIEWS["engineer"], report)
     assert (rv.NO_READY, rv.NO_BUGS, rv.NO_UNCOVERED) == (
         "No ready briefs.",
         "No open bugs.",
@@ -341,15 +341,15 @@ def test_an_engineer_page_names_each_gap_instead_of_leaving_it_blank(report: rv.
 
 def test_engineer_ranked_lists_are_numbered_and_bugs_count_from_one(atlas: rv.Entry) -> None:
     one = rv.Report(NOW, (ALPHA,), (atlas,))
-    text = rv.render("engineer", "markdown", one)
+    text = rv.MARKDOWN.render(rv.VIEWS["engineer"], one)
     assert "1. B4 title (b4)" in text and "3. B10 title (b10)" in text
     assert "### Bugs\n\n1. B9 title (b9)" in text
-    html = rv.render("engineer", "html", one)
+    html = rv.HTML.render(rv.VIEWS["engineer"], one)
     assert html.count("<ol") == 2 and "<ul" in html
 
 
 def test_health_that_is_stale_and_capped_says_so_in_words(atlas: rv.Entry) -> None:
-    text = rv.render("pm", "markdown", rv.Report(NOW, (ALPHA,), (atlas,)))
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], rv.Report(NOW, (ALPHA,), (atlas,)))
     assert "`stale, set 17 days ago`" in text
     assert "`capped by automatic checks`" in text
     assert "`build red`" in text
@@ -357,7 +357,7 @@ def test_health_that_is_stale_and_capped_says_so_in_words(atlas: rv.Entry) -> No
 
 
 def test_a_milestone_shows_its_slip_from_the_first_date_and_its_flags(atlas: rv.Entry) -> None:
-    text = rv.render("pm", "markdown", rv.Report(NOW, (ALPHA,), (atlas,)))
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], rv.Report(NOW, (ALPHA,), (atlas,)))
     assert (
         "Due 2026-11-30, first promised 2026-11-10, slipped 20 days, 9 days past the first date."
         in text
@@ -367,7 +367,7 @@ def test_a_milestone_shows_its_slip_from_the_first_date_and_its_flags(atlas: rv.
 
 
 def test_shipped_lines_group_by_release_with_those_without_one_last(atlas: rv.Entry) -> None:
-    text = rv.render("pm", "markdown", rv.Report(NOW, (ALPHA,), (atlas,)))
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], rv.Report(NOW, (ALPHA,), (atlas,)))
     assert (
         text.index("Release r1 (2026-11-01)") < text.index("Release r9") < text.index(rv.NO_RELEASE)
     )
@@ -376,16 +376,16 @@ def test_shipped_lines_group_by_release_with_those_without_one_last(atlas: rv.En
 def test_the_pm_page_is_tiles_then_a_milestone_table_then_collapsed_detail(
     report: rv.Report,
 ) -> None:
-    text = rv.render("pm", "markdown", report)
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], report)
     assert text.index("## Projects") < text.index("## Milestones") < text.index("## Detail")
     assert "| Milestone | Status | Due | Slip | Briefs | Evidence | Flags |" in text
     assert text.count("<details>") == 3 and text.count("</details>") == 3
-    html = rv.render("pm", "html", report)
+    html = rv.HTML.render(rv.VIEWS["pm"], report)
     assert html.count("<table>") == 3 and html.count("<details>") == 3
 
 
 def test_tiles_sort_red_then_unset_then_green_and_say_what_they_hold(report: rv.Report) -> None:
-    text = rv.render("pm", "markdown", report)
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], report)
     tiles = text[text.index("## Projects") : text.index("## Milestones")]
     assert tiles.index("### Atlas") < tiles.index("### Gamma") < tiles.index("### Beta")
     assert "**Next:** The active thing due 2026-11-30 (slipped 20 days from 2026-11-10)" in tiles
@@ -434,16 +434,16 @@ def test_the_cto_page_groups_projects_by_initiative_with_none_last(report: rv.Re
         ("Growth", ["gamma"]),
         (rv.NO_INITIATIVE, ["beta"]),
     ]
-    data = json.loads(rv.render("cto", "json", report))
+    data = json.loads(rv.JSON.render(rv.VIEWS["cto"], report))
     assert [g["initiative"] for g in data["initiatives"]] == ["Platform", "Growth", ""]
 
 
 def test_the_source_line_appears_once_per_project_and_nowhere_else(report: rv.Report) -> None:
-    for view in rv.view_names():
-        text = rv.render(view, "markdown", report)
+    for view in rv.VIEWS:
+        text = rv.MARKDOWN.render(rv.VIEWS[view], report)
         assert text.count("**Source:**") == 3
         assert "As at" not in text
-        assert rv.render(view, "html", report).count("<strong>Source:</strong>") == 3
+        assert rv.HTML.render(rv.VIEWS[view], report).count("<strong>Source:</strong>") == 3
 
 
 # --- evidence -------------------------------------------------------------------------------
@@ -476,21 +476,20 @@ def test_only_public_https_evidence_is_shown_inline(
 
 def test_evidence_is_embedded_or_linked_in_the_pages(atlas: rv.Entry) -> None:
     one = rv.Report(NOW, (ALPHA,), (atlas,))
-    html = rv.render("pm", "html", one)
+    html = rv.HTML.render(rv.VIEWS["pm"], one)
     assert '<img src="https://example.test/shot.png" alt="The page" loading="lazy">' in html
     assert '<video src="https://example.test/clip.mp4" controls preload="none">' in html
     assert (
         '<a href="https://example.test/clip" rel="noopener noreferrer">The demo (video, org access)</a>'
         in html
     )
-    markdown = rv.render("pm", "markdown", one)
+    markdown = rv.MARKDOWN.render(rv.VIEWS["pm"], one)
     assert "![The page](https://example.test/shot.png)" in markdown
     assert "[Walkthrough (video)](https://example.test/clip.mp4)" in markdown
 
 
 def test_a_link_that_is_not_plain_https_shows_only_its_words() -> None:
-    html, markdown = rv.FORMATS["html"], rv.FORMATS["markdown"]
-    assert isinstance(html, rv.Markup) and isinstance(markdown, rv.Markup)
+    html, markdown = rv.HTML, rv.MARKDOWN
     link = rv.Link("Run it", 'javascript:alert("x")')
     assert link.render(html) == "Run it"
     assert link.render(markdown) == "Run it"
@@ -510,14 +509,14 @@ def hostile(atlas: rv.Entry) -> rv.Report:
 
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_html_never_lets_queue_text_become_markup(view: str, atlas: rv.Entry) -> None:
-    html = rv.render(view, "html", hostile(atlas))
+    html = rv.HTML.render(rv.VIEWS[view], hostile(atlas))
     assert "<script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
 
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_markdown_never_lets_queue_text_become_markup(view: str, atlas: rv.Entry) -> None:
-    text = rv.render(view, "markdown", hostile(atlas))
+    text = rv.MARKDOWN.render(rv.VIEWS[view], hostile(atlas))
     assert "<script>" not in text
     assert "[x](https://evil.test)" not in text
     assert "\\<script\\>" in text
@@ -531,11 +530,9 @@ def test_markdown_escaping_stops_links_mentions_and_blocks() -> None:
 
 
 def test_a_chip_cannot_close_its_own_code_span() -> None:
-    assert rv.FORMATS["markdown"].render(rv.VIEWS["pm"], rv.Report(NOW, (), ())).startswith("#")
+    assert rv.MARKDOWN.render(rv.VIEWS["pm"], rv.Report(NOW, (), ())).startswith("#")
     chip = rv.Chip("a`b")
-    markdown = rv.FORMATS["markdown"]
-    assert isinstance(markdown, rv.Markup)
-    assert chip.render(markdown) == "`a'b`"
+    assert chip.render(rv.MARKDOWN) == "`a'b`"
 
 
 # --- stamps, envelope and formats -----------------------------------------------------------
@@ -545,19 +542,19 @@ def test_a_cached_copy_is_marked_in_every_markup_format(atlas: rv.Entry) -> None
     stale = dataclasses.replace(atlas.project.as_at, stale=True)
     cached = rv.Entry(dataclasses.replace(atlas.project, as_at=stale), atlas.board)
     one = rv.Report(NOW, (ALPHA,), (cached,))
-    assert "`cached copy`" in rv.render("engineer", "markdown", one)
-    assert "cached copy</span>" in rv.render("engineer", "html", one)
+    assert "`cached copy`" in rv.MARKDOWN.render(rv.VIEWS["engineer"], one)
+    assert "cached copy</span>" in rv.HTML.render(rv.VIEWS["engineer"], one)
 
 
 def test_the_source_line_names_the_repo_commit_and_time(atlas: rv.Entry) -> None:
     short = atlas.project.as_at.sha[:7]
-    markdown = rv.render("pm", "markdown", rv.Report(NOW, (ALPHA,), (atlas,)))
+    markdown = rv.MARKDOWN.render(rv.VIEWS["pm"], rv.Report(NOW, (ALPHA,), (atlas,)))
     assert f"**Source:** {ALPHA} @ {short}, 2026-11-19 09:00 UTC" in markdown
 
 
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_the_json_envelope_keeps_the_keys_readers_use(view: str, report: rv.Report) -> None:
-    data = json.loads(rv.render(view, "json", report))
+    data = json.loads(rv.JSON.render(rv.VIEWS[view], report))
     assert data["schema"] == "claude-tasks.rollup/v1"
     assert data["level"] == view
     assert data["generated"] == "2026-11-19T12:00:00+00:00"
@@ -573,7 +570,7 @@ def test_the_json_envelope_keeps_the_keys_readers_use(view: str, report: rv.Repo
 
 
 def test_the_pm_json_keeps_its_old_keys_and_adds_the_new(report: rv.Report) -> None:
-    project = json.loads(rv.render("pm", "json", report))["projects"][0]
+    project = json.loads(rv.JSON.render(rv.VIEWS["pm"], report))["projects"][0]
     assert {"health", "ask", "now", "next", "done", "shipped"} <= project.keys()
     assert project["now"][0].keys() >= {"id", "title", "percent_done", "due", "missed", "waiting"}
     assert project["shipped"][0].keys() == {"id", "title", "updated"}
@@ -583,17 +580,17 @@ def test_the_pm_json_keeps_its_old_keys_and_adds_the_new(report: rv.Report) -> N
 
 
 def test_the_cto_json_keeps_its_old_keys(report: rv.Report) -> None:
-    project = json.loads(rv.render("cto", "json", report))["projects"][0]
+    project = json.loads(rv.JSON.render(rv.VIEWS["cto"], report))["projects"][0]
     assert project["health"].keys() == {"effective", "owner", "reason"}
     assert project["milestones"] == {"done": 1, "total": 4}
     assert project["next_due"] == {"id": "m2", "title": "The active thing", "due": "2026-11-30"}
     assert project["missed"][0]["id"] == "m2"
-    no_date = json.loads(rv.render("cto", "json", report))["projects"][1]
+    no_date = json.loads(rv.JSON.render(rv.VIEWS["cto"], report))["projects"][1]
     assert no_date["next_due"] is None
 
 
 def test_the_engineer_json_lists_ready_bugs_and_uncovered_requirements(report: rv.Report) -> None:
-    project = json.loads(rv.render("engineer", "json", report))["projects"][0]
+    project = json.loads(rv.JSON.render(rv.VIEWS["engineer"], report))["projects"][0]
     assert [b["id"] for b in project["ready"]] == ["b4", "b5", "b10"]
     assert project["ready"][0]["overdue"] is True
     assert [b["id"] for b in project["bugs"]] == ["b9"]
@@ -602,14 +599,14 @@ def test_the_engineer_json_lists_ready_bugs_and_uncovered_requirements(report: r
 
 def test_a_report_with_no_projects_says_so_in_every_view_and_format(report: rv.Report) -> None:
     empty = rv.Report(NOW, (ALPHA,), ())
-    for view in rv.view_names():
-        assert rv.NO_PROJECTS in rv.render(view, "markdown", empty)
-        assert rv.NO_PROJECTS in rv.render(view, "html", empty)
-        assert json.loads(rv.render(view, "json", empty))["projects"] == []
+    for view in rv.VIEWS:
+        assert rv.NO_PROJECTS in rv.MARKDOWN.render(rv.VIEWS[view], empty)
+        assert rv.NO_PROJECTS in rv.HTML.render(rv.VIEWS[view], empty)
+        assert json.loads(rv.JSON.render(rv.VIEWS[view], empty))["projects"] == []
 
 
 def test_footnotes_name_what_was_left_out_and_why(report: rv.Report) -> None:
-    text = rv.render("pm", "markdown", report)
+    text = rv.MARKDOWN.render(rv.VIEWS["pm"], report)
     assert "gone-source: unreachable" in text
     assert "gone-source / .tasks: no project.toml" in text
     assert "Showing a cached copy." in text
@@ -620,13 +617,13 @@ def test_each_format_names_itself_for_the_caller() -> None:
     assert got["json"] == ("application/json", ".json")
     assert got["markdown"] == ("text/markdown; charset=utf-8", ".md")
     assert got["html"][0] == "text/html; charset=utf-8"
-    assert list(rv.view_names()) == ["engineer", "pm", "cto"]
+    assert list(rv.VIEWS) == ["engineer", "pm", "cto"]
 
 
 def test_the_html_page_is_self_contained_and_adapts_to_phone_and_dark_mode(
     report: rv.Report,
 ) -> None:
-    html = rv.render("pm", "html", report)
+    html = rv.HTML.render(rv.VIEWS["pm"], report)
     assert "<script" not in html
     assert "prefers-color-scheme:dark" in html
     assert 'name="viewport"' in html
@@ -708,17 +705,17 @@ def test_a_due_today_brief_says_so() -> None:
 
 
 def test_the_contents_page_links_every_view_and_its_data_in_each_format(report: rv.Report) -> None:
-    md = rv.render_contents("markdown", report)
-    html = rv.render_contents("html", report)
-    for view in rv.view_names():
+    md = rv.Index().render(rv.MARKDOWN, report)
+    html = rv.Index().render(rv.HTML, report)
+    for view in rv.VIEWS:
         assert f"[JSON]({view}.json)" in md and f'href="{view}.json"' in html
         assert f"]({view}.md)" in md and f'href="{view}"' in html
     assert "What these files are" not in md and "What these files are" not in html
 
 
 def test_the_guide_is_added_on_request_with_its_code_spans_set_as_code(report: rv.Report) -> None:
-    md = rv.render_contents("markdown", report, with_guide=True)
-    html = rv.render_contents("html", report, with_guide=True)
+    md = rv.Readme().render(rv.MARKDOWN, report)
+    html = rv.Readme().render(rv.HTML, report)
     assert "`rollup.py write --out <dir> --source Label=repo`" in md.replace("\\", "")
     assert "<code>rollup.py write --out &lt;dir&gt; --source Label=repo</code>" in html
     assert f"`{rv.SCHEMA}`" in md.replace("\\", "") and "## The JSON is an API" in md

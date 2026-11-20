@@ -16,7 +16,7 @@ from typing import Any
 import facts
 import project_view as pv
 from _dates import parse_date
-from _paths import warn
+from _paths import TASK_DIRS, claim_unreadable_briefs, warn
 from config import load_config_or_defaults
 from deps import load_queue, unmet
 from milestones import Milestone
@@ -185,6 +185,12 @@ class MilestoneSummary:
         return [f"{self.waiting_count} waiting"] if self.waiting_count else []
 
 
+def next_due(milestones: Iterable[MilestoneSummary]) -> MilestoneSummary | None:
+    """The open milestone with the earliest date; one without a date never counts."""
+    dated = (m for m in milestones if m.due and m.stage is not Stage.DONE)
+    return min(dated, key=lambda m: m.due, default=None)
+
+
 # --- Layer 1: the tile ---------------------------------------------------------------------
 
 
@@ -273,9 +279,9 @@ class BoardSentence:
     def _dates(milestones: tuple[MilestoneSummary, ...]) -> list[str]:
         open_ = [m for m in milestones if m.stage is not Stage.DONE]
         missed = [m for m in open_ if m.missed]
-        dated = sorted((m for m in open_ if m.due), key=lambda m: m.due)
+        soonest = next_due(milestones)
         notes = [f"{len(missed)} past their date"] if missed else []
-        return [*notes, f"next is {dated[0].title} due {dated[0].due}"] if dated else notes
+        return [*notes, f"next is {soonest.title} due {soonest.due}"] if soonest else notes
 
 
 # --- shipped work --------------------------------------------------------------------------
@@ -320,6 +326,9 @@ class Project:
     def stage(self, stage: Stage) -> tuple[MilestoneSummary, ...]:
         return tuple(m for m in self.milestones if m.stage is stage)
 
+    def next_due(self) -> MilestoneSummary | None:
+        return next_due(self.milestones)
+
 
 # --- reading a snapshot --------------------------------------------------------------------
 
@@ -332,6 +341,13 @@ def _zone(settings: dict[str, Any], label: str) -> zoneinfo.ZoneInfo:
     except (KeyError, ValueError):  # an unknown zone name is a KeyError subclass
         warn(f"{label}/tasks.toml: timezone {name!r} is not a known zone; using UTC")
         return zoneinfo.ZoneInfo("UTC")
+
+
+def _name_skipped_briefs(label: str, queue: pathlib.Path) -> None:
+    """Every reader leaves out a brief that is not UTF-8, so it is named once, here."""
+    for folder in TASK_DIRS:
+        for brief in claim_unreadable_briefs(queue / folder):
+            warn(f"{label}/{folder}/{brief.name}: is not valid UTF-8; that brief is skipped")
 
 
 def open_blockers(queue: pathlib.Path) -> dict[str, tuple[str, ...]]:
@@ -372,6 +388,7 @@ class QueueRead:
     @classmethod
     def load(cls, label: str, snapshot: QueueSnapshot, now: dt.datetime) -> "QueueRead":
         queue = snapshot.root
+        _name_skipped_briefs(label, queue)
         settings = load_config_or_defaults(queue, "rollup", f"{label}/tasks.toml")
         cfg = pv.read_project(queue)
         return cls(

@@ -18,7 +18,7 @@ import dataclasses
 import pathlib
 import re
 
-from _paths import TASK_DIRS, strip_comment
+from _paths import TASK_DIRS, readable_briefs, strip_comment
 
 EXTERNAL_PREFIX = "external:"
 BRIEF_DIRS = tuple(d for d in TASK_DIRS if d != "inbox")
@@ -164,7 +164,7 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
     """Every brief across the lifecycle folders. A folder that does not exist is empty."""
     out: list[Brief] = []
     for d in BRIEF_DIRS:
-        for f in sorted((root / d).glob("*.md")):
+        for f in readable_briefs(root / d):
             text = f.read_text()
             fields = fm(text)
             out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text)))

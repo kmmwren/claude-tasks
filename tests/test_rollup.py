@@ -352,9 +352,9 @@ def test_a_source_that_cannot_be_reached_and_was_never_read_is_listed_under_not_
     r = rollup.build([rollup.Source("Gone", NOWHERE)], NOW)
     assert r.entries == () and r.notes == ()
     assert r.omitted == (rv.Omission("Gone", ".tasks", rollup.NOT_READ),)
-    assert "- Gone / .tasks: its queue cannot be read" in rv.render("pm", "markdown", r)
+    assert "- Gone / .tasks: its queue cannot be read" in rv.MARKDOWN.render(rv.VIEWS["pm"], r)
     assert NOWHERE in capsys.readouterr().err
-    assert NOWHERE not in rv.render("pm", "json", r)
+    assert NOWHERE not in rv.JSON.render(rv.VIEWS["pm"], r)
 
 
 def test_an_unusable_cache_folder_skips_the_source_instead_of_stopping_the_run(
@@ -388,15 +388,15 @@ def test_offline_with_a_cache_shows_the_cached_queue_and_says_when_it_is_as_at(t
 
 def test_a_stale_source_warns_in_json_markdown_and_html(tmp_path):
     r = stale_rollup(tmp_path)
-    data = json.loads(rv.render("pm", "json", r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
     assert data["warnings"] == [{"source": "Work", "behind": {}, "message": STALE}]
     assert data["projects"][0]["as_at"]["stale"] is True
     shown = (
         f'<h2>Source warnings</h2><ul class="items"><li><div class="head">{STALE}</div></li></ul>'
     )
     for view in rv.VIEWS:
-        assert f"## Source warnings\n\n- {STALE}\n" in rv.render(view, "markdown", r)
-        assert shown in rv.render(view, "html", r)
+        assert f"## Source warnings\n\n- {STALE}\n" in rv.MARKDOWN.render(rv.VIEWS[view], r)
+        assert shown in rv.HTML.render(rv.VIEWS[view], r)
 
 
 def test_sources_command_shows_the_projects_and_the_stale_warning(tmp_path, capsys):
@@ -440,7 +440,7 @@ def test_a_queue_without_a_project_file_is_omitted_without_naming_where_it_was_c
 
     r = rollup_of(tmp_path, build)
     assert [o.reason for o in r.omitted] == ["project.toml does not exist"]
-    assert str(qs.cache_root()) not in "".join(rv.render("pm", "markdown", r))
+    assert str(qs.cache_root()) not in "".join(rv.MARKDOWN.render(rv.VIEWS["pm"], r))
 
 
 def test_a_broken_project_does_not_stop_the_sources_after_it(tmp_path, work):
@@ -453,9 +453,9 @@ def test_a_broken_project_does_not_stop_the_sources_after_it(tmp_path, work):
 def test_two_sources_that_both_hold_projects_show_both_under_their_labels(work):
     r = built(work)
     assert [(p.source, p.slug) for p in projects(r)] == [("Alpha", "demo"), ("Beta", "Beta")]
-    pm = rv.render("pm", "markdown", r)
+    pm = rv.MARKDOWN.render(rv.VIEWS["pm"], r)
     assert "**Source:** Alpha @ " in pm and "**Source:** Beta @ " in pm
-    data = json.loads(rv.render("cto", "json", r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["cto"], r))
     assert data["sources"] == ["Alpha", "Beta"]
     assert data["source_projects"] == [
         {"source": "Alpha", "projects": 1},
@@ -503,7 +503,7 @@ def test_each_project_carries_the_commit_it_was_read_at(work):
 
 def test_pm_json_is_the_api(work):
     r = built(work)
-    data = json.loads(rv.render("pm", "json", r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
     assert data["schema"] == rv.SCHEMA and data["level"] == "pm"
     assert data["sources"] == ["Alpha", "Beta"]
     assert data["warnings"] == [] and data["skipped"] == []
@@ -520,7 +520,7 @@ def test_pm_json_is_the_api(work):
 
 
 def test_pm_markdown_reads_as_a_page(work):
-    md = rv.render("pm", "markdown", built(work))
+    md = rv.MARKDOWN.render(rv.VIEWS["pm"], built(work))
     assert "# Product roll-up" in md
     assert "`Red` The owner has not set a health in project.toml." in md
     assert "**Ask:** Ship it? (by 2026-11-01)" in md
@@ -529,25 +529,25 @@ def test_pm_markdown_reads_as_a_page(work):
 
 def test_ask_without_deadline(tmp_path):
     text = '[project]\ntitle = "T"\noutcome = "O"\n[ask]\nquestion = "Q?"\n'
-    md = rv.render("pm", "markdown", rollup_of(tmp_path, with_project_toml(text)))
+    md = rv.MARKDOWN.render(rv.VIEWS["pm"], rollup_of(tmp_path, with_project_toml(text)))
     assert "**Ask:** Q?\n" in md
 
 
 def test_cto_gives_each_project_a_sentence_and_its_reasons(work):
     r = built(work)
-    data = json.loads(rv.render("cto", "json", r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["cto"], r))
     a, b = data["projects"]
     assert a["milestones"] == {"done": 1, "total": 2} and a["missed"] == []
     assert a["as_at"]["committed"] == AS_AT
     assert b["next_due"] == {"id": "M0", "title": "Zero", "due": "2026-10-01"}
     assert b["missed"] == [{"id": "M0", "title": "Zero", "due": "2026-10-01"}]
-    md = rv.render("cto", "markdown", r)
+    md = rv.MARKDOWN.render(rv.VIEWS["cto"], r)
     assert "Beta \\| Two is red; 1 of 3 milestones done; 1 past their date" in md
 
 
 def test_empty_and_skipped_are_said_plainly(tmp_path):
     r = rollup_of(tmp_path, with_project_toml("[project]\n"), "S")
-    md = rv.render("pm", "markdown", r)
+    md = rv.MARKDOWN.render(rv.VIEWS["pm"], r)
     assert "No projects found" in md and "## Not shown" in md and "S / .tasks" in md
 
 
@@ -555,7 +555,7 @@ def test_empty_and_skipped_are_said_plainly(tmp_path):
 
 
 def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
-    page = rv.render("pm", "html", built(work))
+    page = rv.HTML.render(rv.VIEWS["pm"], built(work))
     assert "<title>Product roll-up</title>" in page and "<h1>Product roll-up</h1>" in page
     assert page.index("<h2>Projects</h2>") < page.index("<h2>Milestones</h2>")
     assert page.index("<h2>Milestones</h2>") < page.index("<h2>Detail</h2>")
@@ -566,14 +566,14 @@ def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
 
 
 def test_cto_html_groups_projects_by_initiative_with_a_sentence_each(work):
-    page = rv.render("cto", "html", built(work))
+    page = rv.HTML.render(rv.VIEWS["cto"], built(work))
     assert "<h2>No initiative</h2>" in page and "<h3>Beta | Two</h3>" in page
     assert "<p>Beta | Two is red; 1 of 3 milestones done;" in page
     assert '<span class="chip chip-bad">Red</span>' in page and "<table>" not in page
 
 
 def test_html_says_plainly_when_there_is_nothing_to_show(tmp_path):
-    page = rv.render("pm", "html", rollup_of(tmp_path, with_project_toml("[project]\n")))
+    page = rv.HTML.render(rv.VIEWS["pm"], rollup_of(tmp_path, with_project_toml("[project]\n")))
     assert "<p>No projects found." in page and "<h2>Not shown</h2>" in page
     assert '<div class="head">S / .tasks:' in page
 
@@ -600,7 +600,7 @@ def test_write_produces_a_folder_github_renders(work, tmp_path):
 
 
 def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work):
-    text = " ".join(rv.render_contents("markdown", built(work), with_guide=True).split())
+    text = " ".join(rv.Readme().render(rv.MARKDOWN, built(work)).split())
     for line in (
         "[Engineering roll-up](engineer.md) [JSON](engineer.json)",
         "[Product roll-up](pm.md) [JSON](pm.json)",
@@ -782,7 +782,7 @@ def test_story_dates_are_dates_and_undated_briefs_are_not_shipped(tmp_path):
 
     r = rollup.build(only_source(tmp_path, build), NOW)
     assert [s.id for s in projects(r)[0].shipped] == ["b1", "b9"]
-    data = json.loads(rv.render("pm", "json", r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
     assert data["projects"][0]["shipped"][1] == {
         "id": "b9",
         "title": "B9",
@@ -845,7 +845,7 @@ def test_a_port_in_use_or_out_of_range_is_a_one_line_error(work, capsys):
 
 def test_the_index_links_pages_by_file_in_a_folder_and_by_route_on_the_server(work):
     r = built(work)
-    assert "[Product roll-up](pm.md)" in rv.render_contents("markdown", r, with_guide=True)
+    assert "[Product roll-up](pm.md)" in rv.Readme().render(rv.MARKDOWN, r)
     got = rollup.route("/", r)
     assert got is not None and '<a href="pm"' in got[1] and '<a href="cto.json"' in got[1]
 
@@ -895,7 +895,7 @@ HEAD = '[project]\ntitle = "T"\noutcome = "O"\n'
 def test_a_milestone_percent_is_the_one_the_project_view_computes(tmp_path):
     r = rollup.build(only_source(tmp_path), NOW)
     assert [m.percent_done for m in projects(r)[0].milestones] == [100, 50]
-    pm = json.loads(rv.render("pm", "json", r))["projects"][0]
+    pm = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))["projects"][0]
     assert [m["percent_done"] for m in pm["now"]] == [50]
 
 

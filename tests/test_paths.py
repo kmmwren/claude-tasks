@@ -217,3 +217,40 @@ def test_warn_is_one_stderr_line_with_a_prefix_a_caller_can_change(capsys):
 )
 def test_is_brief_needs_both_a_markdown_file_and_a_state_directory(path, expected):
     assert _paths.is_brief(path) is expected
+
+
+NOT_UTF8 = b"\xff\xfe\x00bad"
+
+
+def _folder_with_a_bad_brief(tmp_path):
+    folder = tmp_path / "ready"
+    folder.mkdir()
+    (folder / "b.md").write_text("# fine\n")
+    (folder / "a.md").write_text("# fine too\n")
+    (folder / "bad.md").write_bytes(NOT_UTF8)
+    (folder / "notes.txt").write_text("not a brief\n")
+    return folder
+
+
+def test_is_utf8_tells_text_from_bytes_that_do_not_decode(tmp_path):
+    good, bad = tmp_path / "good.md", tmp_path / "bad.md"
+    good.write_text("café\n")
+    bad.write_bytes(NOT_UTF8)
+    assert (_paths.is_utf8(good), _paths.is_utf8(bad)) == (True, False)
+
+
+def test_readable_briefs_leaves_out_a_brief_that_is_not_utf8_and_warns_once(tmp_path, capsys):
+    folder = _folder_with_a_bad_brief(tmp_path)
+    first = _paths.readable_briefs(folder)
+    second = _paths.readable_briefs(folder)
+    assert first == second == [folder / "a.md", folder / "b.md"]
+    line = f"warning: {folder / 'bad.md'}: is not valid UTF-8; that brief is skipped\n"
+    assert capsys.readouterr().err == line
+
+
+def test_a_claimed_brief_is_not_warned_about_again(tmp_path, capsys):
+    folder = _folder_with_a_bad_brief(tmp_path)
+    assert _paths.claim_unreadable_briefs(folder) == [folder / "bad.md"]
+    assert _paths.claim_unreadable_briefs(folder) == []
+    assert _paths.readable_briefs(folder) == [folder / "a.md", folder / "b.md"]
+    assert capsys.readouterr().err == ""

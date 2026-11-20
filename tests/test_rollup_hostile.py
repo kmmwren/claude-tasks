@@ -62,7 +62,7 @@ ESCAPED_AT_LEAST = {"engineer": 2, "pm": 6, "cto": 3}
 
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_hostile_text_never_becomes_markup_in_html(tmp_path, view):
-    page = rv.render(view, "html", hostile_everywhere(tmp_path))
+    page = rv.HTML.render(rv.VIEWS[view], hostile_everywhere(tmp_path))
     assert "<script" not in page and "onmouseover" not in page.replace(ESCAPED_TITLE, "")
     assert page.count(ESCAPED_TITLE) >= ESCAPED_AT_LEAST[view]
     assert "<a " not in page
@@ -87,7 +87,7 @@ def hostile_notes() -> rv.Report:
 
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_skip_reasons_and_warnings_are_escaped_in_html(view):
-    page = rv.render(view, "html", hostile_notes())
+    page = rv.HTML.render(rv.VIEWS[view], hostile_notes())
     assert "&lt;b&gt;bad&lt;/b&gt;" in page and "&lt;i&gt;S&lt;/i&gt;" in page
     assert "<b>" not in page and "<i>" not in page
 
@@ -127,7 +127,7 @@ def test_server_sends_a_content_security_policy_on_every_answer(listening):
 
 def test_the_policy_forbids_framing_and_every_remote_load_but_https_media():
     assert rv.HTML_CSP == CSP and "frame-ancestors 'none'" in CSP
-    page = rv.render("pm", "html", hostile_notes())
+    page = rv.HTML.render(rv.VIEWS["pm"], hostile_notes())
     assert f'content="{CSP.replace(chr(39), "&#x27;")}"' in page
 
 
@@ -179,8 +179,10 @@ def headings(lines):
 def test_a_title_with_newlines_cannot_add_headings_rows_or_bullets(tmp_path, view):
     r = rollup_of(tmp_path / "bad", with_project_toml(INJECTED_PROJECT))
     plain = rollup_of(tmp_path / "ok", with_project_toml(BENIGN_PROJECT))
-    lines = rv.render(view, "markdown", r).splitlines()
-    assert len(headings(lines)) == len(headings(rv.render(view, "markdown", plain).splitlines()))
+    lines = rv.MARKDOWN.render(rv.VIEWS[view], r).splitlines()
+    assert len(headings(lines)) == len(
+        headings(rv.MARKDOWN.render(rv.VIEWS[view], plain).splitlines())
+    )
     assert not any(x.startswith(("# Injected", "## Two", "- bullet", "| x")) for x in lines)
     assert len({len(re.findall(r"(?<!\\)\|", x)) for x in lines if x.startswith("|")}) <= 1
 
@@ -197,7 +199,7 @@ def test_every_user_sourced_string_is_escaped_in_markdown(tmp_path):
         ],
         NOW,
     )
-    pages = {view: rv.render(view, "markdown", shown) for view in rv.VIEWS}
+    pages = {view: rv.MARKDOWN.render(rv.VIEWS[view], shown) for view in rv.VIEWS}
     everything = "".join(pages.values())
     assert "Z*Z" not in everything and "Y*Y" not in everything
     assert all(pages[view].count("Z\\*Z") >= n for view, n in ESCAPED_AT_LEAST_MD.items())
@@ -207,7 +209,7 @@ def test_every_user_sourced_string_is_escaped_in_markdown(tmp_path):
 @pytest.mark.parametrize("view", rv.VIEWS)
 def test_skip_reasons_are_escaped(view):
     r = rv.Report(NOW, ("S",), (), (rv.Omission("S", "q", "bad *x* | y"),))
-    assert "- S / q: bad \\*x\\* \\| y" in rv.render(view, "markdown", r)
+    assert "- S / q: bad \\*x\\* \\| y" in rv.MARKDOWN.render(rv.VIEWS[view], r)
 
 
 # --- fields of the wrong type, and shareable skip reasons -----------------------------------
@@ -248,7 +250,7 @@ def test_a_milestone_title_that_is_not_text_skips_only_that_milestone(tmp_path, 
     warning = capsys.readouterr().err
     assert "m1" in warning and "that milestone is left out" in warning
     assert "milestone m1 plain or title must be text, not int" in warning
-    page = rv.render("pm", "html", r)
+    page = rv.HTML.render(rv.VIEWS["pm"], r)
     assert "The second thing works" in page and "The first thing works" not in page
 
 
@@ -288,7 +290,7 @@ def test_skip_reasons_never_carry_an_absolute_path(tmp_path):
     assert [o.source for o in r.omitted] == ["S"]
     reason = r.omitted[0].reason
     assert "PermissionError" in reason and str(Path("in-progress") / "b2.md") in reason
-    shared = "".join(rv.render("pm", fmt, r) for fmt in rv.FORMATS)
+    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["pm"], r) for fmt in rv.FORMATS)
     assert str(tmp_path) not in shared
 
 
@@ -306,7 +308,7 @@ def test_os_reason_hides_paths_outside_the_queue(tmp_path, error, expected):
 def test_an_unreachable_source_never_puts_its_address_in_a_shared_line(tmp_path):
     secret = str(tmp_path / "secret-host" / "repo")
     r = rollup.build([rollup.Source("S", secret)], NOW)
-    shared = "".join(rv.render("cto", fmt, r) for fmt in rv.FORMATS)
+    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["cto"], r) for fmt in rv.FORMATS)
     assert "secret-host" not in shared and "- S / .tasks: its queue cannot be read" in shared
 
 
@@ -342,5 +344,41 @@ def test_project_text_never_becomes_a_live_link_in_markdown(tmp_path, view):
             f"[ask]\nquestion = {json.dumps(z)}\n"
         )
 
-    text = rv.render(view, "markdown", rollup_of(tmp_path, build, z))
+    text = rv.MARKDOWN.render(rv.VIEWS[view], rollup_of(tmp_path, build, z))
     assert "e.example" in text and not AUTOLINK.search(text)
+
+
+# --- files that are not UTF-8 -------------------------------------------------------------
+
+NOT_UTF8 = b"\xff\xfe\x00bad"
+
+
+def warnings_of(capsys):
+    return capsys.readouterr().err.splitlines()
+
+
+def test_a_requirements_register_that_is_not_utf8_warns_and_its_project_still_renders(
+    tmp_path, capsys
+):
+    def build(clone):
+        (make_queue(clone) / "requirements.md").write_bytes(NOT_UTF8)
+
+    report = rollup_of(tmp_path, build)
+
+    assert [e.board.gaps for e in report.entries] == [()] and not report.omitted
+    line = "warning: S/requirements.md: is not valid UTF-8; no requirements are read from it"
+    assert warnings_of(capsys).count(line) == 1
+
+
+@pytest.mark.parametrize("folder", ["inbox", "ready", "in-progress", "done", "parked"])
+def test_a_brief_that_is_not_utf8_is_skipped_with_a_warning_and_the_project_still_renders(
+    tmp_path, capsys, folder
+):
+    def build(clone):
+        (make_queue(clone) / folder / "bad.md").write_bytes(NOT_UTF8)
+
+    report = rollup_of(tmp_path, build)
+
+    assert len(report.entries) == 1 and not report.omitted
+    line = f"warning: S/{folder}/bad.md: is not valid UTF-8; that brief is skipped"
+    assert warnings_of(capsys).count(line) == 1

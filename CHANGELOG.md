@@ -36,6 +36,12 @@
   offline it shows the newest cached copy with a "Source warnings" line giving its as-at time, and
   with no cache it is listed under "Not shown". Unpushed work does not appear. `serve` reads every
   source on each request.
+- **The roll-up chooses behaviour by type, not by string.** `rollup_views.render` and `render_contents`
+  are replaced by `Format.render(view, report)` and the `Index` and `Readme` pages; `Format.filename(view)`
+  names every written file and served route; `NumberedBullets` and `TileSection` replace the `ordered`
+  and `kind` arguments; `Project.next_due()` is the one soonest open dated milestone, used by the
+  board sentence and both views; `rollup.py` resolves `--level` to a view once, and `--help` shows the
+  usage lines. Output is unchanged byte for byte.
 - **The roll-up model is `rollup_model.py`'s.** `rollup.py` reads each queue snapshot once with
   `rollup_views.Entry.read`, which builds the project and its board from one `QueueRead`, and uses its `Project`, `Health`, `MilestoneSummary`, `Stage` and `Ask`; the behind-upstream check,
   `find_queues`, `BehindCounts` and the contribution rules are removed. The JSON stays
@@ -44,7 +50,7 @@
 
 ### Added
 - **Roll-ups render through one document model, `rollup_views.py`, in three views and three formats.**
-  `rollup.py` builds a `Report` from its sources and `rollup_views.render(view, fmt, report)` writes
+  `rollup.py` builds a `Report` from its sources and `Format.render(view, report)` writes
   every output (written files, served routes, `html`, `markdown` and `json`), so a view is defined once.
   The new `engineer` view lists ready briefs most urgent first, open bugs and the requirements no
   brief covers; `pm` is project tiles (red, amber, stale or unset, then green, slip breaking ties), a
@@ -105,11 +111,13 @@
   (what it was asked, its output file, how to collect or re-run it) into the item it serves, and
   records them in the ledger item's `metadata.agents`; `resume_prompt.py` prints them under the item.
 - **`rollup.py` projects one or more queues' projects for readers above the engineer.** `pm` gives
-  each project's health, ask, now/next/done and what shipped in the last 14 days; `cto` gives a table
-  of health, milestones done of total, next due and missed. Output is JSON (schema
-  `claude-tasks.rollup/v1`) plus Markdown, written to a folder for GitHub (`write --out <dir>`) or served on a
+  each project's health, ask, now/next/done and what shipped in the last 14 days; `cto` groups
+  projects by initiative with one sentence of status and a line per milestone (its JSON also carries
+  milestones done of total, next due and missed). Output is JSON (schema
+  `claude-tasks.rollup/v1`), Markdown and HTML, written to a folder for GitHub (`write --out <dir>`) or served on a
   loopback port (`serve`). Sources come from `~/.config/claude-tasks/rollup.toml` (or `--config`,
-  `$CLAUDE_TASKS_ROLLUP_CONFIG`) and default to the current repository. Project text is escaped, never
+  `$CLAUDE_TASKS_ROLLUP_CONFIG`) and, with none, fall back to the current repository's queue, read as
+  its GitHub default branch holds it. Project text is escaped, never
   becomes a link or script; one bad queue file is skipped with a reason, and a queue or source that
   cannot be read, or one that holds no project, is reported as a "Not shown" row rather than
   stopping the run (the JSON also gains `source_projects`, a project count per source). A bad `[[source]]`
@@ -168,6 +176,11 @@
   mapping that renamed stage labels is removed, so a header reads exactly as the project declares it.
 
 ### Fixed
+- **A file that is not UTF-8 no longer drops a project from the roll-up.** A `requirements.md` that
+  cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are read
+  from it` and the engineer view lists none; a brief that cannot be decoded warns
+  `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped` once, and every reader
+  (board, ranking, blockers) leaves it out, so the project still renders.
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".

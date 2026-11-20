@@ -60,6 +60,33 @@ def is_brief(path: str | os.PathLike[str]) -> bool:
     return pure.suffix == ".md" and pure.parent.name in TASK_DIRS
 
 
+def is_utf8(path: pathlib.Path) -> bool:
+    try:
+        path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+_NAMED_UNREADABLE: set[pathlib.Path] = set()
+
+
+def claim_unreadable_briefs(folder: pathlib.Path) -> list[pathlib.Path]:
+    """The briefs in `folder` that are not UTF-8 and nobody has warned about; the caller now names them."""
+    found = [
+        f for f in sorted(folder.glob("*.md")) if not is_utf8(f) and f not in _NAMED_UNREADABLE
+    ]
+    _NAMED_UNREADABLE.update(found)
+    return found
+
+
+def readable_briefs(folder: pathlib.Path) -> list[pathlib.Path]:
+    """The briefs in `folder` by name; one that is not UTF-8 is warned about once and left out."""
+    for brief in claim_unreadable_briefs(folder):
+        warn(f"{brief}: is not valid UTF-8; that brief is skipped")
+    return [f for f in sorted(folder.glob("*.md")) if is_utf8(f)]
+
+
 def strip_comment(value: str) -> str:
     """Drop a frontmatter value's inline `#` comment, and a quoted value's quotes. The shared cleaner."""
     quoted = _QUOTED.match(value)

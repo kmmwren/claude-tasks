@@ -22,6 +22,7 @@ import prioritise
 import project_view as pv
 import rollup_model as rm
 from _dates import parse_date
+from _paths import warn
 from queue_snapshot import QueueSnapshot
 from requirements_register import parse_register, register_path
 from rollup_model import plural
@@ -129,14 +130,20 @@ def _ready(read: rm.QueueRead) -> tuple[RankedBrief, ...]:
     return tuple(sorted(items, key=RankedBrief.urgency))
 
 
-def _gaps(root: Any, briefs: list[dict[str, Any]]) -> tuple[Gap, ...]:
-    register = register_path(root)
+def _gaps(read: rm.QueueRead) -> tuple[Gap, ...]:
+    """The register's requirements no brief cites; a register that cannot be decoded gives none."""
+    register = register_path(read.queue)
     if not register.is_file():
         return ()
-    cited = {r for b in briefs for r in b["requirements"]}
+    try:
+        text = register.read_text()
+    except UnicodeDecodeError:
+        warn(f"{read.label}/{register.name}: is not valid UTF-8; no requirements are read from it")
+        return ()
+    cited = {r for b in read.briefs for r in b["requirements"]}
     return tuple(
         Gap(r.id, r.quote or r.title)
-        for r in parse_register(register.read_text())
+        for r in parse_register(text)
         if not r.withdrawn and r.id not in cited
     )
 
@@ -177,7 +184,7 @@ class QueueBoard:
         return cls(
             project.as_at,
             _ready(read),
-            _gaps(read.queue, read.briefs),
+            _gaps(read),
             _backlog(project, read.briefs, read.blockers),
         )
 
@@ -438,11 +445,21 @@ class Item:
 @dataclasses.dataclass(frozen=True)
 class Bullets(Block):
     items: tuple[Item, ...]
-    ordered: bool = False
 
     def render(self, m: "Markup", depth: int) -> str:
-        shown = [(i.head.render(m), [d.render(m) for d in i.details]) for i in self.items]
-        return m.bullets(shown, self.ordered)
+        return self.draw(
+            m, [(i.head.render(m), [d.render(m) for d in i.details]) for i in self.items]
+        )
+
+    def draw(self, m: "Markup", shown: list[tuple[str, list[str]]]) -> str:
+        return m.bullets(shown)
+
+
+class NumberedBullets(Bullets):
+    """Items a reader refers to by position, such as a ranking."""
+
+    def draw(self, m: "Markup", shown: list[tuple[str, list[str]]]) -> str:
+        return m.numbered(shown)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -458,15 +475,23 @@ class Table(Block):
 
 @dataclasses.dataclass(frozen=True)
 class Section(Block):
-    """A headed part of a page; `kind` only styles it, as a tile for one project's summary."""
+    """A headed part of a page."""
 
     heading: str
     blocks: tuple[Block, ...] = ()
-    kind: str = ""
 
     def render(self, m: "Markup", depth: int) -> str:
-        body = [b.render(m, depth + 1) for b in self.blocks]
-        return m.section(self.heading, depth, self.kind, body)
+        return self.frame(m, depth, [b.render(m, depth + 1) for b in self.blocks])
+
+    def frame(self, m: "Markup", depth: int, body: list[str]) -> str:
+        return m.section(self.heading, depth, body)
+
+
+class TileSection(Section):
+    """One project's summary, which a format may style apart from the sections around it."""
+
+    def frame(self, m: "Markup", depth: int, body: list[str]) -> str:
+        return m.tile(self.heading, depth, body)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -496,10 +521,14 @@ def paragraph(*parts: Inline | str) -> Paragraph:
     return Paragraph(row(*parts))
 
 
-def bullets(items: Iterable[Item], gap: str, ordered: bool = False) -> Block:
+def bullets(items: Iterable[Item], gap: str, block: type[Bullets] = Bullets) -> Block:
     """The items as a list, or `gap` saying what is missing, so a section is never blank."""
     listed = tuple(items)
-    return Bullets(listed, ordered) if listed else paragraph(gap)
+    return block(listed) if listed else paragraph(gap)
+
+
+def numbered(items: Iterable[Item], gap: str) -> Block:
+    return bullets(items, gap, NumberedBullets)
 
 
 def lines(rows: Iterable[Row], gap: str) -> Block:
@@ -516,6 +545,10 @@ class Format(ABC):
 
     @abstractmethod
     def render(self, view: "View", report: Report) -> str: ...
+
+    def filename(self, view: "View") -> str:
+        """The file a view has in this format, and the route the server answers it on."""
+        return f"{view.name}{self.suffix}"
 
 
 class JsonFormat(Format):
@@ -559,13 +592,19 @@ class Markup(Format, ABC):
     def paragraph(self, line: str) -> str: ...
 
     @abstractmethod
-    def bullets(self, items: list[tuple[str, list[str]]], ordered: bool) -> str: ...
+    def bullets(self, items: list[tuple[str, list[str]]]) -> str: ...
+
+    @abstractmethod
+    def numbered(self, items: list[tuple[str, list[str]]]) -> str: ...
 
     @abstractmethod
     def table(self, headings: list[str], rows: list[list[str]]) -> str: ...
 
     @abstractmethod
-    def section(self, heading: str, depth: int, kind: str, body: list[str]) -> str: ...
+    def section(self, heading: str, depth: int, body: list[str]) -> str: ...
+
+    def tile(self, heading: str, depth: int, body: list[str]) -> str:
+        return self.section(heading, depth, body)
 
     @abstractmethod
     def details(self, summary: str, body: list[str]) -> str: ...
@@ -609,14 +648,18 @@ class MarkdownFormat(Markup):
     def paragraph(self, line: str) -> str:
         return line
 
-    def bullets(self, items: list[tuple[str, list[str]]], ordered: bool) -> str:
-        return "\n".join(
-            self._item(n, head, rest, ordered) for n, (head, rest) in enumerate(items, 1)
-        )
+    def bullets(self, items: list[tuple[str, list[str]]]) -> str:
+        return self._list(items, lambda number: "- ")
+
+    def numbered(self, items: list[tuple[str, list[str]]]) -> str:
+        return self._list(items, lambda number: f"{number}. ")
+
+    def _list(self, items: list[tuple[str, list[str]]], marker: Callable[[int], str]) -> str:
+        shown = enumerate(items, 1)
+        return "\n".join(self._item(marker(n), head, rest) for n, (head, rest) in shown)
 
     @staticmethod
-    def _item(number: int, head: str, rest: list[str], ordered: bool) -> str:
-        marker = f"{number}. " if ordered else "- "
+    def _item(marker: str, head: str, rest: list[str]) -> str:
         indent = " " * len(marker)
         return f"{marker}{head}" + "".join(f"\n{indent}- {d}" for d in rest)
 
@@ -624,7 +667,7 @@ class MarkdownFormat(Markup):
         shown = [f"| {' | '.join(escape_md(h) for h in headings)} |", "|" + "---|" * len(headings)]
         return "\n".join([*shown, *(f"| {' | '.join(cells)} |" for cells in rows)])
 
-    def section(self, heading: str, depth: int, kind: str, body: list[str]) -> str:
+    def section(self, heading: str, depth: int, body: list[str]) -> str:
         return "\n\n".join([f"{'#' * min(depth, 6)} {escape_md(heading)}", *body])
 
     def details(self, summary: str, body: list[str]) -> str:
@@ -709,8 +752,13 @@ class HtmlFormat(Markup):
     def paragraph(self, line: str) -> str:
         return f"<p>{line}</p>"
 
-    def bullets(self, items: list[tuple[str, list[str]]], ordered: bool) -> str:
-        tag = "ol" if ordered else "ul"
+    def bullets(self, items: list[tuple[str, list[str]]]) -> str:
+        return self._list("ul", items)
+
+    def numbered(self, items: list[tuple[str, list[str]]]) -> str:
+        return self._list("ol", items)
+
+    def _list(self, tag: str, items: list[tuple[str, list[str]]]) -> str:
         return f'<{tag} class="items">' + "".join(self._item(*i) for i in items) + f"</{tag}>"
 
     @staticmethod
@@ -725,10 +773,16 @@ class HtmlFormat(Markup):
         body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>" for cells in rows)
         return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
-    def section(self, heading: str, depth: int, kind: str, body: list[str]) -> str:
+    def section(self, heading: str, depth: int, body: list[str]) -> str:
+        return self._section(f"depth-{depth}", heading, depth, body)
+
+    def tile(self, heading: str, depth: int, body: list[str]) -> str:
+        return self._section(f"depth-{depth} tile", heading, depth, body)
+
+    @staticmethod
+    def _section(classes: str, heading: str, depth: int, body: list[str]) -> str:
         level = min(depth, 6)
         title = f"<h{level}>{html.escape(heading)}</h{level}>"
-        classes = " ".join(filter(None, [f"depth-{depth}", kind]))
         return f'<section class="{classes}">{title}{"".join(body)}</section>'
 
     def details(self, summary: str, body: list[str]) -> str:
@@ -749,7 +803,8 @@ class HtmlFormat(Markup):
         )
 
 
-FORMATS: dict[str, Format] = {f.name: f for f in (JsonFormat(), MarkdownFormat(), HtmlFormat())}
+JSON, MARKDOWN, HTML = JsonFormat(), MarkdownFormat(), HtmlFormat()
+FORMATS: dict[str, Format] = {f.name: f for f in (JSON, MARKDOWN, HTML)}
 
 
 # --- pieces both the page and the data are built from ----------------------------------------
@@ -954,13 +1009,6 @@ def release_table(r: rm.ShippedRelease) -> dict[str, Any]:
     }
 
 
-def next_due(p: rm.Project) -> rm.MilestoneSummary | None:
-    dated = sorted(
-        (m for m in p.milestones if m.due and m.stage is not rm.Stage.DONE), key=lambda m: m.due
-    )
-    return dated[0] if dated else None
-
-
 # --- views -----------------------------------------------------------------------------------
 
 
@@ -1048,11 +1096,9 @@ class Engineer(View):
                 source_line(e.project),
                 Section(
                     "Ready, most urgent first",
-                    (bullets((ranked_item(x) for x in b.work), NO_READY, ordered=True),),
+                    (numbered((ranked_item(x) for x in b.work), NO_READY),),
                 ),
-                Section(
-                    "Bugs", (bullets((ranked_item(x) for x in b.bugs), NO_BUGS, ordered=True),)
-                ),
+                Section("Bugs", (numbered((ranked_item(x) for x in b.bugs), NO_BUGS),)),
                 Section("Requirements with no covering brief", (lines(uncovered, NO_UNCOVERED),)),
             ),
         )
@@ -1087,7 +1133,7 @@ def stage_line(p: rm.Project) -> str:
 
 
 def next_line(p: rm.Project) -> str:
-    soonest = next_due(p)
+    soonest = p.next_due()
     if soonest is None:
         return NO_NEXT
     slip = (
@@ -1105,7 +1151,7 @@ def tile(e: Entry) -> Section:
     """Layer 1: everything a reader needs about a project without opening anything."""
     p = e.project
     standing = Row((*health_chips(p.health), *build_chips(p.tile), *owner_line(p.health).parts))
-    return Section(
+    return TileSection(
         p.title,
         (
             Paragraph(standing),
@@ -1116,7 +1162,6 @@ def tile(e: Entry) -> Section:
             paragraph(Strong("Latest shipped:"), latest_shipped(p)),
             source_line(p),
         ),
-        "tile",
     )
 
 
@@ -1307,7 +1352,7 @@ class Cto(View):
 
     def project_table(self, e: Entry) -> dict[str, Any]:
         p = e.project
-        soonest = next_due(p)
+        soonest = p.next_due()
         return {
             **self.head(p),
             "health": {
@@ -1361,14 +1406,6 @@ class Cto(View):
 
 
 VIEWS: dict[str, View] = {v.name: v for v in (Engineer(), Pm(), Cto())}
-
-
-def render(view: str, fmt: str, report: Report) -> str:
-    return FORMATS[fmt].render(VIEWS[view], report)
-
-
-def view_names() -> Sequence[str]:
-    return tuple(VIEWS)
 
 
 # --- the front page: what the files are and where each view is ---------------------------------
@@ -1437,19 +1474,26 @@ def guide() -> tuple[Section, ...]:
 
 def listing(pages: "Markup") -> Section:
     """Each view as a link in the format `pages`, with its data file beside it."""
-    data = FORMATS["json"].suffix
     items = (
-        Item(Row((Page(v.title, v.name + pages.suffix), Page("JSON", v.name + data))))
+        Item(Row((Page(v.title, pages.filename(v)), Page("JSON", JSON.filename(v)))))
         for v in VIEWS.values()
     )
     return Section("Roll-ups", (Bullets(tuple(items)),))
 
 
-MARKUPS: dict[str, Markup] = {f.name: f for f in FORMATS.values() if isinstance(f, Markup)}
+class Index:
+    """The page that lists the views and links each one: the front page of a served roll-up."""
+
+    def blocks(self, pages: Markup) -> tuple[Block, ...]:
+        return (listing(pages),)
+
+    def render(self, pages: Markup, report: Report) -> str:
+        document = Document("Project roll-ups", report.stamp, report.sources, self.blocks(pages))
+        return document.render(pages)
 
 
-def render_contents(fmt: str, report: Report, with_guide: bool = False) -> str:
-    """The page that lists the views: the README beside written files, the index when served."""
-    pages = MARKUPS[fmt]
-    blocks = (listing(pages), *(guide() if with_guide else ()))
-    return Document("Project roll-ups", report.stamp, report.sources, blocks).render(pages)
+class Readme(Index):
+    """The index with the guide under it, for the folder of written files."""
+
+    def blocks(self, pages: Markup) -> tuple[Block, ...]:
+        return (*super().blocks(pages), *guide())

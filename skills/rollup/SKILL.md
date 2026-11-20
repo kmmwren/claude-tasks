@@ -26,16 +26,18 @@ with one "Source: <label> @ <commit>, <date>" line, and a gap is written out ("N
 Only these fields appear: each project's slug, title, initiative, source label, commit and `outcome`;
 the owner's health colour, reason and date (never the owner's name); the project's `ask` and its
 deadline; the text of the automatic checks; milestone ids, titles, due dates, slip, progress, counts,
-evidence and feature-flag state per environment; brief ids, titles, due dates, estimates and the
-ids or names of what each brief waits on; shipped brief ids, titles, dates and releases; the
-project's links and latest build; and the "Not shown" and "Source warnings" lines. Brief bodies
-never appear, so check that the `outcome`, the health reason, the ask, the automatic-check text and
-the names of blockers are safe for the audience before sharing a roll-up.
+evidence and feature-flag state per environment; brief ids, titles, types, due dates, estimates and
+the ids or names of what each brief waits on; shipped brief ids, titles, notes, dates and releases;
+the ids and quoted words of requirements no brief covers; the project's links and latest build; and
+the "Not shown" and "Source warnings" lines. Brief bodies never appear, so check that the `outcome`,
+the health reason, the ask, the automatic-check text, the names of blockers, the shipped notes and the
+requirement words are safe for the audience before sharing a roll-up.
 
 ## Pick the mode
 
 - **Claude Code, or the Code tab in Claude Desktop, with the plugin installed**: generate it (below).
-  The Desktop Code tab runs `generate` and `serve` on the user's machine like the terminal does.
+  The Desktop Code tab runs `json`, `markdown`, `html`, `sources`, `write` and `serve` on the user's
+  machine like the terminal does.
 - **Desktop Chat tab or claude.ai chat**: read the published files (further below), attached with
   **+ > Add from GitHub**. Chat cannot run the plugin's scripts on the user's machine, so never try
   `rollup.py` in chat. This split is current as of 2026-11-19; recheck it after 2026-11-30.

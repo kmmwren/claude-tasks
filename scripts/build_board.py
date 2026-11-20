@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 from _concurrency import atomic_write
-from _paths import require_queue, resolve_root, strip_comment
+from _paths import readable_briefs, require_queue, resolve_root, strip_comment
 from config import load_config
 from deps import parse_list
 from milestones import MilestonesError, progress
@@ -51,7 +51,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
     briefs: list[dict[str, Any]] = []
     for d in DIRS:
-        for f in sorted((root / d).glob("*.md")):
+        for f in readable_briefs(root / d):
             raw = f.read_text()
             fm, body = parse_frontmatter(raw)
             if not fm.get("id"):

@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
-"""
-rollup.py - project roll-ups for an engineer, a product manager (pm) or a CTO, over any number of
-queues. Each project is read from its claude-tasks queue as the repository's default branch holds
-it on GitHub, never from a local clone. Only titles, states, dates, the owner's own health, ask and
-outcome, and the text of the automatic checks leave a queue; see skills/rollup.
-
-  python scripts/rollup.py json|markdown|html [--level engineer|pm|cto] [--source LABEL=REPO[#QUEUE] ...]
-  python scripts/rollup.py sources [--source LABEL=REPO[#QUEUE] ...]
-  python scripts/rollup.py write --out OUT_DIR [--source LABEL=REPO[#QUEUE] ...]
-  python scripts/rollup.py serve [--port 8788] [--source LABEL=REPO[#QUEUE] ...]
-"""
+"""Project roll-ups for an engineer, a PM or a CTO, built from each queue as its repository's
+default branch holds it, never from a local clone."""
 
 import argparse
 import dataclasses
@@ -36,21 +27,25 @@ CONFIG_ENV = "CLAUDE_TASKS_ROLLUP_CONFIG"
 DEFAULT_CONFIG = "~/.config/claude-tasks/rollup.toml"
 DEFAULT_LABEL = "this repository"
 DEFAULT_QUEUE = PROJECT_MARKER
-DEFAULT_VIEW = "pm"
+DEFAULT_VIEW = rv.VIEWS["pm"]
 NOT_READ = "its queue cannot be read from its repository and there is no cached copy"
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
 GENERATED = re.compile(r'(?m)^\*Generated \S+|^\s*"generated": "[^"]*"')
-WRITTEN = ("json", "markdown")  # Markdown is a file for GitHub to render, not a page to browse
-SERVED = ("html", "json")
+WRITTEN = (rv.JSON, rv.MARKDOWN)  # Markdown is a file for GitHub to render, not a page to browse
+SERVED = (rv.HTML, rv.JSON)
+USAGE = """\
+Only titles, states, dates, the owner's own health, ask and outcome, and the text of the automatic
+checks leave a queue; see skills/rollup.
+
+  rollup.py json|markdown|html [--level engineer|pm|cto] [--source LABEL=REPO[#QUEUE] ...]
+  rollup.py sources [--source LABEL=REPO[#QUEUE] ...]
+  rollup.py write --out OUT_DIR [--source LABEL=REPO[#QUEUE] ...]
+  rollup.py serve [--port 8788] [--source LABEL=REPO[#QUEUE] ...]
+"""
 
 
 class RollupError(Exception):
     """A source or config the user named cannot be used; the message says which and why."""
-
-
-def target(view: str, fmt: str) -> str:
-    """The file name a view has in a format, and the route the server answers it on."""
-    return f"{view}{rv.FORMATS[fmt].suffix}"
 
 
 # --- sources -------------------------------------------------------------------------------
@@ -292,17 +287,17 @@ def build(sources: list[Source], now: dt.datetime) -> rv.Report:
 
 
 def _files(report: rv.Report) -> dict[str, str]:
-    files = {"README.md": rv.render_contents("markdown", report, with_guide=True)}
-    for view in rv.VIEWS:
+    files = {"README.md": rv.Readme().render(rv.MARKDOWN, report)}
+    for view in rv.VIEWS.values():
         for fmt in WRITTEN:
-            files[target(view, fmt)] = rv.render(view, fmt, report).rstrip("\n") + "\n"
+            files[fmt.filename(view)] = fmt.render(view, report).rstrip("\n") + "\n"
     return files
 
 
 def _holds_rollup(out: pathlib.Path) -> bool:
     """True when `out` already carries a roll-up of ours: a pm.json with our schema."""
     try:
-        data = json.loads((out / target(DEFAULT_VIEW, "json")).read_text())
+        data = json.loads((out / rv.JSON.filename(DEFAULT_VIEW)).read_text())
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and data.get("schema") == rv.SCHEMA
@@ -353,25 +348,25 @@ def write(out: pathlib.Path, report: rv.Report) -> list[pathlib.Path]:
 class Served:
     """One page the server has: a view in a format, found by the file name `write` gives it."""
 
-    view: str
-    fmt: str
+    view: rv.View
+    fmt: rv.Format
 
     @property
     def target(self) -> str:
-        return target(self.view, self.fmt)
+        return self.fmt.filename(self.view)
 
     def answer(self, report: rv.Report) -> tuple[str, str]:
-        return rv.FORMATS[self.fmt].content_type, rv.render(self.view, self.fmt, report)
+        return self.fmt.content_type, self.fmt.render(self.view, report)
 
 
-PAGES = {page.target: page for page in (Served(v, f) for v in rv.VIEWS for f in SERVED)}
+PAGES = {page.target: page for page in (Served(v, f) for v in rv.VIEWS.values() for f in SERVED)}
 
 
 def route(path: str, report: rv.Report) -> tuple[str, str] | None:
     """(content type, body) for a localhost path, or None for a path the server does not have."""
     name = path.strip("/")
     if not name:
-        return rv.FORMATS["html"].content_type, rv.render_contents("html", report)
+        return rv.HTML.content_type, rv.Index().render(rv.HTML, report)
     served = PAGES.get(name)
     return served.answer(report) if served else None
 
@@ -449,38 +444,38 @@ class ListSources(Command):
 class Show(Command):
     """Print the roll-up in `fmt`; each format is its own subcommand."""
 
-    fmt: ClassVar[str]
-    level: str
+    fmt: ClassVar[rv.Format]
+    level: rv.View
 
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         SourceOptions.add_arguments(parser)
-        parser.add_argument("--level", choices=list(rv.VIEWS), default=DEFAULT_VIEW)
+        parser.add_argument("--level", choices=list(rv.VIEWS), default=DEFAULT_VIEW.name)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Show":
-        return cls(SourceOptions.load(args, env), now, args.level)
+        return cls(SourceOptions.load(args, env), now, rv.VIEWS[args.level])
 
     def run(self) -> None:
-        print(rv.render(self.level, self.fmt, self.rollup()))
+        print(self.fmt.render(self.level, self.rollup()))
 
 
 class ShowJson(Show):
     name = "json"
     summary = "print the roll-up as json"
-    fmt = "json"
+    fmt = rv.JSON
 
 
 class ShowMarkdown(Show):
     name = "markdown"
     summary = "print the roll-up as markdown"
-    fmt = "markdown"
+    fmt = rv.MARKDOWN
 
 
 class ShowHtml(Show):
     name = "html"
     summary = "print the roll-up as html"
-    fmt = "html"
+    fmt = rv.HTML
 
 
 @dataclasses.dataclass(frozen=True)
@@ -527,7 +522,7 @@ class Serve(Command):
         """Localhost only, rebuilt on every request so the page is never older than the default branch."""
         run = self
 
-        class Handler(http.server.BaseHTTPRequestHandler):
+        class RollupRequest(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 # A rebinding page reaches this loopback port under its own name; only ours pass.
                 if not LOCAL_HOST.fullmatch(self.headers.get("Host", "")):
@@ -547,7 +542,7 @@ class Serve(Command):
             def log_message(self, format: str, *args: Any) -> None:
                 pass
 
-        return http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        return http.server.ThreadingHTTPServer(("127.0.0.1", self.port), RollupRequest)
 
     def run(self, block: Callable[[http.server.ThreadingHTTPServer], None] | None = None) -> None:
         try:
@@ -575,7 +570,11 @@ COMMANDS: tuple[type[Command], ...] = (ShowJson, ShowMarkdown, ShowHtml, ListSou
 
 
 def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
-    ap = argparse.ArgumentParser(description="Project roll-ups for an engineer, a PM or a CTO.")
+    ap = argparse.ArgumentParser(
+        description="Project roll-ups for an engineer, a PM or a CTO.",
+        epilog=USAGE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
     for command in COMMANDS:
         sub = subparsers.add_parser(command.name, help=command.summary, description=command.summary)
