@@ -28,7 +28,7 @@ import sys
 from functools import partial
 
 from _concurrency import atomic_write, repo_lock
-from _paths import require_queue, resolve_root
+from _paths import QueueBriefs, require_queue, resolve_root
 from deps import EXTERNAL_PREFIX, Brief, awaits_release, fm, load_queue, unmet
 from git_sync import sync_commit
 from prioritise import index_queue, score
@@ -38,9 +38,10 @@ from transition import _append_log, drop_blocker_lines, find_brief, move_brief, 
 def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[Brief]:
     """Blocked briefs whose every blocker is satisfied, highest priority first."""
     today = today or datetime.date.today()
-    queue = load_queue(root)
+    briefs = QueueBriefs.read(root)
+    queue = load_queue(briefs)
     done = {b.id for b in queue if b.status == "done"}
-    _, unlocks = index_queue(root)
+    _, unlocks = index_queue(briefs)
     ready = [b for b in queue if b.status == "blocked" and awaits_release(b, done)]
     ready.sort(key=lambda b: (-score(b.fields, today, unlocks=unlocks.get(b.id, 0)), b.id))
     return ready
@@ -71,7 +72,7 @@ def release_unblocked(
 
 def _still_releasable(root: pathlib.Path, brief_id: str) -> bool:
     """Fresh read, meant to run under the queue lock: still blocked, every wait satisfied."""
-    queue = load_queue(root)
+    queue = load_queue(QueueBriefs.read(root))
     done = {b.id for b in queue if b.status == "done"}
     return any(
         b.id == brief_id and b.status == "blocked" and awaits_release(b, done) for b in queue
@@ -102,7 +103,7 @@ def resolve_external(
             raise ValueError(f"{brief_id!r} has no blocker {item!r} (has {current})")
         kept = [b for b in current if b != item]
         remaining = "[" + ", ".join(kept) + "]"
-        done = {b.id for b in load_queue(root) if b.status == "done"}
+        done = {b.id for b in load_queue(QueueBriefs.read(root)) if b.status == "done"}
         frees = not kept and not unmet(
             Brief(brief_id, "blocked", {**fields, "blocked_by": remaining}), done
         )

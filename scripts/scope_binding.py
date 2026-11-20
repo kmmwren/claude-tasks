@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 import _toml
-from _paths import binding_path, require_queue
+from _paths import QueueBriefs, binding_path, require_queue
 from deps import load_queue
 from prioritise import LIVE_DIRS, subject
 from scope import IdsScope, Scope, parse_scope
@@ -150,7 +150,9 @@ class FixedMode(Mode):
         """The open briefs the selector admits now, so later briefs matching it are not pulled."""
         scope = parse_scope(selector)
         queue = require_queue(scope.root(root))
-        open_briefs = (b for b in load_queue(queue) if b.status in CLAIMABLE_STATUSES)
+        open_briefs = (
+            b for b in load_queue(QueueBriefs.read(queue)) if b.status in CLAIMABLE_STATUSES
+        )
         admitted = (b.id for b in open_briefs if scope.admits(subject({**b.fields, "id": b.id})))
         return _valid_slugs(admitted)
 
@@ -260,7 +262,7 @@ def _slugs(value: Any) -> tuple[str, ...]:
 def require_brief(selector: str, slug: str, root: pathlib.Path) -> None:
     """Refuse a slug that names no brief in the selector's queue, which would pull nothing."""
     queue = require_queue(parse_scope(selector).root(root))
-    if slug not in {b.id for b in load_queue(queue)}:
+    if slug not in {b.id for b in load_queue(QueueBriefs.read(queue))}:
         raise BindingError(f"{slug} is not a brief in {queue}")
 
 

@@ -6,6 +6,7 @@ import pathlib
 import build_board
 import project_view as pv
 import pytest
+from _paths import QueueBriefs
 
 from tests.project_fixtures import make_queue, make_rich
 
@@ -280,5 +281,9 @@ def test_a_milestone_with_no_criteria_shows_no_checklist(tmp_path):
 
 
 def test_a_card_for_a_brief_with_no_goal_or_criteria_has_no_body(tmp_path):
-    brief = {**build_board.load_briefs(make_queue(tmp_path))[0], "goal": "", "crit": ""}
+    brief = {
+        **build_board.load_briefs(QueueBriefs.read(make_queue(tmp_path)))[0],
+        "goal": "",
+        "crit": "",
+    }
     assert 'class="body"' not in build_board.card_html(brief)

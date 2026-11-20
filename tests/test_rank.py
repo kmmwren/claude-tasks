@@ -379,3 +379,9 @@ def test_main_json_lists_every_candidate_for_a_session_scope(tmp_path, monkeypat
     rank.main(["--scope", "session:s1", "--json"])
     out = json.loads(capsys.readouterr().out)
     assert (out["scope"], [i["id"] for i in out["items"]]) == ("session:s1", ["b", "c", "a"])
+
+
+def test_a_ready_brief_that_is_not_utf8_is_left_out(tmp_path):
+    root = make_queue(tmp_path, {})
+    (root / "ready" / "bad.md").write_bytes(b"\xff\xfe\x00bad")
+    assert rank.load_brief(root, {"id": "bad"}) is None

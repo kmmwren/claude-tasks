@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 import pytest
 import rollup_model as rm
 import rollup_views as rv
+from _paths import TASK_DIRS
 
 from tests.remote_queue import publish, snapshot
 
@@ -750,3 +751,21 @@ def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(
     entry(tmp_path, ALPHA, {**ATLAS_FILES, "tasks.toml": "name = [unterminated\n"})
     err = capsys.readouterr().err
     assert f"cannot read {ALPHA}/tasks.toml (" in err and err.count("cannot read") == 1
+
+
+def test_a_roll_up_reads_each_brief_once(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snap = snapshot(publish(tmp_path, writer(ATLAS_FILES)), tmp_path / "cache")
+    reads: list[str] = []
+    real = pathlib.Path.read_text
+
+    def counted(path: pathlib.Path, *args: object, **kwargs: object) -> str:
+        if path.suffix == ".md" and path.parent.name in TASK_DIRS:
+            reads.append(f"{path.parent.name}/{path.name}")
+        return real(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pathlib.Path, "read_text", counted)
+    rv.Entry.read(ALPHA, snap, NOW)
+    briefs = sorted(name for name in ATLAS_FILES if name.endswith(".md") and "/" in name)
+    assert sorted(reads) == [n for n in briefs if n.split("/")[0] in TASK_DIRS]

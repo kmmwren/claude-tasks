@@ -168,15 +168,19 @@
 ### Changed
 - **The project view's rollout table headers show each stage's own label.** The `STAGE_WORDS`
   mapping that renamed stage labels is removed, so a header reads exactly as the project declares it.
+- **`rollup.py --help` lists every command and what leaves a queue.** The usage lines for `json`,
+  `markdown`, `html`, `sources`, `write` and `serve` follow the options.
 
 ### Fixed
 - **A file that is not UTF-8 no longer drops a project from the roll-up.** A `requirements.md` that
   cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are read
   from it` and the engineer view lists none; a brief that cannot be decoded warns
   `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped`. Each file is named once
-  per process, so `serve` does not repeat it on every request. The board, ranking, blockers, duplicate
-  check, requirements check and `bump` leave the brief out; `fold_session.py` still stops on it, since
-  folding without it would strand the brief.
+  per process, so `serve` does not repeat it on every request. Files are decoded as UTF-8 whatever the
+  locale, and the roll-up reads each queue's briefs once and hands them to the board, the blockers and
+  the ranking. The board, ranking, blockers, duplicate check, requirements check, `bump`, brief lookup
+  in `transition.py`, inbox triage and the headless `rank.py` leave the brief out; `fold_session.py`
+  and `unblock.py` still stop on it, since each would otherwise strand or rewrite that brief.
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".

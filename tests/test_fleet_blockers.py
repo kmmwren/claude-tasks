@@ -14,6 +14,7 @@ import prioritise
 import pytest
 import rank
 import taste
+from _paths import QueueBriefs
 from config import load_config
 from fleet_blockers import BlockerStatus, FleetBlocker, FleetBlockers
 from rank import Ranker
@@ -109,7 +110,7 @@ def test_a_relative_directory_is_resolved_beside_the_queue_and_a_tilde_expands(
 
 def test_a_missing_directory_warns_once_and_falls_back_to_no_blockers(tmp_path, capsys):
     root = _queue(tmp_path, {"a": _brief("a", clears="x")}, blockers_dir="nowhere")
-    assert _ids(prioritise.rank(root, today=TODAY)) == ["a"]
+    assert _ids(prioritise.rank(QueueBriefs.read(root), today=TODAY)) == ["a"]
     err = capsys.readouterr().err
     assert err.count("fleet_blockers_dir") == 1 and "using no fleet blockers" in err
 
@@ -117,7 +118,7 @@ def test_a_missing_directory_warns_once_and_falls_back_to_no_blockers(tmp_path, 
 def test_an_unreadable_tasks_toml_warns_and_ranks_with_no_blockers(tmp_path, capsys):
     root = _queue(tmp_path, {"a": _brief("a", clears="x")})
     (root / "tasks.toml").write_text("name = [unterminated\n")
-    assert _ids(prioritise.rank(root, today=TODAY)) == ["a"]
+    assert _ids(prioritise.rank(QueueBriefs.read(root), today=TODAY)) == ["a"]
     err = capsys.readouterr().err
     assert err.count("cannot read") == 1 and str(root / "tasks.toml") in err
 
@@ -177,7 +178,7 @@ def test_a_clearing_brief_outranks_every_other_lane_under_either_scorer(tmp_path
         },
     )
     _record(root.parent / "blockers", "hooks-down")
-    ranked = prioritise.rank(root, today=TODAY, scorer=scorer)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY, scorer=scorer)
     assert ranked[0]["id"] == "fix" and ranked[0]["_lane"] is prioritise.Lane.FLEET_BLOCKER
     assert ranked[1]["id"] == "boss"
 
@@ -194,7 +195,7 @@ def test_fleet_blocker_briefs_are_not_held_to_the_expedite_cap(tmp_path):
     _record(root.parent / "blockers", "hooks-down")
     lanes = {
         b["id"]: b["_lane"].value
-        for b in prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+        for b in prioritise.rank(QueueBriefs.read(root), today=TODAY, scorer=prioritise.Scorer.WSJF)
     }
     assert [lanes[f"fix{n}"] for n in range(3)] == ["fleet-blocker"] * 3
     assert sorted(v for k, v in lanes.items() if k.startswith("exp")) == [
@@ -208,7 +209,7 @@ def test_fleet_blocker_briefs_are_not_held_to_the_expedite_cap(tmp_path):
 def test_an_unverified_blocker_counts_as_active(tmp_path, status):
     root = _queue(tmp_path, {"a": _brief("a"), "fix": _brief("fix", clears="hooks-down")})
     _record(root.parent / "blockers", "hooks-down", status)
-    assert _ids(prioritise.rank(root, today=TODAY)) == ["fix", "a"]
+    assert _ids(prioritise.rank(QueueBriefs.read(root), today=TODAY)) == ["fix", "a"]
 
 
 @pytest.mark.parametrize("record", ["cleared", None])
@@ -220,7 +221,7 @@ def test_a_cleared_or_missing_record_leaves_the_brief_in_its_normal_lane(tmp_pat
         _record(root.parent / "blockers", "hooks-down", record)
     else:
         (root.parent / "blockers").mkdir()
-    fix = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}["fix"]
+    fix = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}["fix"]
     assert fix["_lane"] is prioritise.Lane.STANDARD
     assert "fleet_blocker" not in fix["_why"] and capsys.readouterr().err == ""
 
@@ -232,7 +233,7 @@ def test_without_the_config_key_clears_is_ignored(tmp_path):
         blockers_dir="",
     )
     _record(root.parent / "blockers", "hooks-down")
-    lanes = {b["id"]: b["_lane"] for b in prioritise.rank(root, today=TODAY)}
+    lanes = {b["id"]: b["_lane"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert lanes == {"a": prioritise.Lane.STANDARD, "fix": prioritise.Lane.STANDARD}
 
 
@@ -246,7 +247,7 @@ def test_a_blocked_brief_does_not_take_the_lane_but_a_needs_input_one_does(tmp_p
         },
     )
     _record(root.parent / "blockers", "hooks-down")
-    lanes = {b["id"]: b["_lane"] for b in prioritise.rank(root, today=TODAY)}
+    lanes = {b["id"]: b["_lane"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert (
         lanes["ask"] is prioritise.Lane.FLEET_BLOCKER and lanes["stuck"] is prioritise.Lane.STANDARD
     )

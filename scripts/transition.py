@@ -35,7 +35,7 @@ from collections.abc import Callable
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root, warn
+from _paths import QueueBriefs, resolve_root, warn
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
@@ -142,20 +142,19 @@ def resolve_brief(
 ) -> list[dict[str, Any]]:
     """Rank actionable briefs by relevance to `query`. Best first; non-matches dropped."""
     hits: list[dict[str, Any]] = []
-    for d in statuses:
-        for f in sorted((root / d).glob("*.md")):
-            brief = fm(f.read_text())
-            s = _score(query, brief)
-            if s > 0:
-                hits.append(
-                    {
-                        "id": brief.get("id", f.stem),
-                        "title": brief.get("title", ""),
-                        "status": d,
-                        "score": s,
-                        "path": f,
-                    }
-                )
+    for d, file in QueueBriefs.read(root).within(statuses):
+        brief = fm(file.text)
+        s = _score(query, brief)
+        if s > 0:
+            hits.append(
+                {
+                    "id": brief.get("id", file.path.stem),
+                    "title": brief.get("title", ""),
+                    "status": d,
+                    "score": s,
+                    "path": file.path,
+                }
+            )
     hits.sort(key=lambda h: (-h["score"], h["id"]))
     return hits
 
@@ -287,7 +286,7 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
     """Refuse a self-block or a blocker id that is not a brief (externals are free text)."""
     if brief_id in blocked_by:
         raise ValueError(f"{brief_id!r} cannot be blocked by itself")
-    known = {b.id for b in load_queue(root)}
+    known = {b.id for b in load_queue(QueueBriefs.read(root))}
     unknown = [b for b in blocked_by if not is_external(b) and b not in known]
     if unknown:
         raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")

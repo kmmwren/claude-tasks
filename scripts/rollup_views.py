@@ -122,7 +122,7 @@ class BacklogGroup:
 
 def _ready(read: rm.QueueRead) -> tuple[RankedBrief, ...]:
     today, waiting = read.today, read.blockers
-    ranked = prioritise.rank(read.queue, today=today, config=read.settings)
+    ranked = prioritise.rank(read.files, today=today, config=read.settings)
     items = [
         RankedBrief.of(place, raw, today, waiting.get(raw["id"], ()))
         for place, raw in enumerate(ranked, 1)
@@ -138,9 +138,7 @@ def _gaps(read: rm.QueueRead) -> tuple[Gap, ...]:
     try:
         text = register.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        warn_undecodable(
-            register, f"{read.label}/{register.name}", "no requirements are read from it"
-        )
+        warn_undecodable(f"{read.label}/{register.name}", "no requirements are read from it")
         return ()
     cited = {r for b in read.briefs for r in b["requirements"]}
     return tuple(
@@ -534,6 +532,7 @@ def _listed(block: type[Bullets], items: Iterable[Item], gap: str) -> Block:
 
 
 def numbered(items: Iterable[Item], gap: str) -> Block:
+    """The items as a numbered list, in order, or `gap` saying what is missing."""
     return _listed(NumberedBullets, items, gap)
 
 

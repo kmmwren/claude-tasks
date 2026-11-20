@@ -21,7 +21,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from _concurrency import atomic_write, repo_lock, reserve_name
-from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue, warn
+from _paths import CONFIG_FILE, TASK_DIRS, QueueBriefs, binding_path, require_queue, warn
 from config import load_config
 from deps import Brief, fm, load_queue
 from facts import facts_path
@@ -117,7 +117,7 @@ class SessionQueue:
         for move in moves:
             brief = Brief("", "", fm(move.dest.read_text()))
             wanted |= brief.declared_ids | brief.legacy_tokens
-        wanted -= {b.id for b in load_queue(self.fold_to)}
+        wanted -= {b.id for b in load_queue(QueueBriefs.read(self.fold_to))}
         for done in sorted((self.root / "done").glob("*.md")):
             if _brief_id(done) in wanted:
                 carried = self._reserve(done)

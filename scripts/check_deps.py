@@ -26,7 +26,7 @@ import pathlib
 import sys
 import tomllib
 
-from _paths import require_queue, resolve_root
+from _paths import QueueBriefs, require_queue, resolve_root
 from deps import Brief, awaits_release, dependency_edges, load_queue
 from facts import declared_brief, facts_files
 from milestones import MilestonesError, milestone_titles
@@ -66,7 +66,7 @@ def find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
 
 
 def check(root: pathlib.Path) -> list[Problem]:
-    queue = load_queue(root)
+    queue = load_queue(QueueBriefs.read(root))
     known = {b.id for b in queue}
     done = {b.id for b in queue if b.status == "done"}
     problems: list[Problem] = []

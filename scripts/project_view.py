@@ -30,7 +30,7 @@ from typing import Any
 import build_board
 import facts
 from _dates import parse_date
-from _paths import is_queue, warn
+from _paths import QueueBriefs, is_queue, warn
 from milestones import MilestonesError, MilestoneSpec, members, milestone_specs
 from requirements_check import check as check_queue
 from requirements_register import parse_register, register_path
@@ -122,7 +122,7 @@ def _check_health(health: Any) -> None:
     require_text(health.get("reason"), "[health] reason", hint=": one line saying why")
 
 
-def project_briefs(queue: pathlib.Path) -> list[dict[str, Any]]:
+def project_briefs(queue: QueueBriefs) -> list[dict[str, Any]]:
     """Briefs a project reports on: everything past inbox, plus inbox items already tied to it."""
     raw = build_board.load_briefs(queue)
     return [b for b in raw if b["dir"] != "inbox" or b["requirements"] or b["domain"]]
@@ -631,7 +631,7 @@ def build_model(
         raise ProjectConfigError(f"{queue} is not an initialised queue (no tasks.toml)")
     cfg = read_project(queue)
     meta = facts.load_project_meta(queue)
-    briefs = project_briefs(queue)
+    briefs = project_briefs(QueueBriefs.read(queue))
     by_id = {b["id"]: b for b in briefs}
     milestones = milestone_rows(declared_milestones(queue, cfg), briefs, signals.now.date())
 

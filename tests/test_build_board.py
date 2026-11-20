@@ -7,6 +7,7 @@ cases for the frontmatter/section parsers and the main() entrypoint.
 
 import build_board
 import init_queue
+from _paths import QueueBriefs
 
 
 def _write(root, folder, name, text):
@@ -88,14 +89,14 @@ def test_section_extracts_and_stops_at_next_heading():
 def test_load_briefs_skips_non_inbox_file_without_id(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "ready", "no-id.md", "---\ntitle: headless\n---\n\nbody\n")
-    ids = [b["id"] for b in build_board.load_briefs(root)]
+    ids = [b["id"] for b in build_board.load_briefs(QueueBriefs.read(root))]
     assert "no-id" not in ids
 
 
 def test_load_briefs_synthesises_raw_inbox_item(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "inbox", "raw-thought.md", "---\nraw: true\n---\n\n# Raw thought\n\nsome body\n")
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert "raw-thought" in briefs
     assert briefs["raw-thought"]["goal"].startswith("# Raw thought")
 
@@ -106,21 +107,21 @@ def test_load_briefs_synthesises_raw_inbox_item(tmp_path):
 def test_load_briefs_reads_assignee(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "in-progress", "claimed.md", _brief("claimed", assignee="alice"))
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert briefs["claimed"]["assignee"] == "alice"
 
 
 def test_load_briefs_defaults_assignee_to_empty_when_field_absent(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "ready", "legacy.md", _brief("legacy"))
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert briefs["legacy"]["assignee"] == ""
 
 
 def test_load_briefs_defaults_assignee_for_raw_inbox_item(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert briefs["raw"]["assignee"] == ""
 
 
@@ -130,7 +131,7 @@ def test_load_briefs_defaults_assignee_for_raw_inbox_item(tmp_path):
 def test_load_briefs_reads_due(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "ready", "dated.md", _brief("dated", due="2026-12-01"))
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert briefs["dated"]["due"] == "2026-12-01"
 
 
@@ -138,7 +139,7 @@ def test_load_briefs_defaults_due_to_empty_when_field_absent(tmp_path):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     _write(root, "ready", "undated.md", _brief("undated"))
     _write(root, "inbox", "raw.md", "---\nraw: true\n---\n\nsome body\n")
-    briefs = {b["id"]: b for b in build_board.load_briefs(root)}
+    briefs = {b["id"]: b for b in build_board.load_briefs(QueueBriefs.read(root))}
     assert briefs["undated"]["due"] == "" and briefs["raw"]["due"] == ""
 
 

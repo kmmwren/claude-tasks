@@ -8,6 +8,7 @@ import init_queue
 import prioritise
 import pytest
 import scope_binding
+from _paths import QueueBriefs
 from scope import AllScope, IdsScope, ProjectScope, TagScope, parse_scope
 from scope_binding import (
     Addition,
@@ -249,7 +250,9 @@ def ranked_queue(tmp_path):
 
 
 def _ranked(root, scope):
-    return sorted(b["id"] for b in prioritise.rank(root, today=TODAY, scope=scope))
+    return sorted(
+        b["id"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY, scope=scope)
+    )
 
 
 def test_ids_scope_ranks_only_the_named_briefs(ranked_queue):
@@ -270,7 +273,7 @@ def test_the_whole_queue_still_ranks_without_a_scope(ranked_queue):
 
 def test_ids_scope_weighs_signals_like_the_whole_queue(tmp_path):
     root = make_queue(tmp_path, {"m": {"tags": "[multiplier]"}})
-    rows = prioritise.rank(root, today=TODAY, scope=IdsScope.of(["m"]))
+    rows = prioritise.rank(QueueBriefs.read(root), today=TODAY, scope=IdsScope.of(["m"]))
     assert rows[0]["_why"]["signals"] == {"multiplier": 1500}
 
 

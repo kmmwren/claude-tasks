@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 from _concurrency import atomic_write
-from _paths import read_briefs, require_queue, resolve_root, strip_comment
+from _paths import QueueBriefs, require_queue, resolve_root, strip_comment
 from config import load_config
 from deps import parse_list
 from milestones import MilestonesError, progress
@@ -48,55 +48,54 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fm, body
 
 
-def load_briefs(root: pathlib.Path) -> list[dict[str, Any]]:
+def load_briefs(queue: QueueBriefs) -> list[dict[str, Any]]:
     briefs: list[dict[str, Any]] = []
-    for d in DIRS:
-        for brief in read_briefs(root / d):
-            f, raw = brief.path, brief.text
-            fm, body = parse_frontmatter(raw)
-            if not fm.get("id"):
-                if d == "inbox":
-                    # raw capture: synthesise minimal fields, preview the body
-                    fm = {
-                        "id": f.stem,
-                        "title": fm.get("title", f.stem.replace("-", " ")),
-                        "type": "todo",
-                        "autonomy": "needs-input",
-                        "importance": "3",
-                    }
-                else:
-                    continue
-            header = re.match(r"^---\n(.*?)\n---", raw, re.DOTALL)
-            goal = section(body, "Goal")
-            if not goal and d == "inbox":
-                goal = body.strip()[:240]
-            crit = section(body, "Success criteria")
-            done = len(re.findall(r"^\s*-\s*\[[xX]\]", crit, re.MULTILINE))
-            total = len(re.findall(r"^\s*-\s*\[[ xX]\]", crit, re.MULTILINE))
-            briefs.append(
-                {
-                    "dir": d,
-                    "id": fm["id"],
-                    "title": fm.get("title", fm["id"]),
-                    "type": fm.get("type", "todo"),
-                    "importance": fm.get("importance", "3"),
-                    "autonomy": fm.get("autonomy", "needs-input"),
-                    "effort": fm.get("estimated-effort", ""),
-                    "domain": fm.get("domain", ""),
-                    "parent": fm.get("parent", "") or "",
-                    "assignee": fm.get("assignee", ""),
-                    "milestone": fm.get("milestone", ""),
-                    "due": fm.get("due", ""),
-                    "architecture": fm.get("architecture", ""),
-                    "updated": fm.get("updated", ""),
-                    "blocked_by": parse_list(fm.get("blocked_by", "")),
-                    "requirements": cited_ids(header[1]) if header else [],
-                    "goal": goal if goal != "# TODO" else "",
-                    "crit": crit,
-                    "crit_done": done,
-                    "crit_total": total,
+    for d, brief in queue.within(DIRS):
+        f, raw = brief.path, brief.text
+        fm, body = parse_frontmatter(raw)
+        if not fm.get("id"):
+            if d == "inbox":
+                # raw capture: synthesise minimal fields, preview the body
+                fm = {
+                    "id": f.stem,
+                    "title": fm.get("title", f.stem.replace("-", " ")),
+                    "type": "todo",
+                    "autonomy": "needs-input",
+                    "importance": "3",
                 }
-            )
+            else:
+                continue
+        header = re.match(r"^---\n(.*?)\n---", raw, re.DOTALL)
+        goal = section(body, "Goal")
+        if not goal and d == "inbox":
+            goal = body.strip()[:240]
+        crit = section(body, "Success criteria")
+        done = len(re.findall(r"^\s*-\s*\[[xX]\]", crit, re.MULTILINE))
+        total = len(re.findall(r"^\s*-\s*\[[ xX]\]", crit, re.MULTILINE))
+        briefs.append(
+            {
+                "dir": d,
+                "id": fm["id"],
+                "title": fm.get("title", fm["id"]),
+                "type": fm.get("type", "todo"),
+                "importance": fm.get("importance", "3"),
+                "autonomy": fm.get("autonomy", "needs-input"),
+                "effort": fm.get("estimated-effort", ""),
+                "domain": fm.get("domain", ""),
+                "parent": fm.get("parent", "") or "",
+                "assignee": fm.get("assignee", ""),
+                "milestone": fm.get("milestone", ""),
+                "due": fm.get("due", ""),
+                "architecture": fm.get("architecture", ""),
+                "updated": fm.get("updated", ""),
+                "blocked_by": parse_list(fm.get("blocked_by", "")),
+                "requirements": cited_ids(header[1]) if header else [],
+                "goal": goal if goal != "# TODO" else "",
+                "crit": crit,
+                "crit_done": done,
+                "crit_total": total,
+            }
+        )
     return briefs
 
 
@@ -179,7 +178,7 @@ def milestone_strip(root: pathlib.Path) -> str:
 
 
 def build(root: pathlib.Path, project: str = "tasks") -> None:
-    briefs = load_briefs(root)
+    briefs = load_briefs(QueueBriefs.read(root))
     cols = ""
     for d in DIRS:
         col = [b for b in briefs if b["dir"] == d]

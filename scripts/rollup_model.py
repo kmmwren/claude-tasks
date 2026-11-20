@@ -16,7 +16,7 @@ from typing import Any
 import facts
 import project_view as pv
 from _dates import parse_date
-from _paths import TASK_DIRS, read_briefs, warn
+from _paths import QueueBriefs, warn
 from config import load_config_or_defaults
 from deps import load_queue, unmet
 from milestones import Milestone
@@ -343,13 +343,7 @@ def _zone(settings: dict[str, Any], label: str) -> zoneinfo.ZoneInfo:
         return zoneinfo.ZoneInfo("UTC")
 
 
-def _name_skipped_briefs(label: str, queue: pathlib.Path) -> None:
-    """Name each brief that is not UTF-8 under the source label first, so later readers stay silent."""
-    for folder in TASK_DIRS:
-        read_briefs(queue / folder, shown_as=f"{label}/{folder}")
-
-
-def open_blockers(queue: pathlib.Path) -> dict[str, tuple[str, ...]]:
+def open_blockers(queue: QueueBriefs) -> dict[str, tuple[str, ...]]:
     """Open briefs with a blocker still unmet, by the rule the rest of the plugin uses."""
     briefs = load_queue(queue)
     done = {b.id for b in briefs if b.status == "done"}
@@ -372,7 +366,7 @@ class QueueRead:
     """Everything one snapshot holds that a roll-up uses, read once."""
 
     label: str
-    queue: pathlib.Path
+    files: QueueBriefs
     as_at: AsAt
     now: dt.datetime  # in the queue's own timezone
     settings: dict[str, Any]  # tasks.toml
@@ -386,24 +380,28 @@ class QueueRead:
 
     @classmethod
     def load(cls, label: str, snapshot: QueueSnapshot, now: dt.datetime) -> "QueueRead":
-        queue = snapshot.root
-        _name_skipped_briefs(label, queue)
+        files = QueueBriefs.read(snapshot.root, shown_as=label)
+        queue = files.root
         settings = load_config_or_defaults(queue, "rollup", f"{label}/tasks.toml")
         cfg = pv.read_project(queue)
         return cls(
             label,
-            queue,
+            files,
             AsAt.of(snapshot),
             now.astimezone(_zone(settings, label)),
             settings,
             cfg,
-            pv.project_briefs(queue),
-            open_blockers(queue),
+            pv.project_briefs(files),
+            open_blockers(files),
             facts.load_facts(queue),
             facts.load_schedules(queue),
             facts.current_ci(queue),
             facts.load_project_meta(queue),
         )
+
+    @property
+    def queue(self) -> pathlib.Path:
+        return self.files.root
 
     @property
     def today(self) -> dt.date:

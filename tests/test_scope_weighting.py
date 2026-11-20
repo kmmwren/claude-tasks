@@ -7,6 +7,7 @@ import init_queue
 import prioritise
 import pytest
 import signals
+from _paths import QueueBriefs
 from scope import AllScope, ProjectScope, SessionScope, TagScope, parse_scope
 from signals import Signal, SignalRule, Subject
 
@@ -71,11 +72,17 @@ def _ids(items):
     ],
 )
 def test_exact_order_per_scope(root, scope, scorer, expected):
-    assert _ids(prioritise.rank(root, today=TODAY, scope=scope, scorer=scorer)) == expected
+    assert (
+        _ids(prioritise.rank(QueueBriefs.read(root), today=TODAY, scope=scope, scorer=scorer))
+        == expected
+    )
 
 
 def test_project_scope_scores_shipping_and_unblocking_above_multipliers(root):
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY, scope=ProjectScope("app"))}
+    ranked = {
+        b["id"]: b
+        for b in prioritise.rank(QueueBriefs.read(root), today=TODAY, scope=ProjectScope("app"))
+    }
     assert ranked["pr"]["_score_additive"] == 220 + 2000
     assert ranked["unblock"]["_score_additive"] == 120 + 2000
     assert ranked["mult"]["_score_additive"] == 220 + 500
@@ -85,7 +92,7 @@ def test_project_scope_scores_shipping_and_unblocking_above_multipliers(root):
 
 
 def test_all_scope_scores_multipliers_first(root):
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["mult"]["_score_additive"] == 220 + 1500
     assert ranked["mult"]["_why"]["signals"] == {"multiplier": 1500}
     assert ranked["plain"]["_why"]["signals"] == {}
@@ -98,7 +105,7 @@ def test_the_fleet_blocker_lane_stays_above_every_signal(root, tmp_path):
     (blockers / "down.json").write_text(json.dumps(record))
     (root / "tasks.toml").write_text(f'name = "demo"\nfleet_blockers_dir = "{blockers}"\n')
     (root / "ready" / "fix.md").write_text(_brief("fix", importance="5", extra="clears: down\n"))
-    ranked = prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY, scorer=prioritise.Scorer.WSJF)
     assert ranked[0]["id"] == "fix" and ranked[0]["_lane"] is prioritise.Lane.FLEET_BLOCKER
 
 
@@ -106,14 +113,17 @@ def test_ids_rank_named_briefs_wherever_they_are_live(root):
     (root / "in-progress" / "doing.md").write_text(_brief("doing", tags="[pr]"))
     (root / "done" / "gone.md").write_text(_brief("gone", tags="[multiplier]"))
     ranked = prioritise.rank(
-        root, today=TODAY, scope=SessionScope("s"), ids=frozenset({"doing", "plain", "gone"})
+        QueueBriefs.read(root),
+        today=TODAY,
+        scope=SessionScope("s"),
+        ids=frozenset({"doing", "plain", "gone"}),
     )
     assert _ids(ranked) == ["doing", "plain"]
 
 
 def test_a_waiting_brief_gives_its_blocker_the_clears_blocker_signal(root):
     (root / "ready" / "waiter.md").write_text(_brief("waiter", blockers="[plain]"))
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["plain"]["_why"]["signals"] == {"clears-blocker": 800}
 
 
@@ -125,7 +135,7 @@ def test_a_declared_blocks_edge_earns_clears_blocker_only_while_its_waiter_is_op
 ):
     (root / "ready" / "plain.md").write_text(_brief("plain", extra="blocks: [waiter]\n"))
     (root / waiter_folder / "waiter.md").write_text(_brief("waiter", status=waiter_folder))
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["plain"]["_why"]["signals"] == expected
 
 
@@ -134,7 +144,7 @@ def test_tasks_toml_overrides_one_matcher_and_one_weight(root):
         'name = "demo"\n[priority.signals.multiplier]\ntags = ["wave"]\n'
         "[priority.scope_weights.all]\nmultiplier = 10\n"
     )
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["plain"]["_why"]["signals"] == {"multiplier": 10}
     assert ranked["pr"]["_why"]["signals"] == {"multiplier": 10, "ships-pr": 800}
 
@@ -143,7 +153,7 @@ def test_a_bad_signal_table_falls_back_to_the_defaults(root, capsys):
     (root / "tasks.toml").write_text(
         'name = "demo"\n[priority.signals.multiplier]\nlabels = ["x"]\n'
     )
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["mult"]["_why"]["signals"] == {"multiplier": 1500}
     assert "unknown matcher(s) ['labels']" in capsys.readouterr().err
 

@@ -11,6 +11,7 @@ import project_view as pv
 import pytest
 import queue_snapshot as qs
 import rollup_model as rm
+from _paths import QueueBriefs
 
 from tests.remote_queue import PUSHED_AT, publish, snapshot
 
@@ -762,5 +763,5 @@ def test_a_milestone_row_without_a_text_id_is_named_and_left_out(
 def test_prioritise_ranks_an_extracted_snapshot_with_no_git_and_no_scripts(world: World) -> None:
     root = world.snapshot.root
     assert not (root / ".git").exists() and not (root / "scripts").exists()
-    ranked = prioritise.rank(root, today=dt.date(2026, 11, 19))
+    ranked = prioritise.rank(QueueBriefs.read(root), today=dt.date(2026, 11, 19))
     assert sorted(b["id"] for b in ranked) == ["b4", "b5"]

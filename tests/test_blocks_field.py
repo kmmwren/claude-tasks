@@ -4,6 +4,7 @@ import add_task
 import init_queue
 import prioritise
 import pytest
+from _paths import QueueBriefs
 from deps import load_queue
 
 TITLE = ["--title", "Fix the flaky fixture", "--context", "Found while shipping the importer."]
@@ -52,7 +53,7 @@ def test_an_open_brief_a_blocker_blocks_counts_as_an_unlock(queue):
     queue_with(
         queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("ready", "ship", brief("ship"))]
     )
-    assert prioritise.index_queue(queue)[1] == {"fix": 1}
+    assert prioritise.index_queue(QueueBriefs.read(queue))[1] == {"fix": 1}
 
 
 def test_a_done_brief_a_blocker_blocks_adds_no_unlock(queue):
@@ -63,7 +64,7 @@ def test_a_done_brief_a_blocker_blocks_adds_no_unlock(queue):
             ("done", "ship", brief("ship", status="done")),
         ],
     )
-    assert prioritise.index_queue(queue)[1] == {}
+    assert prioritise.index_queue(QueueBriefs.read(queue))[1] == {}
 
 
 def test_blocks_and_the_waiters_blockers_naming_the_same_pair_count_once(queue):
@@ -74,7 +75,7 @@ def test_blocks_and_the_waiters_blockers_naming_the_same_pair_count_once(queue):
             ("ready", "ship", brief("ship", blockers="[fix]")),
         ],
     )
-    assert prioritise.index_queue(queue)[1] == {"fix": 1}
+    assert prioritise.index_queue(QueueBriefs.read(queue))[1] == {"fix": 1}
 
 
 def test_the_wait_graph_has_a_blocks_edge_once(queue):
@@ -85,11 +86,13 @@ def test_the_wait_graph_has_a_blocks_edge_once(queue):
             ("ready", "ship", brief("ship", blockers="[fix]")),
         ],
     )
-    assert prioritise.WaitGraph.build(load_queue(queue)).waiters == {"fix": ("ship",)}
+    assert prioritise.WaitGraph.build(load_queue(QueueBriefs.read(queue))).waiters == {
+        "fix": ("ship",)
+    }
 
 
 def test_the_wait_graph_ignores_a_blocks_edge_to_a_parked_brief(queue):
     queue_with(
         queue, [("ready", "fix", brief("fix", blocks="[ship]")), ("parked", "ship", brief("ship"))]
     )
-    assert prioritise.WaitGraph.build(load_queue(queue)).waiters == {}
+    assert prioritise.WaitGraph.build(load_queue(QueueBriefs.read(queue))).waiters == {}

@@ -40,3 +40,9 @@ def test_with_section_replaces_the_body_and_marks_it_generated(tmp_path):
 def test_with_section_appends_a_missing_section(tmp_path):
     b = _brief(tmp_path).with_section("Constraints", "None.")
     assert b.text.endswith("## Constraints\n\nNone.\n")
+
+
+def test_load_inbox_leaves_out_a_brief_that_is_not_utf8(tmp_path):
+    root = make_inbox(tmp_path, {"a": inbox_text("a")})
+    (root / "inbox" / "bad.md").write_bytes(b"\xff\xfe\x00bad")
+    assert [b.id for b in load_inbox(root)] == ["a"]

@@ -10,6 +10,7 @@ import datetime
 
 import init_queue
 import prioritise
+from _paths import QueueBriefs
 from config import load_config
 
 TODAY = datetime.date(2026, 6, 2)
@@ -113,7 +114,7 @@ def test_index_queue_status_and_unlock_counts(tmp_path):
             ("done", "c.md", _brief("c", status="done")),
         ],
     )
-    status_by_id, unlocks = prioritise.index_queue(root)
+    status_by_id, unlocks = prioritise.index_queue(QueueBriefs.read(root))
     assert status_by_id["c"] == "done"
     assert status_by_id["a"] == "ready"
     assert unlocks["c"] == 2  # both a and b depend on c
@@ -199,7 +200,7 @@ def test_rank_orders_by_score_and_flags_actionable(tmp_path):
             ("ready", "needs.md", _brief("needs", importance="1", autonomy="needs-input")),
         ],
     )
-    ranked = prioritise.rank(root, today=TODAY)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY)
     ids = [b["id"] for b in ranked]
     assert ids[0] == "high"  # overdue + importance 1 ranks first
     by_id = {b["id"]: b for b in ranked}
@@ -215,7 +216,7 @@ def test_rank_marks_blocked_and_unlocks(tmp_path):
             ("ready", "blocked.md", _brief("blocked", blockers="[blocker]")),
         ],
     )
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["blocked"]["_blocked"] is True
     assert ranked["blocked"]["_actionable"] is False
     assert ranked["blocker"]["_unlocks"] == 1
@@ -231,7 +232,7 @@ def test_rank_unblocks_once_dependency_done(tmp_path):
             ("ready", "ok.md", _brief("ok", blockers="[dep]")),
         ],
     )
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert ranked["ok"]["_blocked"] is False
     assert ranked["ok"]["_actionable"] is True
 
@@ -239,7 +240,7 @@ def test_rank_unblocks_once_dependency_done(tmp_path):
 def test_rank_reads_tag_weights_from_config(tmp_path):
     root = _queue(tmp_path, [("ready", "f.md", _brief("f", tags="[frog]"))])
     (root / "tasks.toml").write_text('name = "demo"\n[priority]\ntag_weights = {frog = 400}\n')
-    ranked = prioritise.rank(root, today=TODAY)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY)
     assert ranked[0]["_score"] == prioritise.score({}, TODAY) + 400
 
 
@@ -253,7 +254,9 @@ def test_rank_context_filters(tmp_path):
     # mark it requires-local by appending the field
     p = root / "ready" / "local.md"
     p.write_text(p.read_text().replace("related: []", "related: []\nrequires-local: true"))
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY, context="cloud")}
+    ranked = {
+        b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY, context="cloud")
+    }
     assert ranked["local"]["_actionable"] is False
 
 
@@ -332,7 +335,7 @@ def test_not_before_in_the_future_is_not_actionable(tmp_path):
     held = _brief("held").replace("due: \n", "due: \nnot_before: 2026-06-05\n")
     started = _brief("started").replace("due: \n", "due: \nnot_before: 2026-06-02\n")
     root = _queue(tmp_path, [("ready", "held.md", held), ("ready", "started.md", started)])
-    by_id = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    by_id = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert by_id["held"]["_actionable"] is False
     assert "not before 2026-06-05" in prioritise._flags(by_id["held"])
     assert by_id["started"]["_actionable"] is True
@@ -387,7 +390,7 @@ def test_blocked_by_dependency_counts_as_unlock_and_is_met_when_done(tmp_path):
             ("ready", "w.md", _blocked_by_brief("w", "[dep]")),
         ],
     )
-    ranked = prioritise.rank(root, today=TODAY)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY)
     assert ranked[0]["_blocked"] is False
 
 
@@ -399,7 +402,7 @@ def test_blocked_folder_briefs_are_indexed_for_unlock_counts(tmp_path):
             ("blocked", "w.md", _blocked_by_brief("w", "[dep]")),
         ],
     )
-    status, unlocks = prioritise.index_queue(root)
+    status, unlocks = prioritise.index_queue(QueueBriefs.read(root))
     assert status["w"] == "blocked" and unlocks["dep"] == 1
 
 
@@ -534,7 +537,7 @@ def test_graph_counts_only_live_waiters(tmp_path):
             ("parked", "p.md", _blocked_by_brief("p", "[dep]")),
         ],
     )
-    assert prioritise.WaitGraph.build(load_queue(root)).waiters == {"dep": ("w",)}
+    assert prioritise.WaitGraph.build(load_queue(QueueBriefs.read(root))).waiters == {"dep": ("w",)}
 
 
 # ── wsjf: lanes and moves ─────────────────────────────────────────────────────
@@ -593,7 +596,7 @@ def test_a_zero_job_size_is_a_bad_setting(tmp_path, capsys):
     root = _queue(tmp_path, [("ready", "a.md", _brief("a"))])
     (root / "tasks.toml").write_text('name = "demo"\n[priority]\njob_size = { "" = 0 }\n')
     assert prioritise.Weights.from_config(load_config(root)).size("") == 3
-    assert prioritise.rank(root, today=TODAY)[0]["id"] == "a"
+    assert prioritise.rank(QueueBriefs.read(root), today=TODAY)[0]["id"] == "a"
     assert "job_size values must be positive" in capsys.readouterr().err
 
 
@@ -608,8 +611,8 @@ def test_rank_emits_both_scores_and_ranks_and_orders_by_the_chosen_scorer(tmp_pa
             ("ready", "quick.md", _brief("quick", importance="3", effort="xs")),
         ],
     )
-    additive = prioritise.rank(root, today=TODAY)
-    wsjf = prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+    additive = prioritise.rank(QueueBriefs.read(root), today=TODAY)
+    wsjf = prioritise.rank(QueueBriefs.read(root), today=TODAY, scorer=prioritise.Scorer.WSJF)
     assert [b["id"] for b in additive] == ["big", "quick"]
     assert [b["id"] for b in wsjf] == ["quick", "big"]
     assert wsjf[0]["_rank_wsjf"] == 1 and wsjf[0]["_rank_additive"] == 2
@@ -625,7 +628,7 @@ def test_config_scorer_key_switches_the_default(tmp_path):
         ],
     )
     (root / "tasks.toml").write_text('name = "demo"\n[priority]\nscorer = "wsjf"\n')
-    assert prioritise.rank(root, today=TODAY)[0]["id"] == "quick"
+    assert prioritise.rank(QueueBriefs.read(root), today=TODAY)[0]["id"] == "quick"
 
 
 def test_a_blocker_inherits_the_score_of_what_waits_on_it(tmp_path):
@@ -641,7 +644,7 @@ def test_a_blocker_inherits_the_score_of_what_waits_on_it(tmp_path):
             ),
         ],
     )
-    ranked = prioritise.rank(root, today=TODAY, scorer=prioritise.Scorer.WSJF)
+    ranked = prioritise.rank(QueueBriefs.read(root), today=TODAY, scorer=prioritise.Scorer.WSJF)
     chore = next(b for b in ranked if b["id"] == "chore")
     assert ranked[0]["id"] == "chore" and chore["_why"]["inherited"] > 0
     assert chore["_leverage"] == 1
@@ -717,7 +720,9 @@ def _no_id(text):
 def test_a_brief_with_no_id_field_takes_its_file_stem_as_id(tmp_path, monkeypatch, capsys):
     root = _queue(tmp_path, [("ready", "stemmed-brief.md", _no_id(_brief("x", importance="1")))])
     monkeypatch.setenv("CLAUDE_TASKS_DIR", str(root))
-    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["stemmed-brief"]
+    assert [b["id"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)] == [
+        "stemmed-brief"
+    ]
     prioritise.main(["--json"])
     import json
 
@@ -726,7 +731,7 @@ def test_a_brief_with_no_id_field_takes_its_file_stem_as_id(tmp_path, monkeypatc
 
 def test_an_empty_id_field_also_falls_back_to_the_file_stem(tmp_path):
     root = _queue(tmp_path, [("ready", "blank.md", _brief("x").replace("id: x", "id:"))])
-    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["blank"]
+    assert [b["id"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)] == ["blank"]
 
 
 def test_an_id_less_brief_is_a_dependency_target_under_its_stem(tmp_path):
@@ -737,7 +742,7 @@ def test_an_id_less_brief_is_a_dependency_target_under_its_stem(tmp_path):
             ("ready", "waiter.md", _brief("waiter", blockers="[stemmed]")),
         ],
     )
-    ranked = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
+    ranked = {b["id"]: b for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)}
     assert (ranked["stemmed"]["_unlocks"], ranked["stemmed"]["_leverage"]) == (1, 1)
 
 
@@ -785,4 +790,8 @@ def test_the_queue_order_of_tied_briefs_does_not_depend_on_file_names(tmp_path):
             ("ready", "3.md", _brief("b", effort="m")),
         ],
     )
-    assert [b["id"] for b in prioritise.rank(root, today=TODAY)] == ["a", "b", "c"]
+    assert [b["id"] for b in prioritise.rank(QueueBriefs.read(root), today=TODAY)] == [
+        "a",
+        "b",
+        "c",
+    ]

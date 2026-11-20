@@ -29,7 +29,7 @@ import tomllib
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
-from _paths import require_queue, resolve_root
+from _paths import QueueBriefs, require_queue, resolve_root
 from config import load_config
 from deps import Brief, load_queue
 
@@ -122,7 +122,7 @@ def progress(root: pathlib.Path, queue: list[Brief] | None = None) -> list[Miles
     specs = milestone_specs(root)
     if specs is None:
         return None
-    queue = load_queue(root) if queue is None else queue
+    queue = load_queue(QueueBriefs.read(root)) if queue is None else queue
     return [
         Milestone(m.id, m.title, _counts(members(queue, m.id, _of_brief)), m.release) for m in specs
     ]

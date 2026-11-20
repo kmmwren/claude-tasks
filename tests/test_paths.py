@@ -254,11 +254,26 @@ def test_read_briefs_names_a_bad_brief_as_shown(tmp_path, capsys):
     )
 
 
-def test_a_file_already_named_is_not_named_again_under_another_name(tmp_path, capsys):
-    folder = _folder_with_a_bad_brief(tmp_path)
-    _paths.read_briefs(folder, shown_as="S/ready")
-    _paths.read_briefs(folder)
-    assert capsys.readouterr().err.count("not valid UTF-8") == 1
+def test_queue_briefs_reads_every_folder_once_and_names_a_bad_brief_under_the_label(
+    tmp_path, capsys
+):
+    _folder_with_a_bad_brief(tmp_path)
+    briefs = _paths.QueueBriefs.read(tmp_path, shown_as="S")
+    assert set(briefs.folders) == set(_paths.TASK_DIRS)
+    assert [(d, b.path.name) for d, b in briefs.within(("done", "ready"))] == [
+        ("ready", "a.md"),
+        ("ready", "b.md"),
+    ]
+    assert (
+        capsys.readouterr().err
+        == "warning: S/ready/bad.md: is not valid UTF-8; that brief is skipped\n"
+    )
+
+
+def test_read_brief_names_a_bad_file_by_its_path_unless_told_otherwise(tmp_path, capsys):
+    bad = _folder_with_a_bad_brief(tmp_path) / "bad.md"
+    assert _paths.read_brief(bad) is None
+    assert capsys.readouterr().err == f"warning: {bad}: is not valid UTF-8; that brief is skipped\n"
 
 
 def test_the_same_message_about_another_copy_of_the_file_is_not_said_again(tmp_path, capsys):

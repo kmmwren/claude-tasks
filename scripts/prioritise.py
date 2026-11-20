@@ -50,7 +50,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from _paths import BriefFile, read_briefs, require_queue, resolve_root
+from _paths import BriefFile, QueueBriefs, require_queue, resolve_root
 from config import load_config_or_defaults
 from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
@@ -378,18 +378,17 @@ def wsjf_score(
     return factors(brief, today, leverage=leverage, weights=weights, scope_kind=scope_kind).total
 
 
-def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
+def index_queue(queue: QueueBriefs) -> tuple[dict[str, str], dict[str, int]]:
     """Map every brief id to its status folder, and count how many briefs depend on each id."""
     status_by_id: dict[str, str] = {}
     edges: set[tuple[str, str]] = set()
     blocks_edges: set[tuple[str, str]] = set()
-    for d in INDEX_DIRS:
-        for brief in read_briefs(root / d):
-            b = fm(brief.text)
-            bid = brief_id(b, brief.path.stem)
-            status_by_id[bid] = d
-            edges |= {(dep, bid) for dep in parse_deps(b)}
-            blocks_edges |= {(bid, waiter) for waiter in Brief(bid, d, b).blocks}
+    for d, brief in queue.within(INDEX_DIRS):
+        b = fm(brief.text)
+        bid = brief_id(b, brief.path.stem)
+        status_by_id[bid] = d
+        edges |= {(dep, bid) for dep in parse_deps(b)}
+        blocks_edges |= {(bid, waiter) for waiter in Brief(bid, d, b).blocks}
     # A `blocks:` edge only counts while the brief it names is still open.
     edges |= {(blocker, w) for blocker, w in blocks_edges if status_by_id.get(w) in LIVE_DIRS}
     unlocks: dict[str, int] = {}
@@ -489,7 +488,7 @@ class _RankContext:
     @classmethod
     def load(
         cls,
-        root: pathlib.Path,
+        briefs: QueueBriefs,
         today: datetime.date,
         context: str,
         scope: Scope,
@@ -497,7 +496,7 @@ class _RankContext:
         tag_weights: dict[str, int],
         fleet: FleetBlockers,
     ) -> "_RankContext":
-        queue = load_queue(root)
+        queue = load_queue(briefs)
         graph = WaitGraph.build(queue)
         depth = graph.depth()
         scored = {
@@ -513,7 +512,7 @@ class _RankContext:
             scope,
             weights,
             tag_weights,
-            index_queue(root)[1],
+            index_queue(briefs)[1],
             depth,
             scored,
             {b.id for b in queue if b.status == "done"},
@@ -634,16 +633,16 @@ def _load_fields(brief: BriefFile) -> dict[str, Any]:
     return fields
 
 
-def _brief_files(root: pathlib.Path, ids: frozenset[str] | None) -> list[BriefFile]:
+def _brief_files(queue: QueueBriefs, ids: frozenset[str] | None) -> list[BriefFile]:
     """ready/ briefs, or the named briefs wherever they are live."""
     if ids is None:
-        return read_briefs(root / "ready")
-    live = (brief for d in LIVE_DIRS for brief in read_briefs(root / d))
+        return list(queue.folders["ready"])
+    live = (brief for _, brief in queue.within(LIVE_DIRS))
     return [brief for brief in live if brief_id(fm(brief.text), brief.path.stem) in ids]
 
 
 def rank(
-    root: pathlib.Path,
+    queue: QueueBriefs,
     today: datetime.date | None = None,
     context: str = "",
     tag_weights: dict[str, int] | None = None,
@@ -654,6 +653,7 @@ def rank(
     config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The scope's ready/ briefs (or the named live ones), scored both ways, in the scorer's order."""
+    root = queue.root
     if config is None:  # read once here so a bad file warns once
         config = load_config_or_defaults(root, "prioritise")
     weights = weights or Weights.from_config(config)
@@ -661,8 +661,8 @@ def rank(
     tags = weights.tags if tag_weights is None else tag_weights
     fleet = FleetBlockers.from_config(root, config)
     today = today or datetime.date.today()
-    ctx = _RankContext.load(root, today, context, scope, weights, tags, fleet)
-    fields = [(brief.path, _load_fields(brief)) for brief in _brief_files(root, ids)]
+    ctx = _RankContext.load(queue, today, context, scope, weights, tags, fleet)
+    fields = [(brief.path, _load_fields(brief)) for brief in _brief_files(queue, ids)]
     items = [_annotate(f, b, ctx) for f, b in fields if scope.admits(subject(b))]
     chosen = scorer or weights.scorer
     for b in items:
@@ -760,7 +760,7 @@ def main(argv: list[str] | None = None) -> None:
     root = require_queue(pathlib.Path(a.root) if a.root else scope.root(resolve_root()))
     ids = frozenset(i.strip() for i in a.ids.split(",") if i.strip()) or None
     items = rank(
-        root,
+        QueueBriefs.read(root),
         context=a.context,
         scorer=Scorer(a.scorer) if a.scorer else None,
         scope=scope,

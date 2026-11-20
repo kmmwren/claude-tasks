@@ -13,6 +13,7 @@ import functools
 import pathlib
 import re
 
+from _paths import read_briefs
 from deps import fm, parse_list
 from readiness import EXECUTION_LOG, brief_missing_fields, raw_title, section
 from transition import set_field
@@ -84,5 +85,5 @@ class InboxBrief:
 
 def load_inbox(root: pathlib.Path) -> list[InboxBrief]:
     """Every structured brief in root/inbox, in id order; raw captures are left for the enrich skill."""
-    briefs = (InboxBrief(f, f.read_text()) for f in sorted((root / "inbox").glob("*.md")))
+    briefs = (InboxBrief(b.path, b.text) for b in read_briefs(root / "inbox"))
     return [b for b in briefs if b.structured]

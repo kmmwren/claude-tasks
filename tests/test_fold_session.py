@@ -10,6 +10,7 @@ import fold_session
 import git_sync
 import init_queue
 import pytest
+from _paths import QueueBriefs
 
 
 @pytest.fixture
@@ -173,7 +174,7 @@ def test_a_brief_without_frontmatter_moves_unchanged_when_ids_are_bumped(queues)
 
 
 def _parent_unmet(parent, brief_id):
-    queue = deps.load_queue(parent)
+    queue = deps.load_queue(QueueBriefs.read(parent))
     done = {b.id for b in queue if b.status == "done"}
     return deps.unmet(next(b for b in queue if b.id == brief_id), done)
 

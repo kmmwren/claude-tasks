@@ -29,7 +29,7 @@ import re
 import sys
 import threading
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 ENV_VAR = "CLAUDE_TASKS_DIR"
@@ -62,16 +62,15 @@ def is_brief(path: str | os.PathLike[str]) -> bool:
     return pure.suffix == ".md" and pure.parent.name in TASK_DIRS
 
 
-_SAID: set[str | pathlib.Path] = set()
+_SAID: set[str] = set()
 _SAID_LOCK = threading.Lock()
 
 
-def warn_once(message: str, about: pathlib.Path | None = None, prefix: str = "warning") -> None:
-    """`warn`, unless this message, or one `about` the same file, was already said in this process."""
-    keys: set[str | pathlib.Path] = {message} if about is None else {message, about}
+def warn_once(message: str, prefix: str = "warning") -> None:
+    """`warn`, unless this message was already said in this process."""
     with _SAID_LOCK:
-        repeat = not keys.isdisjoint(_SAID)
-        _SAID.update(keys)
+        repeat = message in _SAID
+        _SAID.add(message)
     if not repeat:
         warn(message, prefix)
 
@@ -82,9 +81,9 @@ def forget_warnings() -> None:
         _SAID.clear()
 
 
-def warn_undecodable(path: pathlib.Path, shown_as: str, consequence: str) -> None:
+def warn_undecodable(shown_as: str, consequence: str) -> None:
     """Name a file that is not UTF-8 once, as `shown_as`, and what was done without it."""
-    warn_once(f"{shown_as}: is not valid UTF-8; {consequence}", about=path)
+    warn_once(f"{shown_as}: is not valid UTF-8; {consequence}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -96,18 +95,36 @@ class BriefFile:
 def read_briefs(folder: pathlib.Path, shown_as: str | None = None) -> list[BriefFile]:
     """The briefs in `folder` by name, each read once; one that is not UTF-8 is left out and named once."""
     found = (
-        _read_brief(path, f"{shown_as or folder}/{path.name}")
+        read_brief(path, f"{shown_as or folder}/{path.name}")
         for path in sorted(folder.glob("*.md"))
     )
     return [brief for brief in found if brief is not None]
 
 
-def _read_brief(path: pathlib.Path, shown_as: str) -> BriefFile | None:
+def read_brief(path: pathlib.Path, shown_as: str | None = None) -> BriefFile | None:
+    """The brief at `path`, or None, named once, when it is not UTF-8."""
     try:
         return BriefFile(path, path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        warn_undecodable(path, shown_as, "that brief is skipped")
+        warn_undecodable(shown_as or str(path), "that brief is skipped")
         return None
+
+
+@dataclasses.dataclass(frozen=True)
+class QueueBriefs:
+    """A queue's briefs in every state folder, read once and shared by every reader of that queue."""
+
+    root: pathlib.Path
+    folders: Mapping[str, tuple[BriefFile, ...]]
+
+    @classmethod
+    def read(cls, root: pathlib.Path, shown_as: str | None = None) -> "QueueBriefs":
+        label = shown_as or str(root)
+        return cls(root, {d: tuple(read_briefs(root / d, f"{label}/{d}")) for d in TASK_DIRS})
+
+    def within(self, folders: Iterable[str]) -> Iterator[tuple[str, BriefFile]]:
+        """Each brief in `folders`, folder by folder, with the folder it sits in."""
+        return ((d, brief) for d in folders for brief in self.folders[d])
 
 
 def strip_comment(value: str) -> str:

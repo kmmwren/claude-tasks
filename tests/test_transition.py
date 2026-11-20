@@ -1247,3 +1247,9 @@ def test_a_move_whose_only_if_turns_false_under_the_lock_is_refused(root):
     with pytest.raises(ValueError, match="changed while waiting for the lock"):
         transition.move_brief("rotate-the-api-key", "done", root, only_if=lambda: False)
     assert (root / "ready" / "rotate-the-api-key.md").exists()
+
+
+def test_resolve_skips_a_brief_that_is_not_utf8(root):
+    (root / "ready" / "staging-bad.md").write_bytes(b"\xff\xfe\x00staging")
+    hits = transition.resolve_brief("staging", root)
+    assert all(hit["path"].name != "staging-bad.md" for hit in hits)

@@ -5,6 +5,7 @@ import datetime as dt
 import facts
 import project_view as pv
 import pytest
+from _paths import QueueBriefs
 
 from tests.project_fixtures import make_queue
 
@@ -81,9 +82,13 @@ def test_a_red_recorded_build_is_listed_before_the_queue_signals(tmp_path):
     q = make_queue(tmp_path, due='due = "2026-10-20"\n')
     q.joinpath("done/b1.md").rename(q / "in-progress" / "b1.md")
     rows = pv.milestone_rows(
-        pv.listed_milestones(q, pv.read_project(q)["milestones"]), pv.project_briefs(q), NOW.date()
+        pv.listed_milestones(q, pv.read_project(q)["milestones"]),
+        pv.project_briefs(QueueBriefs.read(q)),
+        NOW.date(),
     )
-    got = pv.computed_floor(rows, pv.project_briefs(q), pv.Signals(now=NOW), ci_row("red"))
+    got = pv.computed_floor(
+        rows, pv.project_briefs(QueueBriefs.read(q)), pv.Signals(now=NOW), ci_row("red")
+    )
     assert [s["signal"] for s in got] == ["red CI", "missed milestone date"]
 
 

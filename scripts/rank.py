@@ -27,7 +27,7 @@ from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _concurrency import atomic_write  # noqa: E402
-from _paths import require_queue, resolve_root  # noqa: E402
+from _paths import read_brief, require_queue, resolve_root  # noqa: E402
 from deps import fm, parse_list  # noqa: E402
 from headless import rank_table, resolve_launch  # noqa: E402
 from judge import (  # noqa: E402
@@ -129,9 +129,12 @@ def pinned_blocker(row: Mapping[str, Any]) -> str:
 def load_brief(root: pathlib.Path, row: Mapping[str, Any]) -> QueueBrief | None:
     """None when another session moved the brief out of ready/ after the filter listed it."""
     try:
-        text = (root / "ready" / str(row.get("file") or f"{row['id']}.md")).read_text()
+        brief = read_brief(root / "ready" / str(row.get("file") or f"{row['id']}.md"))
     except FileNotFoundError:
         return None
+    if brief is None:
+        return None
+    text = brief.text
     meta = fm(text)
     return QueueBrief(
         str(row["id"]),

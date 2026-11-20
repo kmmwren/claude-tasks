@@ -15,10 +15,9 @@ vendor). It never resolves by itself; `unblock.py resolve` clears it explicitly.
 """
 
 import dataclasses
-import pathlib
 import re
 
-from _paths import TASK_DIRS, read_briefs, strip_comment
+from _paths import TASK_DIRS, QueueBriefs, strip_comment
 
 EXTERNAL_PREFIX = "external:"
 BRIEF_DIRS = tuple(d for d in TASK_DIRS if d != "inbox")
@@ -160,13 +159,12 @@ class Brief:
         return set(re.findall(r"[\w-]+", self.fields.get("blockers", "") or ""))
 
 
-def load_queue(root: pathlib.Path) -> list[Brief]:
+def load_queue(queue: QueueBriefs) -> list[Brief]:
     """Every brief across the lifecycle folders. A folder that does not exist is empty."""
     out: list[Brief] = []
-    for d in BRIEF_DIRS:
-        for brief in read_briefs(root / d):
-            fields = fm(brief.text)
-            out.append(Brief(brief_id(fields, brief.path.stem), d, fields, fm_repeated(brief.text)))
+    for d, brief in queue.within(BRIEF_DIRS):
+        fields = fm(brief.text)
+        out.append(Brief(brief_id(fields, brief.path.stem), d, fields, fm_repeated(brief.text)))
     return out
 
 
