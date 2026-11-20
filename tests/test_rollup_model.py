@@ -65,13 +65,17 @@ class QueueSpec:
             path.write_text(text)
 
 
+def build(label: str, snap: qs.QueueSnapshot, now: dt.datetime) -> rm.Project:
+    return rm.project_of(rm.QueueRead.load(label, snap, now))
+
+
 def pushed(tmp_path: pathlib.Path, spec: QueueSpec) -> qs.QueueSnapshot:
     tmp_path.mkdir(parents=True, exist_ok=True)
     return snapshot(publish(tmp_path, spec.write), tmp_path / "cache")
 
 
 def built(tmp_path: pathlib.Path, spec: QueueSpec, now: dt.datetime = NOW) -> rm.Project:
-    return rm.build_project(SOURCE, pushed(tmp_path, spec), now)
+    return build(SOURCE, pushed(tmp_path, spec), now)
 
 
 GREEN = 'colour = "green"\nreason = "On course."\nset_by = "Owner"\nset_on = "{set_on}"\n'
@@ -216,7 +220,7 @@ class World(NamedTuple):
 def world(tmp_path_factory: pytest.TempPathFactory) -> World:
     spec = QueueSpec(WORLD_PROJECT, WORLD_BRIEFS, WORLD_FILES)
     snap = pushed(tmp_path_factory.mktemp("world"), spec)
-    return World(snap, rm.build_project(SOURCE, snap, NOW))
+    return World(snap, build(SOURCE, snap, NOW))
 
 
 # --- the project and its stamp -------------------------------------------------------------
@@ -249,11 +253,11 @@ def test_every_section_is_stamped_with_the_same_commit(world: World) -> None:
 
 def test_a_cached_snapshot_is_stamped_stale(world: World) -> None:
     offline = dataclasses.replace(world.snapshot, stale=True)
-    assert rm.build_project(SOURCE, offline, NOW).as_at.table()["stale"] is True
+    assert build(SOURCE, offline, NOW).as_at.table()["stale"] is True
 
 
 def test_the_same_snapshot_always_gives_the_same_model(world: World) -> None:
-    assert rm.build_project(SOURCE, world.snapshot, NOW) == world.project
+    assert build(SOURCE, world.snapshot, NOW) == world.project
 
 
 def test_the_ask_reads_with_its_deadline(world: World) -> None:
@@ -451,7 +455,7 @@ def at(day: str) -> dt.datetime:
 def test_lateness_counts_from_the_first_day_past_the_first_date(
     world: World, today: str, late: int, missed: bool
 ) -> None:
-    project = rm.build_project(SOURCE, world.snapshot, at(today))
+    project = build(SOURCE, world.snapshot, at(today))
     m2 = next(m for m in project.milestones if m.id == "m2")
     assert (m2.late_days, m2.missed) == (late, missed)
 
@@ -460,13 +464,13 @@ def test_lateness_counts_from_the_first_day_past_the_first_date(
 def test_owner_health_goes_stale_on_the_seventh_day(
     world: World, today: str, age: int, stale: bool
 ) -> None:
-    health = rm.build_project(SOURCE, world.snapshot, at(today)).health
+    health = build(SOURCE, world.snapshot, at(today)).health
     assert (health.age_days, health.stale) == (age, stale)
 
 
 @pytest.mark.parametrize("today, listed", [("2026-11-26", True), ("2026-11-27", False)])
 def test_a_brief_stays_shipped_for_fourteen_days(world: World, today: str, listed: bool) -> None:
-    shipped = rm.build_project(SOURCE, world.snapshot, at(today)).shipped
+    shipped = build(SOURCE, world.snapshot, at(today)).shipped
     assert ("b1" in [b.id for b in shipped]) is listed
 
 
@@ -502,13 +506,14 @@ def test_an_unreadable_tasks_toml_falls_back_to_utc_and_says_which_file(
 ) -> None:
     m = built(tmp_path, zone_spec("timezone = [unterminated\n")).milestones[0]
     assert (m.late_days, m.missed) == (0, False)
-    assert "tasks.toml (" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert f"cannot read {SOURCE}/tasks.toml (" in err and err.count("cannot read") == 1
 
 
 # --- health --------------------------------------------------------------------------------
 
 
-def test_owner_health_is_capped_by_the_automatic_checks_and_says_so(world: World) -> None:
+def test_owner_health_is_capped_by_the_automatic_checks(world: World) -> None:
     health = world.project.health
     assert (health.owner, health.effective, health.set_on) == ("green", "red", "2026-11-10")
     assert (health.stale, health.age_days) == (True, 9)
@@ -562,7 +567,7 @@ def test_a_statement_with_no_date_never_goes_stale_and_is_capped_without_one(
     assert (health.owner, health.effective) == ("green", "red")
 
 
-def test_an_undated_statement_that_stands_says_it_was_set_by_the_owner(
+def test_an_undated_statement_that_stands_keeps_the_owners_word(
     tmp_path: pathlib.Path,
 ) -> None:
     undated = '[health]\ncolour = "green"\nreason = "Fine"\n'
@@ -721,7 +726,7 @@ def test_a_queue_with_no_project_file_raises(tmp_path: pathlib.Path) -> None:
     snap = pushed(tmp_path, spec)
     (snap.root / "project.toml").unlink()
     with pytest.raises(pv.ProjectConfigError, match="does not exist"):
-        rm.build_project(SOURCE, snap, NOW)
+        build(SOURCE, snap, NOW)
 
 
 def test_a_config_error_from_the_milestone_rows_is_not_swallowed(
@@ -732,7 +737,7 @@ def test_a_config_error_from_the_milestone_rows_is_not_swallowed(
 
     monkeypatch.setattr(pv, "milestone_rows", refuse)
     with pytest.raises(pv.ProjectConfigError, match="refused"):
-        rm.build_project(SOURCE, world.snapshot, NOW)
+        build(SOURCE, world.snapshot, NOW)
 
 
 def test_milestones_that_are_not_a_list_are_named_and_left_out(

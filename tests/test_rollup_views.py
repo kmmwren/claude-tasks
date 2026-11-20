@@ -225,8 +225,7 @@ def writer(files: Mapping[str, str]) -> Callable[[pathlib.Path], None]:
 def entry(tmp_path: pathlib.Path, label: str, files: Mapping[str, str]) -> rv.Entry:
     tmp_path.mkdir(parents=True, exist_ok=True)
     snap = snapshot(publish(tmp_path, writer(files)), tmp_path / "cache")
-    project = rm.build_project(label, snap, NOW)
-    return rv.Entry(project, rv.QueueBoard.read(snap, project))
+    return rv.Entry.read(label, snap, NOW)
 
 
 @pytest.fixture(scope="module")
@@ -746,3 +745,11 @@ def test_a_project_without_milestones_says_so_in_its_stage_line_and_grid(atlas: 
     bare = dataclasses.replace(atlas.project, milestones=())
     assert rv.stage_line(bare) == rv.NO_MILESTONES
     assert rv.milestone_grid(bare) == rv.paragraph(rv.NO_MILESTONES)
+
+
+def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entry(tmp_path, ALPHA, {**ATLAS_FILES, "tasks.toml": "name = [unterminated\n"})
+    err = capsys.readouterr().err
+    assert f"cannot read {ALPHA}/tasks.toml (" in err and err.count("cannot read") == 1

@@ -36,8 +36,8 @@
   offline it shows the newest cached copy with a "Source warnings" line giving its as-at time, and
   with no cache it is listed under "Not shown". Unpushed work does not appear. `serve` reads every
   source on each request.
-- **The roll-up model is `rollup_model.py`'s.** `rollup.py` builds projects with `build_project` and
-  its `Project`, `Health`, `MilestoneSummary`, `Stage` and `Ask`; the behind-upstream check,
+- **The roll-up model is `rollup_model.py`'s.** `rollup.py` reads each queue snapshot once with
+  `rollup_views.Entry.read`, which builds the project and its board from one `QueueRead`, and uses its `Project`, `Health`, `MilestoneSummary`, `Stage` and `Ask`; the behind-upstream check,
   `find_queues`, `BehindCounts` and the contribution rules are removed. The JSON stays
   `claude-tasks.rollup/v1`: `behind` is kept as an always-empty object on each warning, each project
   gains `as_at` (`sha`, `committed`, `stale`), and a project's slug falls back to its source label.
@@ -171,7 +171,8 @@
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".
-  A rank reads the file once, so it warns once, naming the file.
+  A rank reads the file once, and the roll-up reads it once per queue and hands it to the rank, so each
+  queue warns once, naming the file as `<source label>/tasks.toml` rather than its cache path.
 - **Roll-up omission messages no longer carry the local queue path.** A queue that cannot be read is
   named by its repository and queue path only.
 - **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits

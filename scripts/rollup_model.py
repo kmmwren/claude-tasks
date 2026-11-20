@@ -324,13 +324,13 @@ class Project:
 # --- reading a snapshot --------------------------------------------------------------------
 
 
-def _zone(queue: pathlib.Path) -> zoneinfo.ZoneInfo:
+def _zone(settings: dict[str, Any], label: str) -> zoneinfo.ZoneInfo:
     """The queue's own `timezone`, UTC when unset or unusable."""
-    name = str(load_config_or_defaults(queue, "rollup")["timezone"])
+    name = str(settings["timezone"])
     try:
         return zoneinfo.ZoneInfo(name)
     except (KeyError, ValueError):  # an unknown zone name is a KeyError subclass
-        warn(f"{queue / 'tasks.toml'}: timezone {name!r} is not a known zone; using UTC")
+        warn(f"{label}/tasks.toml: timezone {name!r} is not a known zone; using UTC")
         return zoneinfo.ZoneInfo("UTC")
 
 
@@ -360,7 +360,8 @@ class QueueRead:
     queue: pathlib.Path
     as_at: AsAt
     now: dt.datetime  # in the queue's own timezone
-    cfg: dict[str, Any]
+    settings: dict[str, Any]  # tasks.toml
+    cfg: dict[str, Any]  # project.toml
     briefs: list[dict[str, Any]]
     blockers: dict[str, tuple[str, ...]]
     recorded: Mapping[str, facts.BriefFacts]
@@ -371,12 +372,14 @@ class QueueRead:
     @classmethod
     def load(cls, label: str, snapshot: QueueSnapshot, now: dt.datetime) -> "QueueRead":
         queue = snapshot.root
+        settings = load_config_or_defaults(queue, "rollup", f"{label}/tasks.toml")
         cfg = pv.read_project(queue)
         return cls(
             label,
             queue,
             AsAt.of(snapshot),
-            now.astimezone(_zone(queue)),
+            now.astimezone(_zone(settings, label)),
+            settings,
             cfg,
             pv.project_briefs(queue),
             open_blockers(queue),
@@ -478,9 +481,8 @@ def _shipped_by_release(
     )
 
 
-def build_project(label: str, snapshot: QueueSnapshot, now: dt.datetime) -> Project:
-    """The whole model for one queue snapshot; raises ProjectConfigError for a project it cannot read."""
-    read = QueueRead.load(label, snapshot, now)
+def project_of(read: QueueRead) -> Project:
+    """The whole model for one snapshot read; raises ProjectConfigError for a project it cannot read."""
     rows = pv.milestone_rows(
         pv.listed_milestones(read.queue, read.cfg.get("milestones", [])), read.briefs, read.today
     )
@@ -494,8 +496,8 @@ def build_project(label: str, snapshot: QueueSnapshot, now: dt.datetime) -> Proj
     milestones = _milestones(read, rows, by_id)
     project = read.cfg["project"]
     return Project(
-        label,
-        _slug(project, read.queue, label),
+        read.label,
+        _slug(project, read.queue, read.label),
         project["title"],
         project["outcome"],
         read.meta.initiative or "",

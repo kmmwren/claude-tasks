@@ -31,7 +31,6 @@ import rollup_views as rv
 from _concurrency import atomic_write
 from _paths import PROJECT_MARKER, is_queue, resolve_root, warn
 from queue_snapshot import QueueSnapshot, SnapshotUnavailable, read_queue
-from rollup_model import build_project
 
 CONFIG_ENV = "CLAUDE_TASKS_ROLLUP_CONFIG"
 DEFAULT_CONFIG = "~/.config/claude-tasks/rollup.toml"
@@ -224,8 +223,7 @@ def entry_or_omission(
     source: Source, snapshot: QueueSnapshot, now: dt.datetime
 ) -> rv.Entry | rv.Omission:
     try:
-        project = build_project(source.label, snapshot, now)
-        return rv.Entry(project, rv.QueueBoard.read(snapshot, project))
+        return rv.Entry.read(source.label, snapshot, now)
     except (pv.ProjectConfigError, tomllib.TOMLDecodeError) as e:
         return source.omission(_inside(str(e), snapshot.root))
     except OSError as e:

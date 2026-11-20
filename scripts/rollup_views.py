@@ -119,10 +119,9 @@ class BacklogGroup:
     briefs: tuple[rm.BriefSummary, ...]
 
 
-def _ready(
-    root: Any, today: dt.date, waiting: dict[str, tuple[str, ...]]
-) -> tuple[RankedBrief, ...]:
-    ranked = prioritise.rank(root, today=today)
+def _ready(read: rm.QueueRead) -> tuple[RankedBrief, ...]:
+    today, waiting = read.today, read.blockers
+    ranked = prioritise.rank(read.queue, today=today, config=read.settings)
     items = [
         RankedBrief.of(place, raw, today, waiting.get(raw["id"], ()))
         for place, raw in enumerate(ranked, 1)
@@ -174,14 +173,12 @@ class QueueBoard:
     backlog: tuple[BacklogGroup, ...]
 
     @classmethod
-    def read(cls, snapshot: QueueSnapshot, project: rm.Project) -> "QueueBoard":
-        waiting = rm.open_blockers(snapshot.root)
-        briefs = pv.project_briefs(snapshot.root)
+    def read(cls, read: rm.QueueRead, project: rm.Project) -> "QueueBoard":
         return cls(
             project.as_at,
-            _ready(snapshot.root, project.today, waiting),
-            _gaps(snapshot.root, briefs),
-            _backlog(project, briefs, waiting),
+            _ready(read),
+            _gaps(read.queue, read.briefs),
+            _backlog(project, read.briefs, read.blockers),
         )
 
     @property
@@ -197,6 +194,13 @@ class QueueBoard:
 class Entry:
     project: rm.Project
     board: QueueBoard
+
+    @classmethod
+    def read(cls, label: str, snapshot: QueueSnapshot, now: dt.datetime) -> "Entry":
+        """One queue's project and board, from a single read of its snapshot."""
+        read = rm.QueueRead.load(label, snapshot, now)
+        project = rm.project_of(read)
+        return cls(project, QueueBoard.read(read, project))
 
     @property
     def title(self) -> str:

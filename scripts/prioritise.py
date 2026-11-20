@@ -651,9 +651,11 @@ def rank(
     scorer: Scorer | None = None,
     scope: Scope | None = None,
     ids: frozenset[str] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The scope's ready/ briefs (or the named live ones), scored both ways, in the scorer's order."""
-    config = load_config_or_defaults(root, "prioritise")  # read once so a bad file warns once
+    if config is None:  # read once here so a bad file warns once
+        config = load_config_or_defaults(root, "prioritise")
     weights = weights or Weights.from_config(config)
     scope = scope or AllScope("")
     tags = weights.tags if tag_weights is None else tag_weights

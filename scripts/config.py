@@ -33,10 +33,15 @@ def load_config(root: str | os.PathLike[str]) -> dict[str, Any]:
     return cfg
 
 
-def load_config_or_defaults(root: str | os.PathLike[str], reader: str) -> dict[str, Any]:
-    """`load_config`, but an unreadable tasks.toml warns under `reader` and yields the defaults."""
+def load_config_or_defaults(
+    root: str | os.PathLike[str], reader: str, shown_as: str = ""
+) -> dict[str, Any]:
+    """`load_config`, but an unreadable tasks.toml warns under `reader` and yields the defaults.
+
+    `shown_as` names the file in that warning when its real path means nothing to the reader."""
     try:
         return load_config(root)
     except (OSError, ValueError) as e:
-        warn(f"cannot read {pathlib.Path(root) / 'tasks.toml'} ({e}); using the defaults", reader)
+        shown = shown_as or pathlib.Path(root) / "tasks.toml"
+        warn(f"cannot read {shown} ({e}); using the defaults", reader)
         return dict(DEFAULTS)

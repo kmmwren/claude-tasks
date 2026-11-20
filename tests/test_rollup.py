@@ -761,7 +761,7 @@ def test_any_read_failure_skips_the_queue_naming_the_error(tmp_path, monkeypatch
     def fail(*_args):
         raise error
 
-    monkeypatch.setattr(rollup, "build_project", fail)
+    monkeypatch.setattr(rollup.rv.Entry, "read", fail)
     [omitted] = rollup.build(only_source(tmp_path), NOW).omitted
     assert omitted.reason.startswith(type(error).__name__)
 
