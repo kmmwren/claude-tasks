@@ -5,6 +5,7 @@ decides where, from (1) an env var, (2) a project-local .tasks/ found by walking
 (3) the ~/tasks default. require_queue refuses to operate on an uninitialised directory.
 """
 
+import io
 import time
 
 import _paths
@@ -367,3 +368,18 @@ def test_warn_once_from_many_threads_says_it_once(capsys):
     for thread in threads:
         thread.join()
     assert capsys.readouterr().err == "warning: race\n"
+
+
+def _stdin_of(monkeypatch, data: bytes) -> None:
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(data), encoding="ascii"))
+
+
+def test_read_stdin_makes_every_line_ending_a_newline_as_text_mode_does(monkeypatch):
+    _stdin_of(monkeypatch, "café\r\nb\rc\n".encode())
+    assert _paths.read_stdin() == "café\nb\nc\n"
+
+
+def test_read_stdin_that_is_not_utf8_exits_naming_the_byte(monkeypatch):
+    _stdin_of(monkeypatch, b"ok\xff")
+    with pytest.raises(SystemExit, match="standard input is not valid UTF-8 .* at byte 2"):
+        _paths.read_stdin()

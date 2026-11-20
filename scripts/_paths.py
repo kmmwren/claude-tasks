@@ -23,6 +23,7 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 
 # isort: split
 import dataclasses
+import io
 import os
 import pathlib
 import re
@@ -179,8 +180,12 @@ class QueueBriefs:
 
 
 def read_stdin() -> str:
-    """Standard input decoded as UTF-8, whatever encoding the locale gives `sys.stdin`."""
-    return sys.stdin.buffer.read().decode("utf-8")
+    """Standard input decoded as UTF-8 whatever the locale, with line endings made `\\n` as text mode does."""
+    try:
+        text = sys.stdin.buffer.read().decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise SystemExit(f"standard input is not valid UTF-8 ({err.reason} at byte {err.start})")
+    return io.StringIO(text, newline=None).read()
 
 
 def strip_comment(value: str) -> str:

@@ -263,7 +263,6 @@ def _bytes_of(*roots):
         ("child", "ready/bad.md"),
         ("child", "inbox/bad.md"),
         ("child", "done/bad.md"),
-        ("child", "facts/a.toml"),
         ("parent", "done/bad.md"),
         ("parent", "ready/bad.md"),
         ("parent", "parked/bad.md"),
@@ -282,6 +281,17 @@ def test_a_file_the_fold_reads_that_is_not_utf8_stops_it_before_anything_is_writ
     assert _bytes_of(parent, child) == before
     assert config.load_config(child)["session"]["lifecycle"] == "session"
     assert _paths.binding_path("s1", env).exists()
+
+
+def test_a_moved_briefs_facts_file_that_is_not_utf8_stays_behind_with_a_warning(queues, capsys):
+    parent, child, env = queues
+    (child / "facts").mkdir(exist_ok=True)
+    (child / "facts" / "a.toml").write_bytes(NOT_UTF8)
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "ready" / "a.md").exists()
+    assert not (parent / "facts" / "a.toml").exists()
+    assert (child / "facts" / "a.toml").read_bytes() == NOT_UTF8
+    assert "a.toml: is not valid UTF-8; it was not carried" in capsys.readouterr().err
 
 
 def test_a_facts_file_no_moved_brief_owns_is_not_read_so_does_not_stop_the_fold(queues):

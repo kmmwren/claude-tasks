@@ -7,8 +7,9 @@ Every brief outside done/ moves to the same status folder in the queue named by
 lifecycle becomes "folded" and the session's binding is removed, so later runs in that
 session resolve as usual. A brief renamed on a name clash gets its id: and the references to it
 among the folded briefs rewritten; done briefs the moved ones depend on are copied into the
-parent's done/. A brief or facts file the fold reads that is not UTF-8 stops it before anything
-is written. Safe to run twice.
+parent's done/. A brief the fold reads that is not UTF-8 stops it before anything is written; a
+facts file that is not UTF-8 stays behind with a warning, like one the parent already has. Safe to
+run twice.
 
 Usage:
   python scripts/fold_session.py ~/q/s1
@@ -30,6 +31,7 @@ from _paths import (
     binding_path,
     require_queue,
     warn,
+    warn_undecodable,
 )
 from config import load_config
 from deps import BRIEF_DIRS, Brief, brief_id, fm, load_queue
@@ -90,37 +92,25 @@ class SessionQueue:
             renames = {
                 _brief_id(m.brief): m.dest.stem for m in moves if m.dest.stem != m.source.stem
             }
-            for move in moves:
-                self._move(move, renames)
-            self._carry_done_prerequisites(moves, session, parent)
+            folded = [self._move(move, renames) for move in moves]
+            self._carry_done_prerequisites(folded, session, parent)
             self._mark_folded()
         binding.unlink(missing_ok=True)
         self._sync(moves)
         return moves
 
     def _require_utf8(self, session: QueueBriefs, parent: QueueBriefs) -> None:
-        """Stop before the first write if a file the fold reads is not UTF-8, so no fold is left half done."""
-        bad = [
-            *session.undecodable(TASK_DIRS),
-            *self._undecodable_facts(session),
-            *parent.undecodable(BRIEF_DIRS),
-        ]
+        """Stop before the first write if a brief the fold reads is not UTF-8, so no fold is left half done."""
+        bad = [*session.undecodable(TASK_DIRS), *parent.undecodable(BRIEF_DIRS)]
         if bad:
             raise SystemExit(f"Not valid UTF-8, so nothing was folded: {', '.join(map(str, bad))}")
-
-    def _undecodable_facts(self, session: QueueBriefs) -> Iterator[pathlib.Path]:
-        """The facts files of the briefs being moved that are not UTF-8; no other facts file is read."""
-        for brief in self.open_briefs(session):
-            path = facts_path(self.root, _brief_id(brief))
-            if path.exists() and not _is_utf8(path):
-                yield path
 
     def _reserve(self, brief: BriefFile) -> Move:
         target = self.fold_to / brief.path.parent.name
         name = reserve_name(target, brief.path.stem, [self.fold_to / d for d in TASK_DIRS])
         return Move(brief, target / f"{name}.md")
 
-    def _move(self, move: Move, renames: Mapping[str, str]) -> None:
+    def _move(self, move: Move, renames: Mapping[str, str]) -> BriefFile:
         text = move.brief.text
         old_id = _brief_id(move.brief)
         new_id = renames.get(old_id, old_id)
@@ -132,6 +122,7 @@ class SessionQueue:
             move.source,
             f"---\nmoved_to: {move.dest}\n---\n\nFolded when session {self.id} ended.\n",
         )
+        return BriefFile(move.dest, text)
 
     def _carry_facts(self, old_id: str, new_id: str) -> None:
         """Move a brief's facts file to the parent under its new id, so the facts follow the brief."""
@@ -141,22 +132,27 @@ class SessionQueue:
         if dest.exists():
             warn(f"{dest} already exists; {source} was not carried")
             return
-        atomic_write(dest, _retarget_facts(source.read_text(encoding="utf-8"), new_id))
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            warn_undecodable(str(source), "it was not carried")
+            return
+        atomic_write(dest, _retarget_facts(text, new_id))
         source.unlink()
 
     def _carry_done_prerequisites(
-        self, moves: list[Move], session: QueueBriefs, parent: QueueBriefs
+        self, folded: list[BriefFile], session: QueueBriefs, parent: QueueBriefs
     ) -> None:
         """Copy done briefs the moved ones depend on, since the parent only counts its own done/ as met."""
         wanted: set[str] = set()
         counted = {b.id for b in load_queue(parent)}
-        for move in moves:
-            fields = fm(move.dest.read_text(encoding="utf-8"))
+        for moved in folded:
+            fields = fm(moved.text)
             brief = Brief("", "", fields)
             wanted |= brief.declared_ids | brief.legacy_tokens
             # `parent` was read before the moves, so the moved briefs it now counts are added here.
-            if move.dest.parent.name in BRIEF_DIRS:
-                counted.add(brief_id(fields, move.dest.stem))
+            if moved.path.parent.name in BRIEF_DIRS:
+                counted.add(brief_id(fields, moved.path.stem))
         for done in session.folder("done"):
             if _brief_id(done) in wanted - counted:
                 atomic_write(self._reserve(done).dest, done.text)
@@ -172,14 +168,6 @@ class SessionQueue:
         for root in (self.fold_to, self.root):
             if owns_repo(root):
                 sync_commit(message, root, paths=(".",))
-
-
-def _is_utf8(path: pathlib.Path) -> bool:
-    try:
-        path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 def _brief_id(brief: BriefFile) -> str:
