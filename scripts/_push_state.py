@@ -56,9 +56,9 @@ class PushState:
     def take_report(self) -> str:
         """What the last detached pusher logged, cleared on read; empty when the log cannot be read."""
         try:
-            report = self.log_path.read_text(errors="replace").strip()
+            report = self.log_path.read_text(errors="replace", encoding="utf-8").strip()
             if report:
-                self.log_path.write_text("")
+                self.log_path.write_text("", encoding="utf-8")
         except FileNotFoundError:
             return ""
         except OSError as e:

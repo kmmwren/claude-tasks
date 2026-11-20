@@ -211,7 +211,7 @@ class ProposalStore:
         path = self.dir / f"{proposal_id}.json"
         if not path.is_file():
             raise SystemExit(f"no proposal {proposal_id}")
-        return Proposal.from_dict(json.loads(path.read_text()))
+        return Proposal.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def snapshot(self, profile: Profile) -> None:
         atomic_write(self.dir / "profiles" / f"{profile.version}.md", render(profile))
@@ -220,7 +220,7 @@ class ProposalStore:
         path = self.dir / "profiles" / f"{version}.md"
         if not path.is_file():
             raise SystemExit(f"no snapshot of profile version {version}")
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
 
 def current(root: pathlib.Path) -> Profile:

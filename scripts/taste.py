@@ -155,4 +155,4 @@ def profile_path(root: pathlib.Path) -> pathlib.Path:
 def load_profile(root: pathlib.Path) -> Profile | None:
     """The queue's profile, or None when it has not been seeded yet."""
     path = profile_path(root)
-    return parse(path.read_text()) if path.is_file() else None
+    return parse(path.read_text(encoding="utf-8")) if path.is_file() else None

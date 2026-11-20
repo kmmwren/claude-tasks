@@ -90,7 +90,7 @@ def load_briefs(queue: pathlib.Path) -> list[Brief]:
 
 def check(queue: str | pathlib.Path) -> list[str]:
     queue = pathlib.Path(queue).expanduser()
-    requirements = parse_register(register_path(queue).read_text())
+    requirements = parse_register(register_path(queue).read_text(encoding="utf-8"))
     known = {r.id for r in requirements}
     briefs = load_briefs(queue)
     claimed: dict[str, set[str]] = {}
@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     problems = check(queue)
     for p in problems:
         print(p)
-    total = len(parse_register(register_path(queue).read_text()))
+    total = len(parse_register(register_path(queue).read_text(encoding="utf-8")))
     if problems:
         print(
             f"requirements check FAILED: {len(problems)} problem(s) across {total} requirement(s)"

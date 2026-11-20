@@ -170,18 +170,18 @@ def init_queue(
     for d in TASK_DIRS:
         keep = root / d / ".keep"
         if not keep.exists():
-            keep.write_text("")
+            keep.write_text("", encoding="utf-8")
     template = root / "_template.md"
     if force or not template.exists():
-        template.write_text(QUEUE_TEMPLATE)
+        template.write_text(QUEUE_TEMPLATE, encoding="utf-8")
     gitignore = root / ".gitignore"
     if not gitignore.exists():
-        gitignore.write_text(GITIGNORE)
+        gitignore.write_text(GITIGNORE, encoding="utf-8")
     register = root / REGISTER_FILE
     if not register.exists():
-        register.write_text(stub(project, chosen))
+        register.write_text(stub(project, chosen), encoding="utf-8")
     config = TASKS_TOML.format(name=project)
-    (root / CONFIG_FILE).write_text(config + (session.toml() if session else ""))
+    (root / CONFIG_FILE).write_text(config + (session.toml() if session else ""), encoding="utf-8")
     if session is not None:
         session.bind(root, env)
     return root

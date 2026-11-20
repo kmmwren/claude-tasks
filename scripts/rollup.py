@@ -5,6 +5,7 @@ default branch holds it, never from a local clone."""
 import argparse
 import dataclasses
 import datetime as dt
+import functools
 import http.server
 import json
 import os
@@ -33,14 +34,9 @@ LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
 GENERATED = re.compile(r'(?m)^\*Generated \S+|^\s*"generated": "[^"]*"')
 WRITTEN = (rv.JSON, rv.MARKDOWN)  # Markdown is a file for GitHub to render, not a page to browse
 SERVED = (rv.HTML, rv.JSON)
-USAGE = """\
+WHAT_LEAVES = """\
 Only titles, states, dates, the owner's own health, ask and outcome, and the text of the automatic
 checks leave a queue; see skills/rollup.
-
-  rollup.py json|markdown|html [--level engineer|pm|cto] [--source LABEL=REPO[#QUEUE] ...]
-  rollup.py sources [--source LABEL=REPO[#QUEUE] ...]
-  rollup.py write --out OUT_DIR [--source LABEL=REPO[#QUEUE] ...]
-  rollup.py serve [--port 8788] [--source LABEL=REPO[#QUEUE] ...]
 """
 
 
@@ -297,7 +293,7 @@ def _files(report: rv.Report) -> dict[str, str]:
 def _holds_rollup(out: pathlib.Path) -> bool:
     """True when `out` already carries a roll-up of ours: a pm.json with our schema."""
     try:
-        data = json.loads((out / rv.JSON.filename(DEFAULT_VIEW)).read_text())
+        data = json.loads((out / rv.JSON.filename(DEFAULT_VIEW)).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and data.get("schema") == rv.SCHEMA
@@ -325,7 +321,7 @@ def _same_but_for_date(path: pathlib.Path, text: str) -> bool:
     if not path.is_file():
         return False
     try:
-        current = path.read_text()
+        current = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return False
     return GENERATED.sub("", current) == GENERATED.sub("", text)
@@ -577,10 +573,26 @@ def _now() -> dt.datetime:
 COMMANDS: tuple[type[Command], ...] = (ShowJson, ShowMarkdown, ShowHtml, ListSources, Write, Serve)
 
 
+def usage_line(command: type[Command]) -> str:
+    """One command's synopsis on one line, from the flags the command itself declares."""
+    parser = argparse.ArgumentParser(
+        prog=f"rollup.py {command.name}",
+        add_help=False,
+        formatter_class=functools.partial(argparse.HelpFormatter, width=1000),
+    )
+    command.add_arguments(parser)
+    return parser.format_usage().removeprefix("usage: ").rstrip("\n")
+
+
+def usage() -> str:
+    """What leaves a queue, then every command in `COMMANDS` with its options."""
+    return "\n".join([WHAT_LEAVES, *(f"  {usage_line(c)}" for c in COMMANDS), ""])
+
+
 def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
     ap = argparse.ArgumentParser(
         description="Project roll-ups for an engineer, a PM or a CTO.",
-        epilog=USAGE,
+        epilog=usage(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")

@@ -54,7 +54,7 @@ def bump(
     path = find(root, tag_for(ref))
     if path is None:
         raise SystemExit(f"no open brief tagged {tag_for(ref)}")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     current = int(fm(text).get("importance", "3"))
     if importance >= current:
         return f"unchanged: importance {current} is already as high as {importance} or higher"
@@ -64,7 +64,8 @@ def bump(
         text.rstrip("\n")
         + f"\n\n## Bump\n- {stamp}: importance {current} -> {importance}. {reason}\n"
         if "\n## Bump\n" not in text
-        else text.rstrip("\n") + f"\n- {stamp}: importance {current} -> {importance}. {reason}\n"
+        else text.rstrip("\n") + f"\n- {stamp}: importance {current} -> {importance}. {reason}\n",
+        encoding="utf-8",
     )
     sync_commit(f"brief({path.stem}): importance {current} -> {importance}", root, ids=[path.stem])
     note_choice(root, "bump", path.stem)

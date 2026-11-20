@@ -79,7 +79,7 @@ class Rebase:
         merged = self._merged_log(path) if is_brief(path) else None
         if merged is None:
             return Verdict.CONFLICT
-        (self.worktree / path).write_text(merged)
+        (self.worktree / path).write_text(merged, encoding="utf-8")
         return (
             Verdict.RESOLVED
             if _run(self.worktree, "add", "--", path).returncode == 0

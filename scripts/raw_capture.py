@@ -49,7 +49,7 @@ status: inbox
 {a.body}
 """.lstrip()
 
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     print(f"Captured: inbox/{path.name}")
     if not a.no_sync:
         sync_commit(f"brief({uid}): captured (raw)", root, ids=[uid])

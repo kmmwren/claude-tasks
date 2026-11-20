@@ -191,7 +191,7 @@ def append_items(
         raise SystemExit(
             f"No register at {path}. Run /tasks-init, or create it with a prefix line."
         )
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     existing = parse_register(text)
     lines = text.splitlines()
     last_row = max((i for i, ln in enumerate(lines) if _ROW.match(ln)), default=None)
@@ -219,9 +219,11 @@ def append_items(
         added.append(req_id)
     if added and last_row is not None:
         lines[last_row + 1 : last_row + 1] = new_lines
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     elif added:
-        path.write_text((text if text.endswith("\n") else text + "\n") + "".join(new_lines))
+        path.write_text(
+            (text if text.endswith("\n") else text + "\n") + "".join(new_lines), encoding="utf-8"
+        )
     return added, skipped
 
 
@@ -233,7 +235,7 @@ def main(argv: list[str] | None = None) -> None:
     add.add_argument("--json", default="-", help="items file, or - for stdin")
     add.add_argument("--prefix", default=None, help="id prefix when the register header has none")
     a = ap.parse_args(argv)
-    raw = sys.stdin.read() if a.json == "-" else pathlib.Path(a.json).read_text()
+    raw = sys.stdin.read() if a.json == "-" else pathlib.Path(a.json).read_text(encoding="utf-8")
     items = json.loads(raw)
     if not isinstance(items, list):
         raise SystemExit("items JSON must be a list of objects")

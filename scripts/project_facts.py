@@ -308,7 +308,7 @@ class SetAsk(Command):
 
     def write(self, root: pathlib.Path) -> tuple[str, ...]:
         path = root / PROJECT_FILE
-        before = path.read_text() if path.exists() else ""
+        before = path.read_text(encoding="utf-8") if path.exists() else ""
         after = self._rewritten(path, before)
         if after == before:
             return ()

@@ -95,7 +95,7 @@ class PickLog:
 
     def append(self, event: Shown | Choice) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a") as fh:
+        with self.path.open("a", encoding="utf-8") as fh:
             fcntl.flock(
                 fh, fcntl.LOCK_EX
             )  # a shown line can exceed PIPE_BUF, so O_APPEND alone may interleave
@@ -104,7 +104,7 @@ class PickLog:
     def events(self) -> Iterator[Shown | Choice]:
         if not self.path.is_file():
             return
-        for line in self.path.read_text().splitlines():
+        for line in self.path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 d = json.loads(line)
                 yield Shown.from_dict(d) if d["event"] == "shown" else Choice.from_dict(d)

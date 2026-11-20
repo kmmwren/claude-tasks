@@ -91,7 +91,7 @@ def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> Non
     source = path.parent.name
     if source in ENRICHED_STATUSES or new_status not in ENRICHED_STATUSES:
         return
-    missing = brief_missing_fields(path.read_text())
+    missing = brief_missing_fields(path.read_text(encoding="utf-8"))
     if missing:
         raise ValueError(
             f"{brief_id!r} is still in {source}/ and cannot move to {new_status} without "
@@ -351,7 +351,7 @@ def move_brief(
             raise ValueError(f"no brief with id {brief_id!r} (claimed by another actor)")
         if only_if is not None and not only_if():
             raise ValueError(f"{brief_id!r} changed while waiting for the lock; not moved")
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         if assignee:
             held = fm(text).get("assignee", "")
             if held and held != assignee:

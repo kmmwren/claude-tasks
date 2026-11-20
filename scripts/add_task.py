@@ -176,7 +176,10 @@ def merge_into(
     root: pathlib.Path, found: Located, provenance: Provenance, context: str, today: str
 ) -> None:
     with require_lock(root):
-        atomic_write(found.path, merged_text(found.path.read_text(), provenance, context, today))
+        atomic_write(
+            found.path,
+            merged_text(found.path.read_text(encoding="utf-8"), provenance, context, today),
+        )
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -56,12 +56,14 @@ def _common_git_dir(root: pathlib.Path) -> pathlib.Path | None:
     if git.is_dir():
         return git
     try:
-        gitdir = git.read_text().removeprefix("gitdir:").strip()
+        gitdir = git.read_text(encoding="utf-8").removeprefix("gitdir:").strip()
     except OSError:
         return None
     worktree_dir = (root / gitdir).resolve()
     try:
-        return (worktree_dir / (worktree_dir / "commondir").read_text().strip()).resolve()
+        return (
+            worktree_dir / (worktree_dir / "commondir").read_text(encoding="utf-8").strip()
+        ).resolve()
     except OSError:
         return worktree_dir
 
@@ -201,7 +203,7 @@ def atomic_write(path: pathlib.Path, text: str) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
     try:
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

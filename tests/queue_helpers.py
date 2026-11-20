@@ -6,6 +6,9 @@ import time
 import init_queue
 from _push_state import PushState
 
+NOT_UTF8 = b"\xff\xfe\x00bad"
+"""A brief a text editor in another encoding could leave behind; no reader may crash on it."""
+
 
 def brief_text(
     bid: str,

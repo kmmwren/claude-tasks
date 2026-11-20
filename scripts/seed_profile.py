@@ -68,7 +68,7 @@ def goals(directory: pathlib.Path, config: Mapping[str, Any]) -> tuple[Goal, ...
     found = []
     for path in sorted(directory.glob("*.json")):
         try:
-            found.append(goal_from(json.loads(path.read_text()), config))
+            found.append(goal_from(json.loads(path.read_text(encoding="utf-8")), config))
         except (ValueError, KeyError, TypeError) as exc:
             warn(f"skipped goal {path.name}: {exc}")
     return tuple(sorted(found, key=lambda g: -g.weight))
@@ -98,7 +98,7 @@ def north_stars(spec: str, fetch: Fetch) -> tuple[str, ...]:
 
 def decision_title(path: pathlib.Path) -> str:
     dated = _DATED.match(path.stem)
-    heading = _TITLE.search(path.read_text())
+    heading = _TITLE.search(path.read_text(encoding="utf-8"))
     title = (
         heading.group(1) if heading else (dated.group(2) if dated else path.stem).replace("-", " ")
     )

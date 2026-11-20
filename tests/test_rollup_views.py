@@ -1,7 +1,9 @@
 """The three roll-up views in three formats, from one queue that exercises every section."""
 
+import builtins
 import dataclasses
 import datetime as dt
+import io
 import json
 import os
 import pathlib
@@ -756,16 +758,20 @@ def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(
 def test_a_roll_up_reads_each_brief_once(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Every way into a file (read_text, read_bytes, open) goes through io.open, which is counted."""
     snap = snapshot(publish(tmp_path, writer(ATLAS_FILES)), tmp_path / "cache")
     reads: list[str] = []
-    real = pathlib.Path.read_text
+    real = io.open
 
-    def counted(path: pathlib.Path, *args: object, **kwargs: object) -> str:
-        if path.suffix == ".md" and path.parent.name in TASK_DIRS:
-            reads.append(f"{path.parent.name}/{path.name}")
-        return real(path, *args, **kwargs)  # type: ignore[arg-type]
+    def counted(file: object, *args: object, **kwargs: object) -> object:
+        if isinstance(file, (str, os.PathLike)):
+            path = pathlib.Path(file)
+            if path.suffix == ".md" and path.parent.name in TASK_DIRS:
+                reads.append(f"{path.parent.name}/{path.name}")
+        return real(file, *args, **kwargs)  # type: ignore[call-overload]
 
-    monkeypatch.setattr(pathlib.Path, "read_text", counted)
+    monkeypatch.setattr(io, "open", counted)
+    monkeypatch.setattr(builtins, "open", counted)
     rv.Entry.read(ALPHA, snap, NOW)
     briefs = sorted(name for name in ATLAS_FILES if name.endswith(".md") and "/" in name)
     assert sorted(reads) == [n for n in briefs if n.split("/")[0] in TASK_DIRS]

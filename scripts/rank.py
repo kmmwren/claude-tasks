@@ -228,7 +228,7 @@ class VerdictCache:
         path = self.dir / f"{key}.json"
         if not path.is_file():
             return None
-        d = json.loads(path.read_text())
+        d = json.loads(path.read_text(encoding="utf-8"))
         return Verdict(
             tuple(d["order"]), d["reasons"], d["confidence"], d["agreement"], tuple(d["raw"])
         )

@@ -96,7 +96,7 @@ def resolve_external(
     with repo_lock(root) as acquired:
         if not acquired:
             raise RuntimeError(f"timed out waiting for the queue lock; {brief_id!r} unchanged")
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         fields = fm(text)
         current = Brief(brief_id, path.parent.name, fields).blocked_by
         if item not in current:

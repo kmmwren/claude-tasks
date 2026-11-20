@@ -7,6 +7,8 @@ import pytest
 import requirements_check
 import requirements_register as reg
 
+from tests.queue_helpers import NOT_UTF8
+
 
 def item(
     quote="build one feature at a time",
@@ -391,3 +393,11 @@ def test_add_task_without_flag_writes_an_empty_requirements_field(queue):
 
     add_task.main(["--root", str(queue), "--title", "Plain", "--status", "parked"])
     assert "requirements: []" in next((queue / "parked").glob("*.md")).read_text()
+
+
+def test_load_briefs_leaves_out_a_brief_that_is_not_utf8_with_one_warning(queue, capsys):
+    brief(queue, "ready", "fine", ["PL-001"], ["- [ ] a"])
+    (queue / "ready" / "bad.md").write_bytes(NOT_UTF8)
+    assert [b.name for b in requirements_check.load_briefs(queue)] == ["fine"]
+    err = capsys.readouterr().err
+    assert err.count("not valid UTF-8") == 1 and "bad.md" in err

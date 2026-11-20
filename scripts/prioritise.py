@@ -636,7 +636,7 @@ def _load_fields(brief: BriefFile) -> dict[str, Any]:
 def _brief_files(queue: QueueBriefs, ids: frozenset[str] | None) -> list[BriefFile]:
     """ready/ briefs, or the named briefs wherever they are live."""
     if ids is None:
-        return list(queue.folders["ready"])
+        return list(queue.folder("ready"))
     live = (brief for _, brief in queue.within(LIVE_DIRS))
     return [brief for brief in live if brief_id(fm(brief.text), brief.path.stem) in ids]
 

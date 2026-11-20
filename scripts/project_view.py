@@ -375,7 +375,7 @@ def _requirements(queue: pathlib.Path, briefs: list[dict[str, Any]]) -> dict[str
         for r in b["requirements"]:
             covering.setdefault(r, []).append(b["id"])
     items = []
-    for r in parse_register(path.read_text()):
+    for r in parse_register(path.read_text(encoding="utf-8")):
         if r.withdrawn:
             continue
         ids = covering.get(r.id, [])
@@ -409,7 +409,7 @@ _DECISION_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 
 
 def _read_decision(path: pathlib.Path) -> dict[str, str]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     title = re.search(r"^#\s+(?:\d+\.\s+)?(.+)$", text, re.MULTILINE)
     day = (
         re.search(r"\|\s*Date\s*\|\s*(\d{4}-\d{2}-\d{2})", text)

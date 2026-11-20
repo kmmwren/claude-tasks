@@ -3,7 +3,7 @@
 import pytest
 from fingerprint import Fingerprint, canonical_source, find_duplicate, index
 
-from tests.queue_helpers import inbox_text, make_inbox
+from tests.queue_helpers import NOT_UTF8, inbox_text, make_inbox
 
 
 def _fp(title, body=""):
@@ -99,3 +99,12 @@ def test_one_slack_thread_cited_two_ways_is_one_source():
     plain = _fp("Fix", f"From Slack {base}")
     threaded = _fp("Fix", f"See {base}?thread_ts=1773265865.773179")
     assert plain == threaded and plain.sources == frozenset({"slack:C0123ABCD/1773265865.773179"})
+
+
+def test_the_duplicate_check_leaves_out_a_brief_that_is_not_utf8_with_one_warning(tmp_path, capsys):
+    root = make_inbox(tmp_path, {"r": inbox_text("r", title="Same")})
+    (root / "inbox" / "bad.md").write_bytes(NOT_UTF8)
+    assert [m.id for members in index(root).values() for m in members] == ["r"]
+    assert find_duplicate(root, _fp("Same")).id == "r"
+    err = capsys.readouterr().err
+    assert err.count("not valid UTF-8") == 1 and "bad.md" in err

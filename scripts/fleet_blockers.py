@@ -83,7 +83,7 @@ class FleetBlockers:
         parsed, skipped = [], []
         for f in sorted(directory.glob("*.json")):
             try:
-                parsed.append(FleetBlocker.parse(json.loads(f.read_text()), f.stem))
+                parsed.append(FleetBlocker.parse(json.loads(f.read_text(encoding="utf-8")), f.stem))
             except (OSError, ValueError) as err:
                 skipped.append(f"{f.name} ({err})")
         if skipped:

@@ -102,7 +102,7 @@ def _rows(
 def _read(path: pathlib.Path) -> dict[str, Any] | None:
     """A TOML file's table; None, with a warning, when it cannot be read as TOML."""
     try:
-        return tomllib.loads(path.read_text())
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -382,7 +382,7 @@ def facts_files(queue: pathlib.Path) -> list[pathlib.Path]:
 
 def declared_brief(path: pathlib.Path) -> str | None:
     """The `brief` a facts file names, None if it names none. Raises on a file that is not TOML."""
-    declared = tomllib.loads(path.read_text()).get("brief")
+    declared = tomllib.loads(path.read_text(encoding="utf-8")).get("brief")
     return declared if isinstance(declared, str) else None
 
 

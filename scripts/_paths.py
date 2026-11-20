@@ -112,19 +112,35 @@ def read_brief(path: pathlib.Path, shown_as: str | None = None) -> BriefFile | N
 
 @dataclasses.dataclass(frozen=True)
 class QueueBriefs:
-    """A queue's briefs in every state folder, read once and shared by every reader of that queue."""
+    """A queue's briefs, each state folder read on first request and then shared by every reader.
+
+    Each roll-up or command builds its own; the lock keeps a folder read once even if a caller's
+    threads do share one.
+    """
 
     root: pathlib.Path
-    folders: Mapping[str, tuple[BriefFile, ...]]
+    label: str
+    _read: dict[str, tuple[BriefFile, ...]] = dataclasses.field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    _lock: threading.Lock = dataclasses.field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     @classmethod
     def read(cls, root: pathlib.Path, shown_as: str | None = None) -> "QueueBriefs":
-        label = shown_as or str(root)
-        return cls(root, {d: tuple(read_briefs(root / d, f"{label}/{d}")) for d in TASK_DIRS})
+        return cls(root, shown_as or str(root))
+
+    def folder(self, name: str) -> tuple[BriefFile, ...]:
+        """The briefs in state folder `name`, read the first time they are asked for."""
+        with self._lock:
+            if name not in self._read:
+                self._read[name] = tuple(read_briefs(self.root / name, f"{self.label}/{name}"))
+            return self._read[name]
 
     def within(self, folders: Iterable[str]) -> Iterator[tuple[str, BriefFile]]:
         """Each brief in `folders`, folder by folder, with the folder it sits in."""
-        return ((d, brief) for d in folders for brief in self.folders[d])
+        return ((d, brief) for d in folders for brief in self.folder(d))
 
 
 def strip_comment(value: str) -> str:
@@ -169,7 +185,7 @@ def session_root(env: Mapping[str, str]) -> pathlib.Path | None:
     if not session_id or not _SESSION_ID.fullmatch(session_id):
         return None
     try:
-        root = tomllib.loads(binding_path(session_id, env).read_text()).get("root")
+        root = tomllib.loads(binding_path(session_id, env).read_text(encoding="utf-8")).get("root")
     except (OSError, tomllib.TOMLDecodeError):
         return None
     if not isinstance(root, str) or not root:

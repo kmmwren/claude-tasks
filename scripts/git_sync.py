@@ -84,7 +84,7 @@ def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
     found = []
     for rel in _split_z(out):
         try:
-            if carries_credential((root / rel).read_text(errors="ignore")):
+            if carries_credential((root / rel).read_text(errors="ignore", encoding="utf-8")):
                 found.append(rel)
         except OSError:
             continue  # deleted or unreadable: nothing to leak
@@ -457,7 +457,7 @@ def _report_last_push(state: PushState) -> None:
 def _spawn_pusher(state: PushState, lock: HeldLock) -> None:
     """Hand the held push lock to a detached pusher process, so the caller returns at once."""
     _report_last_push(state)
-    with open(state.log_path, "a") as log:
+    with open(state.log_path, "a", encoding="utf-8") as log:
         subprocess.Popen(
             [
                 sys.executable,

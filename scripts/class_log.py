@@ -86,14 +86,14 @@ class ClassLog:
 
     def append(self, event: Verdict | Correction) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a") as fh:
+        with self.path.open("a", encoding="utf-8") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             fh.write(json.dumps(dataclasses.asdict(event), sort_keys=True) + "\n")
 
     def events(self) -> Iterator[Verdict | Correction]:
         if not self.path.is_file():
             return
-        for line in self.path.read_text().splitlines():
+        for line in self.path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 d = json.loads(line)
                 yield Verdict.from_dict(d) if d["event"] == "verdict" else Correction.from_dict(d)

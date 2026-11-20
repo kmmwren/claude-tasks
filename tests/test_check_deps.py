@@ -5,7 +5,7 @@ import json
 import check_deps
 import pytest
 
-from tests.queue_helpers import MILESTONES, make_queue
+from tests.queue_helpers import MILESTONES, NOT_UTF8, make_queue
 
 
 def _kinds(root):
@@ -192,3 +192,13 @@ def test_an_orphan_that_is_also_unreadable_reports_both(tmp_path):
     root = make_queue(tmp_path, {"a": {}})
     _facts(root, "gone", "= bad\n")
     assert _kinds(root) == [("facts-orphan", "gone"), ("facts-unreadable", "gone")]
+
+
+def test_a_brief_that_is_not_utf8_is_left_out_with_one_warning_and_the_rest_are_checked(
+    tmp_path, capsys
+):
+    root = make_queue(tmp_path, {"a": {"status": "done"}, "b": {"blocked_by": "[gone]"}})
+    (root / "ready" / "bad.md").write_bytes(NOT_UTF8)
+    assert _kinds(root) == [("dangling", "b")]
+    err = capsys.readouterr().err
+    assert err.count("not valid UTF-8") == 1 and "bad.md" in err

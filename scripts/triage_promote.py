@@ -86,7 +86,10 @@ class Gate:
 def promote(p: Promotion, root: pathlib.Path, today: str) -> bool:
     """Write the candidate and move it to ready/, unless the brief changed since it was read."""
     with require_lock(root):
-        if not p.original.path.exists() or p.original.path.read_text() != p.original.text:
+        if (
+            not p.original.path.exists()
+            or p.original.path.read_text(encoding="utf-8") != p.original.text
+        ):
             return False
         atomic_write(p.original.path, p.candidate.text)
     move_brief(
@@ -95,6 +98,6 @@ def promote(p: Promotion, root: pathlib.Path, today: str) -> bool:
         root,
         log=f"promoted by inbox-triage: {p.reason}",
         today=today,
-        only_if=lambda: p.original.path.read_text() == p.candidate.text,
+        only_if=lambda: p.original.path.read_text(encoding="utf-8") == p.candidate.text,
     )
     return True

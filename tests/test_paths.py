@@ -5,6 +5,8 @@ decides where, from (1) an env var, (2) a project-local .tasks/ found by walking
 (3) the ~/tasks default. require_queue refuses to operate on an uninitialised directory.
 """
 
+import time
+
 import _paths
 import pytest
 
@@ -254,12 +256,11 @@ def test_read_briefs_names_a_bad_brief_as_shown(tmp_path, capsys):
     )
 
 
-def test_queue_briefs_reads_every_folder_once_and_names_a_bad_brief_under_the_label(
+def test_queue_briefs_reads_a_folder_when_asked_and_names_a_bad_brief_under_the_label(
     tmp_path, capsys
 ):
     _folder_with_a_bad_brief(tmp_path)
     briefs = _paths.QueueBriefs.read(tmp_path, shown_as="S")
-    assert set(briefs.folders) == set(_paths.TASK_DIRS)
     assert [(d, b.path.name) for d, b in briefs.within(("done", "ready"))] == [
         ("ready", "a.md"),
         ("ready", "b.md"),
@@ -268,6 +269,50 @@ def test_queue_briefs_reads_every_folder_once_and_names_a_bad_brief_under_the_la
         capsys.readouterr().err
         == "warning: S/ready/bad.md: is not valid UTF-8; that brief is skipped\n"
     )
+
+
+def _spy_on_folder_reads(monkeypatch):
+    reads = []
+    real = _paths.read_briefs
+
+    def spy(folder, shown_as=None):
+        reads.append(folder.name)
+        time.sleep(0.01)  # wide enough for an unlocked second reader to get in
+        return real(folder, shown_as)
+
+    monkeypatch.setattr(_paths, "read_briefs", spy)
+    return reads
+
+
+def test_queue_briefs_reads_nothing_until_asked_and_each_folder_at_most_once(tmp_path, monkeypatch):
+    _folder_with_a_bad_brief(tmp_path)
+    reads = _spy_on_folder_reads(monkeypatch)
+    briefs = _paths.QueueBriefs.read(tmp_path)
+    assert reads == []
+    list(briefs.within(("ready", "done")))
+    list(briefs.within(("done", "ready")))
+    assert briefs.folder("ready") is briefs.folder("ready")
+    assert reads == ["ready", "done"]
+
+
+def test_queue_briefs_never_names_a_bad_brief_in_a_folder_nobody_asked_for(tmp_path, capsys):
+    _folder_with_a_bad_brief(tmp_path)
+    list(_paths.QueueBriefs.read(tmp_path).within(("done", "blocked")))
+    assert capsys.readouterr().err == ""
+
+
+def test_queue_briefs_shared_by_many_threads_reads_a_folder_once(tmp_path, monkeypatch):
+    import threading
+
+    _folder_with_a_bad_brief(tmp_path)
+    reads = _spy_on_folder_reads(monkeypatch)
+    briefs = _paths.QueueBriefs.read(tmp_path)
+    threads = [threading.Thread(target=briefs.folder, args=("ready",)) for _ in range(32)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert reads == ["ready"]
 
 
 def test_read_brief_names_a_bad_file_by_its_path_unless_told_otherwise(tmp_path, capsys):

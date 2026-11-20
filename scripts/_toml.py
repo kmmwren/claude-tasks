@@ -80,7 +80,7 @@ def dumps(data: Mapping[str, Any]) -> str:
 def read(path: pathlib.Path) -> dict[str, Any]:
     """The file's table, `{}` when it does not exist; a file that is not valid TOML raises."""
     try:
-        return tomllib.loads(path.read_text())
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
 

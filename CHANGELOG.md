@@ -176,11 +176,18 @@
   cannot be decoded warns `<source label>/requirements.md: is not valid UTF-8; no requirements are read
   from it` and the engineer view lists none; a brief that cannot be decoded warns
   `<source label>/<folder>/<file>: is not valid UTF-8; that brief is skipped`. Each file is named once
-  per process, so `serve` does not repeat it on every request. Files are decoded as UTF-8 whatever the
-  locale, and the roll-up reads each queue's briefs once and hands them to the board, the blockers and
-  the ranking. The board, ranking, blockers, duplicate check, requirements check, `bump`, brief lookup
-  in `transition.py`, inbox triage and the headless `rank.py` leave the brief out; `fold_session.py`
-  and `unblock.py` still stop on it, since each would otherwise strand or rewrite that brief.
+  per process, so `serve` does not repeat it on every request. Every text file the scripts read or
+  write (briefs, `tasks.toml`, `project.toml`, facts, the requirements register, JSON state, logs) is
+  decoded as UTF-8 whatever the locale, and a test fails when a script opens text without naming the
+  encoding. The roll-up reads each queue's briefs once and hands them to the board, the blockers and
+  the ranking, and every other command reads a state folder only when it searches it, so a bad brief
+  in a folder the command never looks in is not warned about. The board, ranking, blockers, duplicate
+  check, requirements check, `bump`, the brief search in `transition.py`, `check_deps.py`, the
+  releasing half of `unblock.py`, inbox triage and the headless `rank.py` leave the brief out; moving
+  or resolving a brief named by id (`transition.py`, `unblock.py`) stops on it, since it has to
+  rewrite that brief. `fold_session.py` checks, before it writes anything, that every brief and facts
+  file it will read in the session queue and every brief in the parent queue's lifecycle folders
+  (not its inbox) decodes, and stops naming the files if one does not, with nothing moved.
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
   lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
   defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".

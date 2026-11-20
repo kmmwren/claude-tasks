@@ -12,6 +12,8 @@ import init_queue
 import pytest
 from _paths import QueueBriefs
 
+from tests.queue_helpers import NOT_UTF8
+
 
 @pytest.fixture
 def queues(tmp_path):
@@ -243,3 +245,58 @@ def test_facts_already_in_the_parent_are_kept_and_the_clash_is_reported(queues, 
     assert (parent / "facts" / "a.toml").read_text().endswith("# theirs\n")
     assert (child / "facts" / "a.toml").exists()
     assert "was not carried" in capsys.readouterr().err
+
+
+def _bytes_of(*roots):
+    """Every file's bytes, bar the lock file that taking the lock leaves behind."""
+    return {
+        str(p): p.read_bytes()
+        for root in roots
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.name != ".tasks-sync.lock"
+    }
+
+
+@pytest.mark.parametrize(
+    ("owner", "path"),
+    [
+        ("child", "ready/bad.md"),
+        ("child", "inbox/bad.md"),
+        ("child", "done/bad.md"),
+        ("child", "facts/bad.toml"),
+        ("parent", "done/bad.md"),
+        ("parent", "ready/bad.md"),
+        ("parent", "parked/bad.md"),
+    ],
+)
+def test_a_file_the_fold_reads_that_is_not_utf8_stops_it_before_anything_is_written(
+    queues, owner, path
+):
+    parent, child, env = queues
+    bad = {"parent": parent, "child": child}[owner] / path
+    bad.parent.mkdir(exist_ok=True)
+    bad.write_bytes(NOT_UTF8)
+    before = _bytes_of(parent, child)
+    with pytest.raises(SystemExit, match=f"nothing was folded: .*{bad.name}"):
+        fold_session.SessionQueue.load(child).fold(env)
+    assert _bytes_of(parent, child) == before
+    assert config.load_config(child)["session"]["lifecycle"] == "session"
+    assert _paths.binding_path("s1", env).exists()
+
+
+def test_a_parent_brief_that_is_not_utf8_cannot_drop_a_done_brief_id_from_the_parents_ids(queues):
+    """It once left the id out and copied a done prerequisite under a duplicate id."""
+    parent, child, env = queues
+    (child / "ready" / "a.md").write_text("---\nid: a\nblocked_by: [c]\n---\nbody a\n")
+    (parent / "done" / "c.md").write_bytes(b"---\nid: c\n---\n\xff\xfe")
+    with pytest.raises(SystemExit, match="done/c.md"):
+        fold_session.SessionQueue.load(child).fold(env)
+    assert not list(parent.glob("*/a.md"))
+    assert (parent / "done" / "c.md").read_bytes().endswith(b"\xff\xfe")
+
+
+def test_a_parent_inbox_brief_that_is_not_utf8_is_not_read_so_does_not_stop_the_fold(queues):
+    parent, child, env = queues
+    (parent / "inbox" / "bad.md").write_bytes(NOT_UTF8)
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "ready" / "a.md").exists()

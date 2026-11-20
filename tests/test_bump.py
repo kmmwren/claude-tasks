@@ -5,6 +5,8 @@ import datetime
 import bump
 import pytest
 
+from tests.queue_helpers import NOT_UTF8
+
 NOW = datetime.datetime(2026, 11, 5, 9, 30)
 
 
@@ -70,3 +72,13 @@ def test_a_bump_is_committed_through_the_shared_helper(tmp_path, monkeypatch):
     monkeypatch.setattr(bump, "sync_commit", lambda msg, root, ids: calls.append((root, ids)))
     bump.bump(tmp_path, "pr:repo#1", 1, "urgent", NOW)
     assert calls == [(tmp_path, ["b1"])]
+
+
+def test_find_leaves_out_a_brief_that_is_not_utf8_with_one_warning_and_finds_the_rest(
+    tmp_path, capsys
+):
+    own = brief(tmp_path)
+    (tmp_path / "ready" / "a-bad.md").write_bytes(NOT_UTF8)
+    assert bump.find(tmp_path, "pr:repo#1") == own
+    err = capsys.readouterr().err
+    assert err.count("not valid UTF-8") == 1 and "a-bad.md" in err

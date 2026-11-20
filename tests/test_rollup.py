@@ -1,7 +1,9 @@
 """Roll-ups: sources, reading each from its GitHub queue, the three views, every surface."""
 
+import argparse
 import json
 import pathlib
+import re
 import socket
 import sys
 import threading
@@ -957,3 +959,22 @@ def test_the_snapshot_time_is_the_commit_time_not_the_time_of_the_run(tmp_path):
     later = NOW.replace(year=2027)
     assert projects(rollup.build([source], later))[0].as_at.committed.isoformat() == PUSHED_AT
     assert publish  # the fixture module is the one place a queue reaches a remote
+
+
+def _options_of(command):
+    probe = argparse.ArgumentParser(add_help=False)
+    command.add_arguments(probe)
+    return re.findall(r"--[\w-]+", probe.format_help())
+
+
+def test_help_lists_every_command_with_its_options(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        rollup.parse(["--help"], {})
+    assert exit_.value.code == 0
+    lines = [
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("  rollup.py ")
+    ]
+    assert len(lines) == len(rollup.COMMANDS)
+    for command, line in zip(rollup.COMMANDS, lines, strict=True):
+        assert line.startswith(f"  rollup.py {command.name} ")
+        assert all(option in line for option in _options_of(command))

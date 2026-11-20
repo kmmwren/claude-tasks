@@ -106,7 +106,7 @@ def _try_push(
     path = _find(queue, brief_id)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
-    path.write_text(_append_log(path.read_text(), today, line))
+    path.write_text(_append_log(path.read_text(encoding="utf-8"), today, line), encoding="utf-8")
     _run(wt, "add", str(path.relative_to(wt)))
     commit = _run(wt, *IDENTITY, "commit", "-m", f"brief({brief_id}): log line")
     if commit.returncode != 0:

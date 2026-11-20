@@ -54,7 +54,7 @@ def jobs_root() -> pathlib.Path:
 def _read_json(path: pathlib.Path) -> Mapping[str, object]:
     """The file's JSON object, or empty (with a warning when unreadable) so one bad file never sinks the prompt."""
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
         print(f"resume_prompt: skipping unreadable {path}: {err}", file=sys.stderr)
         return {}

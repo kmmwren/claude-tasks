@@ -146,7 +146,7 @@ class _Mirror:
         return self.load(folder) if folder.is_dir() else None
 
     def load(self, folder: pathlib.Path) -> QueueSnapshot:
-        meta = json.loads((folder / META_FILE).read_text())
+        meta = json.loads((folder / META_FILE).read_text(encoding="utf-8"))
         committed = datetime.datetime.fromtimestamp(meta["committed"], datetime.timezone.utc)
         return QueueSnapshot(
             folder / TREE_DIR / self.queue_path, folder.name, committed, meta["branch"], False
@@ -163,7 +163,9 @@ class _Mirror:
         archive = _git("archive", "--format=tar", sha, "--", self.queue_path, cwd=self.git_dir)
         with tempfile.TemporaryDirectory(dir=self.staging()) as tmp:
             work = pathlib.Path(tmp)
-            (work / META_FILE).write_text(json.dumps({"branch": branch, "committed": committed}))
+            (work / META_FILE).write_text(
+                json.dumps({"branch": branch, "committed": committed}), encoding="utf-8"
+            )
             _extract_tar(archive, work / TREE_DIR)
             _publish(work, self.home / sha)
         return self.load(self.home / sha)
@@ -183,7 +185,9 @@ class _Mirror:
 
     def remember(self, head: QueueSnapshot) -> QueueSnapshot:
         """Record `head` as the remote's last-seen head, replacing the pointer in one rename."""
-        with tempfile.NamedTemporaryFile("w", dir=self.staging(), delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=self.staging(), delete=False, encoding="utf-8"
+        ) as tmp:
             tmp.write(head.sha)
         os.replace(tmp.name, self.home / HEAD_POINTER)
         return head
@@ -191,7 +195,7 @@ class _Mirror:
     def last_seen(self) -> QueueSnapshot | None:
         """The snapshot the pointer names, if it is still cached."""
         pointer = self.home / HEAD_POINTER
-        sha = pointer.read_text().strip() if pointer.exists() else ""
+        sha = pointer.read_text(encoding="utf-8").strip() if pointer.exists() else ""
         return self.cached(sha) if sha else None
 
     def newest(self) -> QueueSnapshot | None:

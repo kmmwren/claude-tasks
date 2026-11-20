@@ -92,7 +92,7 @@ def milestone_specs(root: pathlib.Path) -> list[MilestoneSpec] | None:
     if path is None:
         return None
     try:
-        table = tomllib.loads(path.read_text()).get("milestone", {})
+        table = tomllib.loads(path.read_text(encoding="utf-8")).get("milestone", {})
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise MilestonesError(f"cannot read milestones file {path}: {e}") from e
     if not isinstance(table, dict) or not table:
