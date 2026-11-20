@@ -497,9 +497,12 @@ def test_an_unknown_zone_is_named_and_utc_is_used(
     assert "timezone 'Nowhere/Land' is not a known zone; using UTC" in capsys.readouterr().err
 
 
-def test_an_unreadable_tasks_toml_falls_back_to_utc(tmp_path: pathlib.Path) -> None:
+def test_an_unreadable_tasks_toml_falls_back_to_utc_and_says_which_file(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     m = built(tmp_path, zone_spec("timezone = [unterminated\n")).milestones[0]
     assert (m.late_days, m.missed) == (0, False)
+    assert "tasks.toml (" in capsys.readouterr().err
 
 
 # --- health --------------------------------------------------------------------------------
@@ -508,16 +511,12 @@ def test_an_unreadable_tasks_toml_falls_back_to_utc(tmp_path: pathlib.Path) -> N
 def test_owner_health_is_capped_by_the_automatic_checks_and_says_so(world: World) -> None:
     health = world.project.health
     assert (health.owner, health.effective, health.set_on) == ("green", "red", "2026-11-10")
-    assert (health.stale, health.age_days, health.explained) == (True, 9, True)
+    assert (health.stale, health.age_days) == (True, 9)
     assert any(
         "latest build recorded in the queue is red (2026-11-18)" in s for s in health.signals
     )
     assert any("past its date and not done: m2" in s for s in health.signals)
-    assert health.colour_word == "Red"
-    assert health.detail().startswith(
-        ", capped by automatic checks (owner said Green on 2026-11-10: On course)."
-        " Update missing: set 9 days ago. Automatic checks: "
-    )
+    assert (health.colour_word, health.reason) == ("Red", "On course.")
 
 
 def test_the_tile_holds_the_health_the_latest_build_and_the_projects_links(world: World) -> None:
@@ -550,7 +549,7 @@ def test_the_newest_health_row_is_the_owners_current_word(tmp_path: pathlib.Path
     files = {"history/health/2026-11-18-aaaaaaaa.toml": row}
     health = built(tmp_path, QueueSpec(project_toml(health=older), files=files)).health
     assert (health.owner, health.set_on, health.stale) == ("green", "2026-11-18", False)
-    assert health.detail() == ", set 2026-11-18: On course."
+    assert (health.reason, health.effective) == ("On course.", "green")
 
 
 def test_a_statement_with_no_date_never_goes_stale_and_is_capped_without_one(
@@ -560,7 +559,7 @@ def test_a_statement_with_no_date_never_goes_stale_and_is_capped_without_one(
     spec = QueueSpec(project_toml(health=undated, tail=MISSED), (OPEN_IN_M1,))
     health = built(tmp_path, spec).health
     assert (health.age_days, health.stale, health.set_on) == (None, False, "")
-    assert health.detail().startswith(", capped by automatic checks (owner said Green: Fine).")
+    assert (health.owner, health.effective) == ("green", "red")
 
 
 def test_an_undated_statement_that_stands_says_it_was_set_by_the_owner(
@@ -568,25 +567,23 @@ def test_an_undated_statement_that_stands_says_it_was_set_by_the_owner(
 ) -> None:
     undated = '[health]\ncolour = "green"\nreason = "Fine"\n'
     health = built(tmp_path, QueueSpec(project_toml(health=undated))).health
-    assert health.detail() == ", set by owner: Fine."
+    assert (health.owner, health.effective, health.set_on) == ("green", "green", "")
 
 
 def test_without_an_owner_word_the_floor_still_colours_the_tile(tmp_path: pathlib.Path) -> None:
     spec = QueueSpec(project_toml(health="", tail=MISSED), (OPEN_IN_M1,))
     project = built(tmp_path, spec)
     health = project.health
-    assert (health.owner, health.effective, health.explained) == ("", "red", True)
-    assert health.colour_word == "Red"
-    assert health.detail().startswith(", not set by owner. Automatic checks: ")
+    assert (health.owner, health.effective) == ("", "red")
+    assert health.colour_word == "Red" and health.signals
     assert project.board.text.startswith("Alpha is red; 0 of 1 milestone done; 1 past their date")
 
 
 def test_with_no_owner_word_and_nothing_wrong_the_tile_says_not_set(tmp_path: pathlib.Path) -> None:
     project = built(tmp_path, QueueSpec(project_toml(health="")))
     health = project.health
-    assert (health.effective, health.signals, health.explained) == ("", (), False)
+    assert (health.effective, health.signals) == ("", ())
     assert health.colour_word == "Not set by owner"
-    assert health.colour_word + health.detail() == "Not set by owner."
     assert project.board.text == "Alpha is not yet rated by its owner."
 
 

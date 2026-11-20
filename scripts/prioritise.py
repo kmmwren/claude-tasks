@@ -185,9 +185,9 @@ class Weights:
         )
 
     @classmethod
-    def for_queue(cls, root: pathlib.Path) -> "Weights":
+    def from_config(cls, config: dict[str, Any]) -> "Weights":
         """A bad setting falls back to the defaults, keeping tag_weights, rather than failing."""
-        table = load_config_or_defaults(root, "prioritise").get("priority", {})
+        table = config.get("priority", {})
         try:
             return cls.from_priority(table)
         except (ValueError, TypeError, AttributeError) as err:
@@ -495,6 +495,7 @@ class _RankContext:
         scope: Scope,
         weights: Weights,
         tag_weights: dict[str, int],
+        fleet: FleetBlockers,
     ) -> "_RankContext":
         queue = load_queue(root)
         graph = WaitGraph.build(queue)
@@ -517,7 +518,7 @@ class _RankContext:
             scored,
             {b.id for b in queue if b.status == "done"},
             graph.inherited({bid: f.total for bid, f in scored.items()}),
-            FleetBlockers.for_queue(root),
+            fleet,
         )
 
     def wsjf(self, bid: str) -> tuple[Factors, float]:
@@ -652,10 +653,13 @@ def rank(
     ids: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """The scope's ready/ briefs (or the named live ones), scored both ways, in the scorer's order."""
-    weights = weights or Weights.for_queue(root)
+    config = load_config_or_defaults(root, "prioritise")  # read once so a bad file warns once
+    weights = weights or Weights.from_config(config)
     scope = scope or AllScope("")
     tags = weights.tags if tag_weights is None else tag_weights
-    ctx = _RankContext.load(root, today or datetime.date.today(), context, scope, weights, tags)
+    fleet = FleetBlockers.from_config(root, config)
+    today = today or datetime.date.today()
+    ctx = _RankContext.load(root, today, context, scope, weights, tags, fleet)
     fields = [(f, _load_fields(f)) for f in _brief_files(root, ids)]
     items = [_annotate(f, b, ctx) for f, b in fields if scope.admits(subject(b))]
     chosen = scorer or weights.scorer

@@ -14,6 +14,7 @@ import prioritise
 import pytest
 import rank
 import taste
+from config import load_config
 from fleet_blockers import BlockerStatus, FleetBlocker, FleetBlockers
 from rank import Ranker
 from scope import AllScope
@@ -90,7 +91,7 @@ def test_active_and_unverified_records_are_open_and_cleared_ones_are_not(tmp_pat
 
 def test_an_unset_directory_turns_the_feature_off_without_a_warning(tmp_path, capsys):
     root = init_queue.init_queue(tmp_path / "q", name="demo")
-    assert FleetBlockers.for_queue(root).open == {}
+    assert FleetBlockers.from_config(root, load_config(root)).open == {}
     assert capsys.readouterr().err == ""
 
 
@@ -100,10 +101,10 @@ def test_a_relative_directory_is_resolved_beside_the_queue_and_a_tilde_expands(
     _record(tmp_path / "blockers", "a")
     root = init_queue.init_queue(tmp_path / "q", name="demo")
     (root / "tasks.toml").write_text('name = "demo"\nfleet_blockers_dir = "blockers"\n')
-    assert set(FleetBlockers.for_queue(root).open) == {"a"}
+    assert set(FleetBlockers.from_config(root, load_config(root)).open) == {"a"}
     monkeypatch.setenv("HOME", str(tmp_path))
     (root / "tasks.toml").write_text('name = "demo"\nfleet_blockers_dir = "~/blockers"\n')
-    assert set(FleetBlockers.for_queue(root).open) == {"a"}
+    assert set(FleetBlockers.from_config(root, load_config(root)).open) == {"a"}
 
 
 def test_a_missing_directory_warns_once_and_falls_back_to_no_blockers(tmp_path, capsys):
@@ -116,9 +117,9 @@ def test_a_missing_directory_warns_once_and_falls_back_to_no_blockers(tmp_path, 
 def test_an_unreadable_tasks_toml_warns_and_ranks_with_no_blockers(tmp_path, capsys):
     root = _queue(tmp_path, {"a": _brief("a", clears="x")})
     (root / "tasks.toml").write_text("name = [unterminated\n")
-    assert FleetBlockers.for_queue(root).open == {}
     assert _ids(prioritise.rank(root, today=TODAY)) == ["a"]
-    assert "cannot read tasks.toml" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.count("cannot read") == 1 and str(root / "tasks.toml") in err
 
 
 def test_a_bad_record_is_skipped_with_one_warning_and_the_rest_still_load(tmp_path, capsys):

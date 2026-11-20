@@ -38,5 +38,5 @@ def load_config_or_defaults(root: str | os.PathLike[str], reader: str) -> dict[s
     try:
         return load_config(root)
     except (OSError, ValueError) as e:
-        warn(f"cannot read tasks.toml ({e}); using the defaults", reader)
+        warn(f"cannot read {pathlib.Path(root) / 'tasks.toml'} ({e}); using the defaults", reader)
         return dict(DEFAULTS)

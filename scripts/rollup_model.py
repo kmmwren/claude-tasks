@@ -17,7 +17,7 @@ import facts
 import project_view as pv
 from _dates import parse_date
 from _paths import warn
-from config import load_config
+from config import load_config_or_defaults
 from deps import load_queue, unmet
 from milestones import Milestone
 from prioritise import EFFORT_DAYS
@@ -219,27 +219,8 @@ class Health:
         )
 
     @property
-    def explained(self) -> bool:
-        return bool(self.owner or self.signals)
-
-    @property
     def colour_word(self) -> str:
         return WORD[self.effective]
-
-    def detail(self) -> str:
-        """What follows the colour word, as plain text."""
-        checks = "; ".join(self.signals)
-        stale = f" Update missing: set {self.age_days} days ago." if self.stale else ""
-        return f"{self._lead()}.{stale}" + (f" Automatic checks: {checks}." if checks else "")
-
-    def _lead(self) -> str:
-        reason = self.reason.rstrip(".")
-        if not self.owner:
-            return ", not set by owner" if self.effective else ""
-        if self.effective != self.owner:
-            dated = f" on {self.set_on}" if self.set_on else ""
-            return f", capped by automatic checks (owner said {WORD[self.owner]}{dated}: {reason})"
-        return f", set {self.set_on or 'by owner'}: {reason}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -345,10 +326,7 @@ class Project:
 
 def _zone(queue: pathlib.Path) -> zoneinfo.ZoneInfo:
     """The queue's own `timezone`, UTC when unset or unusable."""
-    try:
-        name = str(load_config(queue)["timezone"])
-    except (OSError, ValueError):  # project_view already warned that tasks.toml is unreadable
-        return zoneinfo.ZoneInfo("UTC")
+    name = str(load_config_or_defaults(queue, "rollup")["timezone"])
     try:
         return zoneinfo.ZoneInfo(name)
     except (KeyError, ValueError):  # an unknown zone name is a KeyError subclass

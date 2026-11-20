@@ -10,6 +10,7 @@ import datetime
 
 import init_queue
 import prioritise
+from config import load_config
 
 TODAY = datetime.date(2026, 6, 2)
 
@@ -591,7 +592,7 @@ def test_a_blocked_expedite_brief_holds_no_expedite_slot():
 def test_a_zero_job_size_is_a_bad_setting(tmp_path, capsys):
     root = _queue(tmp_path, [("ready", "a.md", _brief("a"))])
     (root / "tasks.toml").write_text('name = "demo"\n[priority]\njob_size = { "" = 0 }\n')
-    assert prioritise.Weights.for_queue(root).size("") == 3
+    assert prioritise.Weights.from_config(load_config(root)).size("") == 3
     assert prioritise.rank(root, today=TODAY)[0]["id"] == "a"
     assert "job_size values must be positive" in capsys.readouterr().err
 
@@ -701,7 +702,7 @@ def test_a_bad_priority_setting_warns_and_keeps_tag_weights(tmp_path, capsys):
     (root / "tasks.toml").write_text(
         'name = "demo"\n[priority]\nscorer = "wsfj"\ntag_weights = { urgent = 7 }\n'
     )
-    w = prioritise.Weights.for_queue(root)
+    w = prioritise.Weights.from_config(load_config(root))
     assert w.scorer is prioritise.Scorer.ADDITIVE and w.tags == {"urgent": 7}
     assert "ignoring [priority] settings" in capsys.readouterr().err
 

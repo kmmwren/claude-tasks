@@ -169,8 +169,9 @@
 
 ### Fixed
 - **An unreadable `tasks.toml` no longer drops a queue from ranking or the roll-up.** The fleet-blocker
-  lookup and the priority weights warn `cannot read tasks.toml (...); using the defaults` and rank with them,
-  so the roll-up shows that project instead of listing it under "Not shown".
+  lookup, the priority weights and the roll-up's timezone warn `cannot read <queue>/tasks.toml (...); using the
+  defaults` and carry on with them, so the roll-up shows that project instead of listing it under "Not shown".
+  A rank reads the file once, so it warns once, naming the file.
 - **Roll-up omission messages no longer carry the local queue path.** A queue that cannot be read is
   named by its repository and queue path only.
 - **Adjacent Execution-log appends no longer wedge `git_sync.py`.** When the rebase of local commits

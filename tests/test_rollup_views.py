@@ -655,6 +655,48 @@ def test_an_owner_who_set_nothing_is_not_quoted(report: rv.Report) -> None:
     )
 
 
+def health_of(
+    owner: str, effective: str, *, set_on: str = "", stale: bool = False, age: int | None = None
+) -> rm.Health:
+    return rm.Health(owner, "On course.", set_on, effective, ("a check failed",), stale, age)
+
+
+def says(h: rm.Health) -> tuple[list[str], str]:
+    chips = [c.label for c in rv.health_chips(h)]
+    return chips, rv.owner_line(h).render(rv.MarkdownFormat())
+
+
+def test_a_capped_and_stale_statement_is_quoted_with_its_date_and_both_warnings() -> None:
+    h = health_of("green", "red", set_on="2026-11-10", stale=True, age=9)
+    assert says(h) == (
+        ["Red", "stale, set 9 days ago", "capped by automatic checks"],
+        "Owner said Green on 2026-11-10: On course.",
+    )
+
+
+def test_a_statement_that_stands_is_quoted_and_carries_only_its_colour() -> None:
+    h = health_of("green", "green", set_on="2026-11-18")
+    assert says(h) == (["Green"], "Owner said Green on 2026-11-18: On course.")
+
+
+def test_an_undated_statement_says_the_date_was_not_recorded_capped_or_not() -> None:
+    line = "Owner said Green on a date that was not recorded: On course."
+    assert says(health_of("green", "red")) == (["Red", "capped by automatic checks"], line)
+    assert says(health_of("green", "green")) == (["Green"], line)
+
+
+def test_a_floor_with_no_owner_word_is_the_colour_alone_and_not_a_cap() -> None:
+    assert says(health_of("", "red")) == (
+        ["Red"],
+        "The owner has not set a health in project.toml.",
+    )
+
+
+def test_with_no_owner_word_and_nothing_wrong_the_colour_chip_is_neutral() -> None:
+    (chip,) = rv.health_chips(rm.Health("", "", "", "", ()))
+    assert (chip.label, chip.tone) == ("Not set by owner", rv.Tone.NEUTRAL)
+
+
 def test_a_due_today_brief_says_so() -> None:
     today = rv.RankedBrief(1, "x", "X", "", "", dt.date(2026, 11, 19), 0, ())
     chips = [p for p in rv.due_parts(today) if isinstance(p, rv.Chip)]
