@@ -7,8 +7,8 @@ Every brief outside done/ moves to the same status folder in the queue named by
 lifecycle becomes "folded" and the session's binding is removed, so later runs in that
 session resolve as usual. A brief renamed on a name clash gets its id: and the references to it
 among the folded briefs rewritten; done briefs the moved ones depend on are copied into the
-parent's done/. A file in either queue that is not UTF-8 stops the fold before anything is
-written. Safe to run twice.
+parent's done/. A brief or facts file the fold reads that is not UTF-8 stops it before anything
+is written. Safe to run twice.
 
 Usage:
   python scripts/fold_session.py ~/q/s1
@@ -22,13 +22,22 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from _concurrency import atomic_write, repo_lock, reserve_name
-from _paths import CONFIG_FILE, TASK_DIRS, QueueBriefs, binding_path, require_queue, warn
+from _paths import (
+    CONFIG_FILE,
+    TASK_DIRS,
+    BriefFile,
+    QueueBriefs,
+    binding_path,
+    require_queue,
+    warn,
+)
 from config import load_config
-from deps import BRIEF_DIRS, Brief, fm, load_queue
-from facts import facts_files, facts_path
+from deps import BRIEF_DIRS, Brief, brief_id, fm, load_queue
+from facts import facts_path
 from git_sync import owns_repo, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
+NOT_FOLDED = "nothing is folded"
 _STUB = re.compile(r"\A---\n(?:(?!---\n).*\n)*?moved_to:")
 _FRONTMATTER = re.compile(r"\A---\n.*?\n---", re.DOTALL)
 _WORD = re.compile(r"(?<![\w:-])[\w-]+")
@@ -39,8 +48,12 @@ _FACTS_BRIEF = re.compile(r'(?m)^brief\s*=\s*"[^"\n]*"')
 
 @dataclass(frozen=True)
 class Move:
-    source: pathlib.Path
+    brief: BriefFile
     dest: pathlib.Path
+
+    @property
+    def source(self) -> pathlib.Path:
+        return self.brief.path
 
 
 @dataclass(frozen=True)
@@ -58,11 +71,10 @@ class SessionQueue:
             raise SystemExit(f"{root} is not session-linked (no [session] in {CONFIG_FILE}).")
         return cls(root, str(session["id"]), require_queue(pathlib.Path(session["fold_to"])))
 
-    def open_briefs(self) -> Iterator[pathlib.Path]:
+    def open_briefs(self, session: QueueBriefs) -> Iterator[BriefFile]:
+        """The session's briefs outside done/ that have not already been folded."""
         for status in OPEN_DIRS:
-            for path in sorted((self.root / status).glob("*.md")):
-                if not _STUB.match(path.read_text(encoding="utf-8")):
-                    yield path
+            yield from (brief for brief in session.folder(status) if not _STUB.match(brief.text))
 
     def fold(self, env: Mapping[str, str] | None = None) -> list[Move]:
         binding = binding_path(self.id, env)
@@ -71,41 +83,46 @@ class SessionQueue:
                 raise SystemExit(
                     f"Could not take the queue lock for {self.root}; nothing was folded."
                 )
-            self._require_utf8()
-            moves = [self._reserve(path) for path in self.open_briefs()]
+            session = QueueBriefs.read(self.root, consequence=NOT_FOLDED)
+            parent = QueueBriefs.read(self.fold_to, consequence=NOT_FOLDED)
+            self._require_utf8(session, parent)
+            moves = [self._reserve(brief) for brief in self.open_briefs(session)]
             renames = {
-                _brief_id(m.source): m.dest.stem for m in moves if m.dest.stem != m.source.stem
+                _brief_id(m.brief): m.dest.stem for m in moves if m.dest.stem != m.source.stem
             }
             for move in moves:
                 self._move(move, renames)
-            self._carry_done_prerequisites(moves)
+            self._carry_done_prerequisites(moves, session, parent)
             self._mark_folded()
         binding.unlink(missing_ok=True)
         self._sync(moves)
         return moves
 
-    def _require_utf8(self) -> None:
+    def _require_utf8(self, session: QueueBriefs, parent: QueueBriefs) -> None:
         """Stop before the first write if a file the fold reads is not UTF-8, so no fold is left half done."""
-        bad = [path for path in self._files_read() if not _is_utf8(path)]
+        bad = [
+            *session.undecodable(TASK_DIRS),
+            *self._undecodable_facts(session),
+            *parent.undecodable(BRIEF_DIRS),
+        ]
         if bad:
             raise SystemExit(f"Not valid UTF-8, so nothing was folded: {', '.join(map(str, bad))}")
 
-    def _files_read(self) -> Iterator[pathlib.Path]:
-        """The session's briefs and facts, and the parent briefs the fold counts done ids from."""
-        for status in TASK_DIRS:
-            yield from sorted((self.root / status).glob("*.md"))
-        yield from facts_files(self.root)
-        for status in BRIEF_DIRS:
-            yield from sorted((self.fold_to / status).glob("*.md"))
+    def _undecodable_facts(self, session: QueueBriefs) -> Iterator[pathlib.Path]:
+        """The facts files of the briefs being moved that are not UTF-8; no other facts file is read."""
+        for brief in self.open_briefs(session):
+            path = facts_path(self.root, _brief_id(brief))
+            if path.exists() and not _is_utf8(path):
+                yield path
 
-    def _reserve(self, source: pathlib.Path) -> Move:
-        target = self.fold_to / source.parent.name
-        name = reserve_name(target, source.stem, [self.fold_to / d for d in TASK_DIRS])
-        return Move(source, target / f"{name}.md")
+    def _reserve(self, brief: BriefFile) -> Move:
+        target = self.fold_to / brief.path.parent.name
+        name = reserve_name(target, brief.path.stem, [self.fold_to / d for d in TASK_DIRS])
+        return Move(brief, target / f"{name}.md")
 
     def _move(self, move: Move, renames: Mapping[str, str]) -> None:
-        text = move.source.read_text(encoding="utf-8")
-        old_id = _brief_id(move.source)
+        text = move.brief.text
+        old_id = _brief_id(move.brief)
         new_id = renames.get(old_id, old_id)
         if renames:
             text = _retarget(text, renames, renames.get(old_id))
@@ -127,17 +144,22 @@ class SessionQueue:
         atomic_write(dest, _retarget_facts(source.read_text(encoding="utf-8"), new_id))
         source.unlink()
 
-    def _carry_done_prerequisites(self, moves: list[Move]) -> None:
+    def _carry_done_prerequisites(
+        self, moves: list[Move], session: QueueBriefs, parent: QueueBriefs
+    ) -> None:
         """Copy done briefs the moved ones depend on, since the parent only counts its own done/ as met."""
         wanted: set[str] = set()
+        counted = {b.id for b in load_queue(parent)}
         for move in moves:
-            brief = Brief("", "", fm(move.dest.read_text(encoding="utf-8")))
+            fields = fm(move.dest.read_text(encoding="utf-8"))
+            brief = Brief("", "", fields)
             wanted |= brief.declared_ids | brief.legacy_tokens
-        wanted -= {b.id for b in load_queue(QueueBriefs.read(self.fold_to))}
-        for done in sorted((self.root / "done").glob("*.md")):
-            if _brief_id(done) in wanted:
-                carried = self._reserve(done)
-                atomic_write(carried.dest, done.read_text(encoding="utf-8"))
+            # `parent` was read before the moves, so the moved briefs it now counts are added here.
+            if move.dest.parent.name in BRIEF_DIRS:
+                counted.add(brief_id(fields, move.dest.stem))
+        for done in session.folder("done"):
+            if _brief_id(done) in wanted - counted:
+                atomic_write(self._reserve(done).dest, done.text)
 
     def _mark_folded(self) -> None:
         config = self.root / CONFIG_FILE
@@ -160,8 +182,8 @@ def _is_utf8(path: pathlib.Path) -> bool:
     return True
 
 
-def _brief_id(path: pathlib.Path) -> str:
-    return fm(path.read_text(encoding="utf-8")).get("id", path.stem)
+def _brief_id(brief: BriefFile) -> str:
+    return fm(brief.text).get("id", brief.path.stem)
 
 
 def _retarget(text: str, renames: Mapping[str, str], own_id: str | None) -> str:

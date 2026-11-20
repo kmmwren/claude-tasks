@@ -273,14 +273,14 @@ def test_queue_briefs_reads_a_folder_when_asked_and_names_a_bad_brief_under_the_
 
 def _spy_on_folder_reads(monkeypatch):
     reads = []
-    real = _paths.read_briefs
+    real = _paths.read_folder
 
-    def spy(folder, shown_as=None):
+    def spy(folder, shown_as=None, consequence=_paths.SKIPPED):
         reads.append(folder.name)
         time.sleep(0.01)  # wide enough for an unlocked second reader to get in
-        return real(folder, shown_as)
+        return real(folder, shown_as, consequence)
 
-    monkeypatch.setattr(_paths, "read_briefs", spy)
+    monkeypatch.setattr(_paths, "read_folder", spy)
     return reads
 
 
@@ -313,6 +313,24 @@ def test_queue_briefs_shared_by_many_threads_reads_a_folder_once(tmp_path, monke
     for thread in threads:
         thread.join()
     assert reads == ["ready"]
+
+
+def test_queue_briefs_lists_the_files_it_left_out_folder_by_folder(tmp_path):
+    bad = _folder_with_a_bad_brief(tmp_path) / "bad.md"
+    (tmp_path / "done").mkdir()
+    (tmp_path / "done" / "worse.md").write_bytes(NOT_UTF8)
+    briefs = _paths.QueueBriefs.read(tmp_path)
+    assert briefs.undecodable(("ready", "done", "blocked")) == [bad, tmp_path / "done" / "worse.md"]
+    assert [b.path.name for b in briefs.folder("ready")] == ["a.md", "b.md"]
+
+
+def test_queue_briefs_warns_with_the_consequence_it_was_given(tmp_path, capsys):
+    _folder_with_a_bad_brief(tmp_path)
+    _paths.QueueBriefs.read(tmp_path, "S", consequence="nothing is folded").folder("ready")
+    assert (
+        capsys.readouterr().err
+        == "warning: S/ready/bad.md: is not valid UTF-8; nothing is folded\n"
+    )
 
 
 def test_read_brief_names_a_bad_file_by_its_path_unless_told_otherwise(tmp_path, capsys):

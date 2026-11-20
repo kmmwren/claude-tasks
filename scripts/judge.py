@@ -215,7 +215,7 @@ class ClaudeBackend:
                 argv,
                 input=text,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
                 timeout=self.timeout,
                 cwd=self.cwd,
                 check=False,

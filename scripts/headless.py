@@ -188,7 +188,7 @@ def ask_json(
                 argv,
                 input=prompt,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
                 timeout=timeout,
                 check=True,
                 env=launch.env(reason),

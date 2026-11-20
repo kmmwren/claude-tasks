@@ -50,7 +50,7 @@ LOST_RACE = re.compile(
 def _run(
     repo: pathlib.Path, *args: str, timeout: float | None = None
 ) -> "subprocess.CompletedProcess[str]":
-    return _git(repo, *args, capture_output=True, text=True, timeout=timeout)
+    return _git(repo, *args, capture_output=True, encoding="utf-8", timeout=timeout)
 
 
 def _network(repo: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str]":

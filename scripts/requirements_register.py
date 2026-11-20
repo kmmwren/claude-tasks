@@ -24,6 +24,8 @@ import re
 import sys
 from dataclasses import dataclass
 
+from _paths import read_stdin
+
 REGISTER_FILE = "requirements.md"
 KINDS = (
     "capability",
@@ -235,7 +237,7 @@ def main(argv: list[str] | None = None) -> None:
     add.add_argument("--json", default="-", help="items file, or - for stdin")
     add.add_argument("--prefix", default=None, help="id prefix when the register header has none")
     a = ap.parse_args(argv)
-    raw = sys.stdin.read() if a.json == "-" else pathlib.Path(a.json).read_text(encoding="utf-8")
+    raw = read_stdin() if a.json == "-" else pathlib.Path(a.json).read_text(encoding="utf-8")
     items = json.loads(raw)
     if not isinstance(items, list):
         raise SystemExit("items JSON must be a list of objects")

@@ -263,7 +263,7 @@ def _bytes_of(*roots):
         ("child", "ready/bad.md"),
         ("child", "inbox/bad.md"),
         ("child", "done/bad.md"),
-        ("child", "facts/bad.toml"),
+        ("child", "facts/a.toml"),
         ("parent", "done/bad.md"),
         ("parent", "ready/bad.md"),
         ("parent", "parked/bad.md"),
@@ -282,6 +282,34 @@ def test_a_file_the_fold_reads_that_is_not_utf8_stops_it_before_anything_is_writ
     assert _bytes_of(parent, child) == before
     assert config.load_config(child)["session"]["lifecycle"] == "session"
     assert _paths.binding_path("s1", env).exists()
+
+
+def test_a_facts_file_no_moved_brief_owns_is_not_read_so_does_not_stop_the_fold(queues):
+    parent, child, env = queues
+    _write_facts(child, "c", "")
+    (child / "facts" / "orphan.toml").write_bytes(NOT_UTF8)
+    (child / "facts" / "c.toml").write_bytes(NOT_UTF8)
+    fold_session.SessionQueue.load(child).fold(env)
+    assert (parent / "ready" / "a.md").exists()
+    assert (child / "facts" / "orphan.toml").read_bytes() == NOT_UTF8
+
+
+def test_a_brief_that_is_not_utf8_is_named_as_stopping_the_fold_not_as_skipped(queues, capsys):
+    parent, child, env = queues
+    (child / "ready" / "bad.md").write_bytes(NOT_UTF8)
+    with pytest.raises(SystemExit):
+        fold_session.SessionQueue.load(child).fold(env)
+    assert "bad.md: is not valid UTF-8; nothing is folded" in capsys.readouterr().err
+
+
+def test_a_done_brief_sharing_a_moved_briefs_id_is_not_copied_as_a_duplicate(queues):
+    parent, child, env = queues
+    (child / "ready" / "x.md").write_text("---\nid: x\nblocked_by: [c]\n---\nx\n")
+    (child / "done" / "dup.md").write_text("---\nid: b\n---\nold b\n")
+    (child / "ready" / "y.md").write_text("---\nid: y\nblocked_by: [b]\n---\ny\n")
+    fold_session.SessionQueue.load(child).fold(env)
+    assert not (parent / "done" / "dup.md").exists()
+    assert (parent / "done" / "c.md").exists()
 
 
 def test_a_parent_brief_that_is_not_utf8_cannot_drop_a_done_brief_id_from_the_parents_ids(queues):

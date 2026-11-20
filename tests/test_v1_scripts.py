@@ -4,12 +4,12 @@ The concurrency suite drives these as subprocesses (for real OS-level lock races
 in-process coverage can't see — so these cover the same code paths in-process for the gate.
 """
 
-import io
-
 import add_task
 import init_queue
 import pytest
 import raw_capture
+
+from tests.queue_helpers import NOT_ASCII, piped
 
 
 @pytest.fixture
@@ -110,9 +110,10 @@ def test_add_task_status_ready_matches_ready_flag(queue):
 
 
 def test_add_task_appends_stdin_to_context(queue, monkeypatch):
-    monkeypatch.setattr("sys.stdin", io.StringIO("context from a pipe"))
+    monkeypatch.setattr("sys.stdin", piped(f"context from a pipe {NOT_ASCII}"))
     add_task.main(["--title", "With stdin", "--root", str(queue), "--stdin"])
-    assert "context from a pipe" in (queue / "inbox" / "with-stdin.md").read_text()
+    brief = (queue / "inbox" / "with-stdin.md").read_text(encoding="utf-8")
+    assert f"context from a pipe {NOT_ASCII}" in brief
 
 
 def test_add_task_commit_invokes_sync(queue, monkeypatch):

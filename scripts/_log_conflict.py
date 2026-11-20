@@ -47,7 +47,7 @@ def _run(worktree: pathlib.Path, *args: str) -> "subprocess.CompletedProcess[str
     """Run git in `worktree` with the commit editor suppressed, so `rebase --continue` never waits."""
     env = {**os.environ, "GIT_EDITOR": "true"}
     return subprocess.run(
-        ["git", "-C", str(worktree), *args], capture_output=True, text=True, env=env
+        ["git", "-C", str(worktree), *args], capture_output=True, encoding="utf-8", env=env
     )
 
 

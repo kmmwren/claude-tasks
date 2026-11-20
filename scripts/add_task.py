@@ -32,7 +32,7 @@ import re
 import sys
 
 from _concurrency import atomic_write, require_lock, reserve_name
-from _paths import COMMENT_START, TASK_DIRS, require_queue, resolve_root
+from _paths import COMMENT_START, TASK_DIRS, read_stdin, require_queue, resolve_root
 from fingerprint import Fingerprint, Located, find_duplicate
 from git_sync import sync_commit as _sync_commit
 from readiness import (
@@ -256,7 +256,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     context = a.context.strip()
     if a.stdin and not sys.stdin.isatty():
-        context = (context + "\n\n" + sys.stdin.read().strip()).strip()
+        context = (context + "\n\n" + read_stdin().strip()).strip()
     if status == "ready":
         missing = [FLAGS[f] for f in missing_ready_fields(a.goal, a.criteria, context)]
         if missing:

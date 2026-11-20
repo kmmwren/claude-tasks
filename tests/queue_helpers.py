@@ -1,5 +1,6 @@
 """Shared builders for the dependency, unblock, milestone and board tests."""
 
+import io
 import pathlib
 import time
 
@@ -8,6 +9,14 @@ from _push_state import PushState
 
 NOT_UTF8 = b"\xff\xfe\x00bad"
 """A brief a text editor in another encoding could leave behind; no reader may crash on it."""
+
+NOT_ASCII = "caf\u00e9 \u2713"
+"""Text a pipe carries as UTF-8 that an ASCII locale cannot decode."""
+
+
+def piped(text: str) -> io.TextIOWrapper:
+    """`text` as UTF-8 bytes on a stdin whose locale says ASCII, so only a UTF-8 reader decodes it."""
+    return io.TextIOWrapper(io.BytesIO(text.encode("utf-8")), encoding="ascii")
 
 
 def brief_text(

@@ -80,7 +80,7 @@ def gh_fetch(spec: str) -> str:
     return subprocess.run(
         ["gh", "api", f"repos/{repo}/contents/{path}", "-H", "Accept: application/vnd.github.raw"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
         timeout=60,
     ).stdout

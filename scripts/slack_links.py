@@ -17,6 +17,8 @@ import sys
 from dataclasses import asdict, dataclass
 from urllib.parse import parse_qs, urlparse
 
+from _paths import read_stdin
+
 PERMALINK = re.compile(r"<?(https://[\w.-]+\.slack\.com/archives/[^\s>|]+)(?:\|[^>]*)?>?")
 PARK = re.compile(r"\bpark(?:ed|ing)?\b", re.IGNORECASE)
 
@@ -100,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Split pasted Slack links + notes into items")
     ap.add_argument("text", nargs="?", default=None, help="pasted block (default: stdin)")
     a = ap.parse_args(argv)
-    batch = parse(a.text if a.text is not None else sys.stdin.read())
+    batch = parse(a.text if a.text is not None else read_stdin())
     print(
         json.dumps(
             {"direction": batch.direction, "links": [asdict(x) for x in batch.links]}, indent=2

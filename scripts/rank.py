@@ -98,7 +98,7 @@ def prioritise_rows(root: pathlib.Path, scope: Scope | None = None) -> list[dict
             str(root),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
     try:

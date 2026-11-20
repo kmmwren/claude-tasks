@@ -7,7 +7,7 @@ import pytest
 import requirements_check
 import requirements_register as reg
 
-from tests.queue_helpers import NOT_UTF8
+from tests.queue_helpers import NOT_ASCII, NOT_UTF8, piped
 
 
 def item(
@@ -166,14 +166,21 @@ def test_cli_appends_from_file_and_stdin(queue, tmp_path, capsys, monkeypatch):
     f.write_text(json.dumps([item()]))
     reg.main(["append", str(queue), "--json", str(f)])
     assert "added 1: PL-R001" in capsys.readouterr().out
-    import io
-
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([item()])))
+    monkeypatch.setattr("sys.stdin", piped(json.dumps([item()])))
     reg.main(["append", str(queue)])
     assert "already registered 1: PL-R001" in capsys.readouterr().out
-    monkeypatch.setattr("sys.stdin", io.StringIO('{"not": "a list"}'))
+    monkeypatch.setattr("sys.stdin", piped('{"not": "a list"}'))
     with pytest.raises(SystemExit, match="list"):
         reg.main(["append", str(queue)])
+
+
+def test_cli_reads_a_utf8_pipe_whatever_the_locale(queue, capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", piped(json.dumps([item(quote=NOT_ASCII)], ensure_ascii=False)))
+    reg.main(["append", str(queue)])
+    assert "added 1: PL-R001" in capsys.readouterr().out
+    assert [
+        r.quote for r in reg.parse_register(reg.register_path(queue).read_text(encoding="utf-8"))
+    ] == [NOT_ASCII]
 
 
 # --- coverage check -----------------------------------------------------------

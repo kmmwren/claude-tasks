@@ -4,6 +4,8 @@ import json
 
 import slack_links
 
+from tests.queue_helpers import NOT_ASCII, piped
+
 TOP = "https://example.slack.com/archives/C0123ABCD/p1773265865773179"
 REPLY = (
     "https://example.slack.com/archives/C0999ZZZZ/p1773300000000002"
@@ -91,3 +93,9 @@ def test_a_reply_is_keyed_by_its_thread_root():
 
 def test_permalink_key_is_none_for_other_urls():
     assert slack_links.permalink_key("https://example.test/archives/C1/p1") is None
+
+
+def test_main_reads_a_utf8_pipe_whatever_the_locale(capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", piped(f"{NOT_ASCII} {TOP} note"))
+    assert slack_links.main([]) == 0
+    assert json.loads(capsys.readouterr().out)["direction"] == NOT_ASCII

@@ -17,7 +17,7 @@ def _git(root: pathlib.Path, *args: str, timeout: float | None = None) -> str:
     """Git's stdout in `root`; empty when it fails or times out, so the next source is tried."""
     try:
         run = subprocess.run(
-            ["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout
+            ["git", "-C", str(root), *args], capture_output=True, encoding="utf-8", timeout=timeout
         )
     except subprocess.TimeoutExpired:
         return ""

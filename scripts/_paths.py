@@ -92,22 +92,45 @@ class BriefFile:
     text: str
 
 
+SKIPPED = "that brief is skipped"
+
+
 def read_briefs(folder: pathlib.Path, shown_as: str | None = None) -> list[BriefFile]:
     """The briefs in `folder` by name, each read once; one that is not UTF-8 is left out and named once."""
-    found = (
-        read_brief(path, f"{shown_as or folder}/{path.name}")
-        for path in sorted(folder.glob("*.md"))
-    )
-    return [brief for brief in found if brief is not None]
+    return list(read_folder(folder, shown_as).briefs)
 
 
-def read_brief(path: pathlib.Path, shown_as: str | None = None) -> BriefFile | None:
-    """The brief at `path`, or None, named once, when it is not UTF-8."""
+def read_brief(
+    path: pathlib.Path, shown_as: str | None = None, consequence: str = SKIPPED
+) -> BriefFile | None:
+    """The brief at `path`, or None, named once with `consequence`, when it is not UTF-8."""
     try:
         return BriefFile(path, path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
-        warn_undecodable(shown_as or str(path), "that brief is skipped")
+        warn_undecodable(shown_as or str(path), consequence)
         return None
+
+
+@dataclasses.dataclass(frozen=True)
+class BriefFolder:
+    """A state folder's briefs, and the files in it left out because they are not UTF-8."""
+
+    briefs: tuple[BriefFile, ...]
+    undecodable: tuple[pathlib.Path, ...]
+
+
+def read_folder(
+    folder: pathlib.Path, shown_as: str | None = None, consequence: str = SKIPPED
+) -> BriefFolder:
+    """Every brief in `folder` by name, read once, split into the decoded and the undecodable."""
+    read = [
+        (path, read_brief(path, f"{shown_as or folder}/{path.name}", consequence))
+        for path in sorted(folder.glob("*.md"))
+    ]
+    return BriefFolder(
+        tuple(brief for _, brief in read if brief is not None),
+        tuple(path for path, brief in read if brief is None),
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,12 +138,13 @@ class QueueBriefs:
     """A queue's briefs, each state folder read on first request and then shared by every reader.
 
     Each roll-up or command builds its own; the lock keeps a folder read once even if a caller's
-    threads do share one.
+    threads do share one. `consequence` is what the warning for an undecodable brief says happens.
     """
 
     root: pathlib.Path
     label: str
-    _read: dict[str, tuple[BriefFile, ...]] = dataclasses.field(
+    consequence: str = SKIPPED
+    _read: dict[str, BriefFolder] = dataclasses.field(
         default_factory=dict, init=False, repr=False, compare=False
     )
     _lock: threading.Lock = dataclasses.field(
@@ -128,19 +152,35 @@ class QueueBriefs:
     )
 
     @classmethod
-    def read(cls, root: pathlib.Path, shown_as: str | None = None) -> "QueueBriefs":
-        return cls(root, shown_as or str(root))
+    def read(
+        cls, root: pathlib.Path, shown_as: str | None = None, consequence: str = SKIPPED
+    ) -> "QueueBriefs":
+        return cls(root, shown_as or str(root), consequence)
 
     def folder(self, name: str) -> tuple[BriefFile, ...]:
         """The briefs in state folder `name`, read the first time they are asked for."""
-        with self._lock:
-            if name not in self._read:
-                self._read[name] = tuple(read_briefs(self.root / name, f"{self.label}/{name}"))
-            return self._read[name]
+        return self._folder(name).briefs
 
     def within(self, folders: Iterable[str]) -> Iterator[tuple[str, BriefFile]]:
         """Each brief in `folders`, folder by folder, with the folder it sits in."""
         return ((d, brief) for d in folders for brief in self.folder(d))
+
+    def undecodable(self, folders: Iterable[str]) -> list[pathlib.Path]:
+        """The files in `folders` left out because they are not UTF-8."""
+        return [path for d in folders for path in self._folder(d).undecodable]
+
+    def _folder(self, name: str) -> BriefFolder:
+        with self._lock:
+            if name not in self._read:
+                self._read[name] = read_folder(
+                    self.root / name, f"{self.label}/{name}", self.consequence
+                )
+            return self._read[name]
+
+
+def read_stdin() -> str:
+    """Standard input decoded as UTF-8, whatever encoding the locale gives `sys.stdin`."""
+    return sys.stdin.buffer.read().decode("utf-8")
 
 
 def strip_comment(value: str) -> str:

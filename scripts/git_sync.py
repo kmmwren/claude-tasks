@@ -35,13 +35,13 @@ def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProc
 
 def owns_repo(root: pathlib.Path) -> bool:
     """True when `root` is the top of its own git repo, so `add --all` stages only the queue."""
-    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
+    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, encoding="utf-8")
     return top.returncode == 0 and pathlib.Path(top.stdout.strip()).resolve() == root.resolve()
 
 
 def host_repo_name(root: pathlib.Path) -> str | None:
     """The name of the git repo that holds `root`, None when `root` is in no repo."""
-    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
+    top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, encoding="utf-8")
     return pathlib.Path(top.stdout.strip()).name if top.returncode == 0 else None
 
 
@@ -79,7 +79,7 @@ def _secret_bearing(root: pathlib.Path, paths: Sequence[str]) -> list[str]:
         "--",
         *paths,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout
     found = []
     for rel in _split_z(out):
@@ -101,7 +101,7 @@ def _staged_secret_bearing(root: pathlib.Path) -> list[str]:
         "-z",
         "--diff-filter=ACMR",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout
     staged = (
         (rel, _git(root, "show", f":{rel}", capture_output=True).stdout.decode(errors="ignore"))
@@ -121,7 +121,7 @@ def _brief_pathspec(brief_id: str) -> str:
 
 
 def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
-    out = _git(root, "ls-files", "-z", *flags, capture_output=True, text=True).stdout
+    out = _git(root, "ls-files", "-z", *flags, capture_output=True, encoding="utf-8").stdout
     return [path for path in out.split("\0") if path]
 
 
@@ -141,7 +141,7 @@ def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
         "--git-path",
         "FETCH_HEAD",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     return pathlib.Path(out) if out else None
 
@@ -178,7 +178,7 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
         "--diff-filter=A",
         f"HEAD...origin/{default_branch(root)}",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     moved_away = set(
         _tracked(root, "--deleted")
@@ -210,14 +210,16 @@ def _stage_named_briefs(
             _brief_pathspec(brief_id),
             *refused,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         if staged.returncode != 0:
             print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
 
 
 def _short_log(root: pathlib.Path, rev_range: str) -> str:
-    out = _git(root, "log", "--format=%h %s", rev_range, capture_output=True, text=True).stdout
+    out = _git(
+        root, "log", "--format=%h %s", rev_range, capture_output=True, encoding="utf-8"
+    ).stdout
     return "; ".join(out.splitlines()) or "none"
 
 
@@ -250,7 +252,7 @@ def _fetch_origin(root: pathlib.Path, deadline: Deadline) -> None:
         "origin",
         default_branch(root),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=deadline.cap(NETWORK_TIMEOUT),
     )
 
@@ -268,12 +270,20 @@ def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
             str(wt),
             "HEAD",
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         try:
             yield wt
         finally:
-            _git(root, "worktree", "remove", "--force", str(wt), capture_output=True, text=True)
+            _git(
+                root,
+                "worktree",
+                "remove",
+                "--force",
+                str(wt),
+                capture_output=True,
+                encoding="utf-8",
+            )
 
 
 def _wip_branch() -> str:
@@ -298,7 +308,7 @@ def _park_local_commits(root: pathlib.Path, deadline: Deadline) -> str:
             "origin",
             f"HEAD:refs/heads/{branch}",
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=deadline.cap(NETWORK_TIMEOUT),
         )
     except subprocess.TimeoutExpired:
@@ -323,7 +333,7 @@ def _rebase_and_push(root: pathlib.Path, wt: pathlib.Path, deadline: Deadline) -
         "origin",
         f"HEAD:{branch}",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=deadline.cap(NETWORK_TIMEOUT),
     )
     if pushed.returncode != 0:
@@ -341,7 +351,7 @@ def _advance_checkout(root: pathlib.Path, deadline: Deadline) -> None:
             f"run: git fetch origin {branch} && git reset --keep origin/{branch})"
         )
         return
-    reset = _git(root, "reset", "--keep", f"origin/{branch}", capture_output=True, text=True)
+    reset = _git(root, "reset", "--keep", f"origin/{branch}", capture_output=True, encoding="utf-8")
     if reset.returncode != 0:
         print(
             "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
@@ -395,7 +405,7 @@ def _ahead_of_origin(root: pathlib.Path) -> bool:
         "--count",
         f"origin/{default_branch(root)}..HEAD",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     return ahead.returncode != 0 or ahead.stdout.strip() != "0"
 
@@ -543,7 +553,7 @@ def _commit_locked(
     if paths:
         _git(root, "add", "--all", "--", *paths, *refused)
     # Tolerate "nothing to commit": a concurrent holder may have already swept us in.
-    _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
+    _git(root, "commit", "-q", "-m", message, capture_output=True, encoding="utf-8")
 
 
 def _commit_for_push(

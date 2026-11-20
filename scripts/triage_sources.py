@@ -77,7 +77,7 @@ def pr_state(repo: str, number: int) -> PrState | None:
         done = subprocess.run(
             ["gh", "pr", "view", str(number), "-R", repo, "--json", "state", "-q", ".state"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
