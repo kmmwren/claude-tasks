@@ -279,3 +279,31 @@ def test_a_queue_that_owns_its_repo_has_no_unshipped_findings(tmp_path):
     os.utime(brief, (aged, aged))
 
     assert _unshipped(repo) == []
+
+
+def _two_queues(tmp_path, waiter):
+    alpha = make_queue(tmp_path, {"dep": {"status": "done"}}, project_name="alpha")
+    beta = make_queue(tmp_path, {"w": waiter}, project_name="beta")
+    return alpha, beta
+
+
+def test_a_qualified_blocker_that_resolves_is_not_dangling(tmp_path):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": "[alpha:dep]"})
+    kinds = {(p.kind, p.brief) for p in check_deps.check(beta, roots=[alpha, beta])}
+    assert ("dangling", "w") not in kinds
+    assert ("releasable", "w") in kinds
+
+
+@pytest.mark.parametrize("ref", ["zeta:dep", "alpha:gone"])
+def test_a_qualified_blocker_naming_nothing_is_dangling(tmp_path, ref):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": f"[{ref}]"})
+    dangling = [p for p in check_deps.check(beta, roots=[alpha, beta]) if p.kind == "dangling"]
+    assert len(dangling) == 1 and dangling[0].detail.startswith(ref)
+
+
+def test_check_reads_the_known_queues_from_the_environment(tmp_path, monkeypatch):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": "[alpha:dep]"})
+    monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(alpha))
+    assert ("dangling", "w") not in _kinds(beta)
+    monkeypatch.delenv("CLAUDE_TASKS_ROOTS")
+    assert ("dangling", "w") in _kinds(beta)

@@ -4,7 +4,7 @@ check_deps.py — lint a queue's dependency graph. Exit 1 when anything is wrong
 
 Finds, in one pass:
   cycle              briefs that wait on each other, directly or through a chain
-  dangling           a `blocked_by` / `depends:` id that names no brief
+  dangling           a `blocked_by` / `depends:` id that names no brief, or a `<queue>:<id>` naming an unknown queue or brief
   in-progress-unmet  a brief being worked whose dependencies are not all done
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
   blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
@@ -33,9 +33,10 @@ import pathlib
 import sys
 import time
 import tomllib
+from collections.abc import Sequence
 
-from _paths import is_brief, require_queue, resolve_root
-from deps import Brief, awaits_release, dependency_edges, load_queue
+from _paths import is_brief, known_roots, require_queue, resolve_root
+from deps import Brief, awaits_release, dependency_edges, done_ids, load_queue, ref_problem
 from facts import declared_brief, facts_files
 from host_land import HostQueue, LandError
 from milestones import MilestonesError, milestone_titles
@@ -77,17 +78,19 @@ def find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return list(cycles.values())
 
 
-def check(root: pathlib.Path) -> list[Problem]:
+def check(root: pathlib.Path, roots: Sequence[pathlib.Path] | None = None) -> list[Problem]:
+    """Every defect in `root`'s graph; `roots` are the queues a `<queue>:<id>` blocker may name."""
+    roots = known_roots(root) if roots is None else roots
     queue = load_queue(root)
     known = {b.id for b in queue}
-    done = {b.id for b in queue if b.status == "done"}
+    done = done_ids(root, roots)
     problems: list[Problem] = []
     graph = {b.id: dependency_edges(b, known) & known for b in queue}
     for cycle in find_cycles(graph):
         problems.append(Problem("cycle", cycle[0], " -> ".join([*cycle, cycle[0]])))
     directory = decisions_dir()
     for b in queue:
-        problems += _brief_problems(b, known, done)
+        problems += _brief_problems(b, known, done, roots)
         problems += [Problem(f.kind, b.id, f.detail) for f in prose_problems(b, known, directory)]
     problems += _milestone_problems(root, queue)
     problems += _unshipped_problems(root)
@@ -140,8 +143,11 @@ def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:
     return out
 
 
-def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
-    out = [Problem("dangling", b.id, d) for d in sorted(b.declared_ids - known)]
+def _brief_problems(
+    b: Brief, known: set[str], done: set[str], roots: Sequence[pathlib.Path]
+) -> list[Problem]:
+    out = [Problem("dangling", b.id, d) for d in sorted(b.local_ids - known)]
+    out += [Problem("dangling", b.id, p) for ref in b.remote_refs if (p := ref_problem(ref, roots))]
     if b.status in ("ready", "in-progress", "parked") and not b.declares_dependencies:
         out.append(
             Problem(

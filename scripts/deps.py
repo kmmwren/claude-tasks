@@ -17,8 +17,9 @@ vendor). It never resolves by itself; `unblock.py resolve` clears it explicitly.
 import dataclasses
 import pathlib
 import re
+from collections.abc import Sequence
 
-from _paths import TASK_DIRS, strip_comment
+from _paths import CONFIG_FILE, PROJECT_MARKER, TASK_DIRS, strip_comment
 
 EXTERNAL_PREFIX = "external:"
 BRIEF_DIRS = tuple(d for d in TASK_DIRS if d != "inbox")
@@ -99,6 +100,56 @@ def is_pr_hold(item: str) -> bool:
     return bool(PR_HOLD.match(item))
 
 
+QUALIFIER = ":"
+
+
+@dataclasses.dataclass(frozen=True)
+class QueueRef:
+    """A `<queue>:<id>` blocker: a brief in another queue, the queue named by path or short name."""
+
+    queue: str
+    id: str
+
+    @classmethod
+    def parse(cls, item: str) -> "QueueRef | None":
+        """The reference an item spells, None for a plain id, an `external:` reason or a PR hold."""
+        if is_external(item) or is_pr_hold(item):
+            return None
+        queue, sep, bid = item.rpartition(QUALIFIER)
+        return cls(queue, bid) if sep and queue and bid else None
+
+    def __str__(self) -> str:
+        return f"{self.queue}{QUALIFIER}{self.id}"
+
+
+def queue_name(root: pathlib.Path) -> str:
+    """A queue's short name: its folder, or the project folder holding a `.tasks`."""
+    return root.parent.name if root.name == PROJECT_MARKER else root.name
+
+
+def same_queue(a: pathlib.Path, b: pathlib.Path) -> bool:
+    return a.resolve() == b.resolve()
+
+
+def resolve_queue(name: str, roots: Sequence[pathlib.Path]) -> pathlib.Path | None:
+    """The queue root `name` means: a path to a queue, else the short name of exactly one known root."""
+    if "/" in name or name.startswith(("~", ".")):
+        path = pathlib.Path(name).expanduser()
+        return path if (path / CONFIG_FILE).is_file() else None
+    matches = [r for r in roots if queue_name(r) == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def ref_problem(ref: QueueRef, roots: Sequence[pathlib.Path]) -> str | None:
+    """Why `ref` names nothing (unknown or ambiguous queue, no such brief there), None when it resolves."""
+    target = resolve_queue(ref.queue, roots)
+    if target is None:
+        return f"{ref}: no single known queue {ref.queue!r}"
+    if not any(b.id == ref.id for b in load_queue(target)):
+        return f"{ref}: no brief {ref.id!r} in {ref.queue}"
+    return None
+
+
 @dataclasses.dataclass(frozen=True)
 class Brief:
     """One brief as the dependency tools see it: its folder (status) and parsed frontmatter."""
@@ -156,6 +207,16 @@ class Brief:
         } | self.depends_tags
 
     @property
+    def remote_refs(self) -> list[QueueRef]:
+        """The `<queue>:<id>` entries of `blocked_by`, in order."""
+        return [ref for item in self.blocked_by if (ref := QueueRef.parse(item))]
+
+    @property
+    def local_ids(self) -> set[str]:
+        """`declared_ids` that name a brief in this brief's own queue."""
+        return {i for i in self.declared_ids if QueueRef.parse(i) is None}
+
+    @property
     def legacy_tokens(self) -> set[str]:
         """Every word of the free-text `blockers:` field; some are ids, some are prose."""
         return set(re.findall(r"[\w-]+", self.fields.get("blockers", "") or ""))
@@ -180,6 +241,21 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
             fields = fm(text)
             out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text), text))
     return out
+
+
+def done_ids(root: pathlib.Path, roots: Sequence[pathlib.Path] = ()) -> set[str]:
+    """Ids of `root`'s done briefs, plus the spelling of every `<queue>:<id>` blocker whose brief is done."""
+    queue = load_queue(root)
+    done = {b.id for b in queue if b.status == "done"}
+    refs = {ref for b in queue for ref in b.remote_refs}
+    return done | {str(ref) for ref in refs if _done_elsewhere(ref, roots)}
+
+
+def _done_elsewhere(ref: QueueRef, roots: Sequence[pathlib.Path]) -> bool:
+    target = resolve_queue(ref.queue, roots)
+    return target is not None and any(
+        b.id == ref.id and b.status == "done" for b in load_queue(target)
+    )
 
 
 def unmet(brief: Brief, done_ids: set[str]) -> list[str]:

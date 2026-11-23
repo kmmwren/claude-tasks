@@ -48,14 +48,17 @@ milestone: {milestone}
 
 
 def make_queue(
-    tmp_path: pathlib.Path, briefs: dict[str, dict[str, str]], milestones: str | None = None
+    tmp_path: pathlib.Path,
+    briefs: dict[str, dict[str, str]],
+    milestones: str | None = None,
+    project_name: str = "proj",
 ) -> pathlib.Path:
     """briefs maps id -> brief_text kwargs (status selects the folder).
 
     `milestones`, when given, is the body of a project-owned milestones.toml that sits beside
-    the queue directory, and tasks.toml is pointed at it.
+    the queue directory, and tasks.toml is pointed at it. `project_name` is the queue's short name.
     """
-    project = tmp_path / "proj"
+    project = tmp_path / project_name
     root = init_queue.init_queue(project / ".tasks", name="demo")
     for bid, kwargs in briefs.items():
         status = kwargs.get("status", "ready")

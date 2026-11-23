@@ -16,9 +16,9 @@ from typing import Any
 import facts
 import project_view as pv
 from _dates import parse_date
-from _paths import warn
+from _paths import known_roots, warn
 from config import load_config_or_defaults
-from deps import load_queue, unmet
+from deps import done_ids, load_queue, unmet
 from milestones import Milestone
 from prioritise import EFFORT_DAYS
 from queue_snapshot import QueueSnapshot
@@ -337,7 +337,7 @@ def _zone(settings: dict[str, Any], label: str) -> zoneinfo.ZoneInfo:
 def open_blockers(queue: pathlib.Path) -> dict[str, tuple[str, ...]]:
     """Open briefs with a blocker still unmet, by the rule the rest of the plugin uses."""
     briefs = load_queue(queue)
-    done = {b.id for b in briefs if b.status == "done"}
+    done = done_ids(queue, known_roots(queue))
     waiting = {b.id: tuple(unmet(b, done)) for b in briefs if b.status != "done"}
     return {brief: blockers for brief, blockers in waiting.items() if blockers}
 

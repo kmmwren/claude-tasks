@@ -25,12 +25,12 @@ QUOTED = re.compile(r"\"[^\"\n]*\"|`[^`\n]*`|“[^”\n]*”")
 PR_REF = re.compile(r"^(?:[\w.-]+/[\w.-]+)?#(\d+)$")
 MERGED_REF = re.compile(r"#(\d+)(?:\]\([^)\s]*\))?\s+(?:merged|landed)\b", re.I)
 AFTER_MERGES = re.compile(
-    r"\bafter\s+(?:PR\s+|brief\s+)?(\S+)\s+(?P<passive>(?:is|are)\s+)?(?P<verb>merges|merged|lands|landed)\b",
+    r"\b(?:after|once)\s+(?:PR\s+|brief\s+)?(\S+)\s+(?P<passive>(?:is|are)\s+)?(?P<verb>merges|merged|lands|landed)\b",
     re.I,
 )
 FUTURE_VERBS = ("merges", "lands")
 WAIT_PHRASE = re.compile(
-    r"(?:\b(?:waits?\s+for|waiting\s+(?:for|on))"
+    r"(?:\b(?:waits?\s+(?:for|on)|waiting\s+(?:for|on))"
     r"|(?:^|[.;:(*\-]\s*|\b(?:is|are|currently|still|now)\s+)(?:gated\s+on|blocked\s+(?:by|on)))"
     r"((?:\s+\S+){1,4})",
     re.I,

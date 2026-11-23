@@ -151,3 +151,18 @@ def test_an_inbox_brief_is_declared_in_place_and_stays_in_the_inbox(root):
     _declare(root, "filed", "--no-deps")
     assert _front(root, "inbox", "filed")["blocked_by"] == "[]"
     assert _front(root, "inbox", "filed")["status"] == "inbox"
+
+
+def test_declare_accepts_a_qualified_blocker_that_resolves(root, tmp_path, monkeypatch):
+    other = make_queue(tmp_path, {"far": {"status": "ready"}}, project_name="elsewhere")
+    monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(other))
+    _declare(root, "shelved", "--blocked-by", "elsewhere:far")
+    assert _front(root, "parked", "shelved")["blocked_by"] == "[elsewhere:far]"
+
+
+@pytest.mark.parametrize("ref", ["nowhere:far", "elsewhere:gone"])
+def test_declare_refuses_a_qualified_blocker_that_names_nothing(root, tmp_path, monkeypatch, ref):
+    other = make_queue(tmp_path, {"far": {"status": "ready"}}, project_name="elsewhere")
+    monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(other))
+    with pytest.raises(SystemExit):
+        _declare(root, "shelved", "--blocked-by", ref)

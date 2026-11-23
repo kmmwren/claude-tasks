@@ -40,11 +40,12 @@ from itertools import chain
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import resolve_root, warn
+from _paths import known_roots, resolve_root, warn
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
     Brief,
+    QueueRef,
     blocker_number,
     declares_dependencies,
     fm,
@@ -53,6 +54,9 @@ from deps import (
     load_queue,
     parse_list,
     probe_gaps,
+    queue_name,
+    ref_problem,
+    same_queue,
 )
 from deps import (
     brief_id as identity_of,
@@ -324,13 +328,22 @@ def _append_log(text: str, today: str, message: str) -> str:
 
 
 def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
-    """Refuse a self-block or a blocker id that is not a brief (externals are free text)."""
+    """Refuse a self-block, an unknown blocker id, or a `<queue>:<id>` that names no known brief (externals are free text)."""
     if brief_id in blocked_by:
         raise ValueError(f"{brief_id!r} cannot be blocked by itself")
     known = {b.id for b in load_queue(root)}
-    unknown = [b for b in blocked_by if not is_external(b) and b not in known]
+    refs = [ref for item in blocked_by if (ref := QueueRef.parse(item))]
+    unknown = [
+        b for b in blocked_by if not is_external(b) and b not in known and QueueRef.parse(b) is None
+    ]
     if unknown:
-        raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
+        raise ValueError(
+            f"unknown blocker id(s) {unknown}; use a brief id, <queue>:<id> or external:<reason>"
+        )
+    roots = known_roots(root)
+    problems = [p for ref in refs if (p := ref_problem(ref, roots))]
+    if problems:
+        raise ValueError(f"unresolved blocker(s): {'; '.join(problems)}")
 
 
 def _warn_missing_evidence(brief_id: str, text: str, root: pathlib.Path) -> None:
@@ -457,7 +470,7 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument(
         "--blocked-by",
         default=None,
-        help="comma-separated brief ids or external:<reason> (required for blocked)",
+        help="comma-separated brief ids, <queue>:<id> or external:<reason> (required for blocked)",
     )
     m.add_argument(
         "--probe",
@@ -482,7 +495,9 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("declare", help="write a brief's blocked_by in place, without moving it")
     d.add_argument("brief_id")
     what = d.add_mutually_exclusive_group(required=True)
-    what.add_argument("--blocked-by", help="comma-separated brief ids or external:<reason>")
+    what.add_argument(
+        "--blocked-by", help="comma-separated brief ids, <queue>:<id> or external:<reason>"
+    )
     what.add_argument("--no-deps", action="store_true", help="the brief depends on nothing")
     d.add_argument("--root", default=None)
     d.add_argument("--log", default=None, help="execution-log line")
@@ -545,20 +560,47 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
-    released: list[str] = []
-    if a.status == "done":
-        from unblock import (
-            release_unblocked,  # unblock imports this module; defer to break the cycle
-        )
-
-        released = list(release_unblocked(root, today=a.today))
-        for released_id in released:
-            print(f"unblocked {released_id} → ready")
+    touched = _cascade(a.brief_id, root, a.today) if a.status == "done" else []
+    local = next((t for t in touched if same_queue(t.root, root)), None)
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[new_path.stem, *released])
+        sync_commit(
+            f"brief({a.brief_id}): → {a.status}",
+            root,
+            ids=[new_path.stem, *(local.ids if local else [])],
+        )
+        for other in (t for t in touched if t is not local):
+            sync_commit(
+                f"brief({a.brief_id}): done in {queue_name(root)}, dependents updated",
+                other.root,
+                ids=other.ids,
+            )
     if a.status == "in-progress":
         note_choice(root, "pick", a.brief_id)
     print(f"{a.brief_id} → {a.status}: {new_path}")
+    if a.status == "done":
+        print(_next_line(root))
+
+
+def _cascade(brief_id: str, root: pathlib.Path, today: str | None) -> list[Any]:
+    """Tell dependents what landed and release what is free, in this queue and every known one."""
+    from cascade import cascade_done  # cascade imports this module; defer to break the cycle
+
+    touched = cascade_done(root, brief_id, known_roots(root), today=today)
+    for t in touched:
+        prefix = "" if same_queue(t.root, root) else f"{queue_name(t.root)}:"
+        for released_id in t.released:
+            print(f"unblocked {prefix}{released_id} → ready")
+    return touched
+
+
+def _next_line(root: pathlib.Path) -> str:
+    """What the picker would start next, so the session names it or continues into it."""
+    from prioritise import next_runnable  # prioritise imports this module's neighbours; defer
+
+    top = next_runnable(root)
+    if top is None:
+        return "next: nothing runnable in ready/"
+    return f"next: {top['id']}  —  {top.get('title', '')}  (score {top['_score']:g})"
 
 
 if __name__ == "__main__":
