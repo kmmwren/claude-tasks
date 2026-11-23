@@ -155,18 +155,28 @@ def approval_in_prose(lines: list[str]) -> str | None:
     return None
 
 
-def dependency_findings(b: Brief, known: set[str], lines: list[str]) -> list[Finding]:
+def wait_in_lines(b: Brief, known: set[str], lines: list[str]) -> str | None:
+    """The first phrase that makes an undeclared brief wait, else None."""
     if declares_dependency(b):
-        return []
+        return None
     merged = merged_numbers(lines)
     humans = b.fields.get("autonomy") == "full"
-    phrases = [p for p in (waits_in_prose(ln, known, merged, humans) for ln in lines) if p]
-    if not phrases:
+    return next(filter(None, (waits_in_prose(ln, known, merged, humans) for ln in lines)), None)
+
+
+def first_wait(b: Brief, known: set[str]) -> str | None:
+    """The first phrase in the brief's own prose that says it waits on a PR, brief or person, whatever its folder."""
+    return wait_in_lines(b, known, [plan_line(ln) for ln in prose_lines(b.body)])
+
+
+def dependency_findings(b: Brief, known: set[str], lines: list[str]) -> list[Finding]:
+    phrase = wait_in_lines(b, known, lines)
+    if not phrase:
         return []
     return [
         Finding(
             "prose-dependency",
-            f'prose says "{phrases[0]}" but blocked_by is empty; move it to blocked/ with --blocked-by',
+            f'prose says "{phrase}" but blocked_by is empty; move it to blocked/ with --blocked-by',
         )
     ]
 

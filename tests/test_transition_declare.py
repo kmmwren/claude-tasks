@@ -64,7 +64,7 @@ def test_an_unknown_blocker_is_refused_and_nothing_is_written(root):
     assert "blocked_by" not in _front(root, "in-progress", "doing")
 
 
-@pytest.mark.parametrize("status", ["inbox", "blocked", "done"])
+@pytest.mark.parametrize("status", ["blocked", "done"])
 def test_briefs_outside_the_declarable_folders_are_refused(root, status):
     (root / status / "elsewhere.md").write_text(
         brief_text("elsewhere", status=status, blocked_by="[other]")
@@ -144,3 +144,10 @@ def test_declare_commits_the_file_stem_when_given_a_frontmatter_id(root, monkeyp
     monkeypatch.setattr(declaration, "sync_commit", lambda *a, **k: committed.append(k["ids"]))
     transition.main(["declare", "refresh-buildhealth", "--no-deps", "--root", str(root)])
     assert committed == [[DATED_STEM]]
+
+
+def test_an_inbox_brief_is_declared_in_place_and_stays_in_the_inbox(root):
+    (root / "inbox" / "filed.md").write_text(_undeclared("filed", "inbox"))
+    _declare(root, "filed", "--no-deps")
+    assert _front(root, "inbox", "filed")["blocked_by"] == "[]"
+    assert _front(root, "inbox", "filed")["status"] == "inbox"

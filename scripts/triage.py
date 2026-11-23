@@ -27,7 +27,7 @@ from _paths import resolve_root
 from class_log import BriefClass, ClassLog, Verdict
 from fingerprint import index
 from git_sync import sync_commit
-from headless import TALLY, configured_launch, reset_capacity
+from headless import TALLY, configured_launch, no_capacity, reset_capacity
 from triage_brief import InboxBrief, load_inbox
 from triage_classify import (
     EXAMPLE_LIMIT,
@@ -40,6 +40,7 @@ from triage_classify import (
     reconcile,
 )
 from triage_collapse import apply_collapse, plan_collapses
+from triage_declare import declare_empty
 from triage_enrich import Fill, PredictFn, claude_predict
 from triage_promote import Gate, Promotion, promote
 from triage_sources import LiveSources
@@ -63,8 +64,11 @@ class Report:
     inbox_after: int = 0
     ready_after: int = 0
     committed: bool = False
+    declared_empty: int = 0
+    held_for_fill: int = 0
     llm_calls: int = 0
     llm_failed: int = 0
+    llm_skipped: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -140,6 +144,7 @@ def _classify(
         log.examples(EXAMPLE_LIMIT),
         opts.batch_size,
         opts.jobs,
+        log.latest(),
     )
     report.unclassified = len(inbox) - len(verdicts)
     report.classes = dict(collections.Counter(v.cls.value for v in verdicts))
@@ -157,11 +162,13 @@ def _record(log: ClassLog, verdicts: Sequence[Verdict], moved: Collection[str]) 
 
 
 def run(opts: Options) -> Report:
-    reset_capacity()  # a second run in this process must not inherit the last run's latch
     log = opts.log or ClassLog(opts.root)
     report = Report(_count(opts.root, "inbox"), _count(opts.root, "ready"))
     report.corrections_logged = len(reconcile(opts.root, log)) if opts.apply else 0
     touched = _collapse(opts, report)
+    declarations = declare_empty(opts.root, opts.apply, opts.today)
+    report.declared_empty, report.held_for_fill = len(declarations.declared), len(declarations.held)
+    touched += declarations.declared if opts.apply else []
     dupes = duplicate_map(index(opts.root))
     fixed = fixed_calls(dupes, log.sent_back())
     report.duplicates = len(dupes)
@@ -175,7 +182,7 @@ def run(opts: Options) -> Report:
         f"triage: collapse {report.collapsed_children} into {report.collapsed_groups}, "
         f"promote {report.promoted_as_filed + report.promoted_enriched} inbox briefs to ready",
         opts.root,
-        ids=touched,
+        ids=sorted(set(touched)),
     )
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report
@@ -210,6 +217,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--limit", type=int, help="enrich at most this many briefs")
     args = ap.parse_args(argv)
     root = args.root or resolve_root()
+    reset_capacity()  # a latch lasts the process, so queues run in it share one
     predict: PredictFn | None = None
     classifier: ClassifyFn | None = None
     if args.llm:
@@ -228,7 +236,13 @@ def main(argv: list[str] | None = None) -> None:
         classifier,
     )
     report = run(opts)
-    report.llm_calls, report.llm_failed = TALLY.calls, TALLY.failed
+    report.llm_calls, report.llm_failed, report.llm_skipped = (
+        TALLY.calls,
+        TALLY.failed,
+        TALLY.skipped,
+    )
+    if no_capacity():
+        print(f"inbox-triage: no headless capacity; skipped {TALLY.skipped} calls", file=sys.stderr)
     print(json.dumps(dataclasses.asdict(report), indent=2))
     if TALLY.all_failed:
         # A scheduled run that fills nothing still looked healthy; failing lets the watchdog see it.

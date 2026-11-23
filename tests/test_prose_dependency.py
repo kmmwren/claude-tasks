@@ -1,6 +1,7 @@
 """prose_dependency: a wait or approval stated only in prose is reported; history, quotes and carried waits are not."""
 
 import check_deps
+import prose_dependency
 import pytest
 
 from tests.queue_helpers import make_queue
@@ -139,3 +140,19 @@ def test_a_cited_decision_that_approves_the_work_is_reported(tmp_path, _decision
 def test_a_blocked_brief_is_not_inspected(tmp_path):
     body = "## Goal\n\nWaits for #5449 and after #5449 merges.\n"
     assert _kinds(tmp_path, body, status="blocked", blocked_by="[other]") == []
+
+
+def _wait(body, **fields):
+    from deps import Brief
+
+    brief = Brief("b", "inbox", {"autonomy": "full", **fields}, body=body)
+    return prose_dependency.first_wait(brief, {"other"})
+
+
+def test_first_wait_names_the_phrase_that_makes_a_brief_wait():
+    assert _wait("## Goal\n\nacme-api#5464 after #5449 merges\n") == "after #5449 merges"
+
+
+def test_first_wait_is_none_for_a_brief_that_waits_on_nothing_or_already_declares():
+    assert _wait("## Goal\n\nTidy the docs.\n") is None
+    assert _wait("## Goal\n\nwaits for other\n", blocked_by="[other]") is None

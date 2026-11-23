@@ -25,7 +25,7 @@ from transition import (
 )
 
 # Where check_deps reports an undeclared brief, so where a declaration is written in place.
-DECLARABLE_STATUSES = ("ready", "in-progress", "parked")
+DECLARABLE_STATUSES = ("inbox", "ready", "in-progress", "parked")
 
 
 def _require_declarable(brief_id: str, status: str, blocked_by: list[str]) -> None:

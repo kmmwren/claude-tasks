@@ -219,3 +219,62 @@ def test_a_spent_run_makes_no_call_from_any_worker_thread(tmp_path, monkeypatch)
     calls.clear()
     assert calls_for(briefs, claude_classify("m"), [], size=1, jobs=3) == {}
     assert calls == []
+
+
+def _known(*briefs, cls=C.NEEDS_INFO):
+    return {b.id: Verdict(b.id, cls, "earlier call", b.title, digest=b.digest) for b in briefs}
+
+
+def test_a_brief_unchanged_since_its_model_call_is_not_asked_about_again(tmp_path):
+    seen, edited = brief(tmp_path, "seen"), brief(tmp_path, "edited")
+    known = _known(seen, edited)
+    stale = InboxBrief(edited.path, edited.text + "\nA new paragraph.\n")
+    asked = []
+
+    def call(briefs, examples):
+        asked.append([b.id for b in briefs])
+        return {b.id: Call(C.DROP, "now stale") for b in briefs}
+
+    verdicts = classify([seen, stale, brief(tmp_path, "new")], {}, {}, call, [], 5, 1, known)
+    assert asked == [["edited", "new"]]
+    assert {v.brief_id: (v.cls, v.reason) for v in verdicts} == {
+        "seen": (C.NEEDS_INFO, "earlier call"),
+        "edited": (C.DROP, "now stale"),
+        "new": (C.DROP, "now stale"),
+    }
+
+
+def test_a_steady_state_inbox_makes_no_model_call(tmp_path):
+    briefs = [brief(tmp_path, f"b{i}") for i in range(4)]
+
+    def call(batch, examples):
+        raise AssertionError("asked about an unchanged brief")
+
+    verdicts = classify(briefs, {}, {}, call, [], 2, 1, _known(*briefs, cls=C.DROP))
+    assert [v.cls for v in verdicts] == [C.DROP] * 4
+
+
+@pytest.mark.parametrize("earlier", [C.READY, C.DUPLICATE])
+def test_only_a_model_verdict_is_reused(tmp_path, earlier):
+    b = brief(tmp_path, "b")
+    asked = []
+
+    def call(batch, examples):
+        asked.append(1)
+        return {"b": Call(C.DROP, "fresh")}
+
+    classify([b], {}, {}, call, [], 5, 1, _known(b, cls=earlier))
+    assert asked == [1]
+
+
+def test_a_verdict_without_a_digest_is_asked_again_once(tmp_path):
+    b = brief(tmp_path, "b")
+    legacy = {"b": Verdict("b", C.DROP, "old", b.title)}
+    verdicts = classify([b], {}, {}, lambda bs, e: {"b": Call(C.DROP, "new")}, [], 5, 1, legacy)
+    assert verdicts[0].reason == "new" and verdicts[0].digest == b.digest
+
+
+def test_every_verdict_carries_the_digest_of_the_text_it_judged(tmp_path):
+    b = brief(tmp_path, "b")
+    (verdict,) = classify([b], {}, {}, None, [], 5, 1)
+    assert verdict.digest == b.digest != brief(tmp_path, "b", title="Other").digest

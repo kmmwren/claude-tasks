@@ -45,18 +45,21 @@ class Tally:
 
     calls: int = 0
     failed: int = 0
+    skipped: int = 0
     _lock: threading.Lock = dataclasses.field(
         default_factory=threading.Lock, repr=False, compare=False
     )
 
-    def record(self, answered: bool) -> None:
+    def record(self, answered: bool, skipped: bool = False) -> None:
+        """Count one call; `skipped` is one never spawned because no account had capacity."""
         with self._lock:
             self.calls += 1
             self.failed += not answered
+            self.skipped += skipped
 
     def reset(self) -> None:
         with self._lock:
-            self.calls = self.failed = 0
+            self.calls = self.failed = self.skipped = 0
 
     @property
     def all_failed(self) -> bool:
@@ -226,9 +229,15 @@ def ask_json(
     launch: Launch = DirectLaunch(),
 ) -> Any:
     """The structured output of one call, or None when it fails, answers off-schema or capacity is spent."""
-    answer = None if _no_capacity.is_set() else _ask(prompt, schema, model, reason, timeout, launch)
-    TALLY.record(answer is not None)
+    spent = _no_capacity.is_set()
+    answer = None if spent else _ask(prompt, schema, model, reason, timeout, launch)
+    TALLY.record(answer is not None, skipped=spent)
     return answer
+
+
+def no_capacity() -> bool:
+    """True once a call has shown that no account can run any more this run."""
+    return _no_capacity.is_set()
 
 
 def _ask(
