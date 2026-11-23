@@ -5,6 +5,7 @@ decides where, from (1) an env var, (2) a project-local .tasks/ found by walking
 (3) the ~/tasks default. require_queue refuses to operate on an uninitialised directory.
 """
 
+import dataclasses
 import io
 import time
 
@@ -334,6 +335,32 @@ def test_queue_briefs_warns_with_the_consequence_it_was_given(tmp_path, capsys):
     )
 
 
+def test_briefs_and_their_folders_cannot_be_changed_once_read(tmp_path):
+    for value, field in (
+        (_paths.BriefFile(tmp_path / "a.md", ""), "text"),
+        (_paths.BriefFolder((), ()), "briefs"),
+        (_paths.QueueBriefs.read(tmp_path), "label"),
+    ):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(value, field, None)
+
+
+def test_two_views_of_one_queue_are_equal_whatever_each_has_read(tmp_path):
+    _folder_with_a_bad_brief(tmp_path)
+    read, unread = _paths.QueueBriefs.read(tmp_path, "S"), _paths.QueueBriefs.read(tmp_path, "S")
+    read.folder("ready")
+    assert read == unread
+    assert hash(read) == hash(unread)
+    assert repr(read) == (
+        f"QueueBriefs(root={tmp_path!r}, label='S', consequence='that brief is skipped')"
+    )
+
+
+def test_a_queue_view_takes_no_cache_or_lock_from_its_caller(tmp_path):
+    with pytest.raises(TypeError):
+        _paths.QueueBriefs(tmp_path, "S", _paths.SKIPPED, {})
+
+
 def test_read_brief_names_a_bad_file_by_its_path_unless_told_otherwise(tmp_path, capsys):
     bad = _folder_with_a_bad_brief(tmp_path) / "bad.md"
     assert _paths.read_brief(bad) is None
@@ -381,5 +408,6 @@ def test_read_stdin_makes_every_line_ending_a_newline_as_text_mode_does(monkeypa
 
 def test_read_stdin_that_is_not_utf8_exits_naming_the_byte(monkeypatch):
     _stdin_of(monkeypatch, b"ok\xff")
-    with pytest.raises(SystemExit, match="standard input is not valid UTF-8 .* at byte 2"):
+    with pytest.raises(SystemExit) as stopped:
         _paths.read_stdin()
+    assert str(stopped.value) == "standard input is not valid UTF-8 (invalid start byte at byte 2)"

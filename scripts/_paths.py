@@ -144,7 +144,7 @@ class QueueBriefs:
 
     root: pathlib.Path
     label: str
-    consequence: str = SKIPPED
+    consequence: str
     _read: dict[str, BriefFolder] = dataclasses.field(
         default_factory=dict, init=False, repr=False, compare=False
     )
