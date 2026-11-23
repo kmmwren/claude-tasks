@@ -146,6 +146,26 @@ def test_find_brief_locates_across_folders(root):
     assert p == root / "in-progress" / "build-the-billing-checkout-app.md"
 
 
+def test_find_brief_locates_a_brief_by_its_frontmatter_id(root):
+    path = root / "ready" / "2026-11-04-product-ingest-3809-refresh-table.md"
+    path.write_text(_brief("ready", "refresh-table", "Refresh"))
+    assert transition.find_brief("refresh-table", root) == path
+
+
+def test_find_brief_prefers_brief_folder_over_inbox_for_a_frontmatter_id(root):
+    (root / "inbox" / "2026-11-04-early.md").write_text(_brief("inbox", "shared-id", "early"))
+    ready = root / "ready" / "2026-11-05-later.md"
+    ready.write_text(_brief("ready", "shared-id", "later"))
+    assert transition.find_brief("shared-id", root) == ready
+
+
+def test_move_by_frontmatter_id_keeps_the_filename(root):
+    (root / "ready" / "2026-11-04-dated-stem.md").write_text(_brief("ready", "fm-id", "T"))
+    new_path = transition.move_brief("fm-id", "in-progress", root, today="2026-11-23")
+    assert new_path == root / "in-progress" / "2026-11-04-dated-stem.md"
+    assert not (root / "ready" / "2026-11-04-dated-stem.md").exists()
+
+
 def test_find_brief_returns_none_when_absent(root):
     assert transition.find_brief("does-not-exist", root) is None
 
@@ -362,8 +382,9 @@ def test_update_frontmatter_sets_status_and_updated():
     assert fm["updated"] == "2026-06-02"
 
 
-def test_update_frontmatter_no_frontmatter_returns_text():
-    assert transition._update_frontmatter("no fm here", "done", "2026-06-02") == "no fm here"
+def test_update_frontmatter_refuses_text_without_frontmatter():
+    with pytest.raises(ValueError, match="no frontmatter"):
+        transition._update_frontmatter("no fm here", "done", "2026-06-02")
 
 
 def test_update_frontmatter_leaves_body_untouched():

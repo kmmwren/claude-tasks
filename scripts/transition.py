@@ -36,6 +36,7 @@ import pathlib
 import re
 import sys
 from collections.abc import Callable
+from itertools import chain
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
@@ -52,6 +53,9 @@ from deps import (
     load_queue,
     parse_list,
     probe_gaps,
+)
+from deps import (
+    brief_id as identity_of,
 )
 from facts import lacks_evidence
 from git_sync import sync_commit
@@ -79,12 +83,19 @@ DEFAULT_LOG = {
 
 
 def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
-    """Locate `<brief_id>.md` across the brief folders by exact id; brief folders win over inbox. None if absent."""
-    for d in (*BRIEF_DIRS, "inbox"):
-        p = root / d / f"{brief_id}.md"
-        if p.exists():
-            return p
-    return None
+    """Locate a brief across the folders by file stem, else by frontmatter `id:` (what check_deps reports).
+
+    A stem match wins, and brief folders win over inbox. None if absent.
+    """
+    folders = [root / d for d in (*BRIEF_DIRS, "inbox")]
+    by_stem = (d / f"{brief_id}.md" for d in folders)
+    by_id = (
+        f
+        for d in folders
+        for f in sorted(d.glob("*.md"))
+        if identity_of(fm(f.read_text()), f.stem) == brief_id
+    )
+    return next((p for p in chain(by_stem, by_id) if p.exists()), None)
 
 
 def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
@@ -114,6 +125,9 @@ def _require_declared(brief_id: str, new_status: str, path: pathlib.Path, no_dep
             f"{brief_id!r} declares no dependencies; move it to blocked with --blocked-by <id|external:reason>, "
             f"or pass --no-deps when it depends on nothing"
         )
+
+
+_FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
 
 
 def _tokens(query: str) -> list[str]:
@@ -184,6 +198,14 @@ def set_field(block: str, key: str, value: str) -> str:
     return block if n else block + "\n" + line
 
 
+def ensure_frontmatter(text: str, brief_id: str, status: str, today: str) -> str:
+    """Prefix a brief that has no frontmatter block with the minimal one, dated as add_task dates it."""
+    if _FRONTMATTER.match(text):
+        return text
+    block = f"id: {brief_id}\ncreated: {today}\nupdated: {today}\nstatus: {status}"
+    return f"---\n{block}\n---\n\n{text.lstrip(chr(10))}"
+
+
 def _update_frontmatter(
     text: str,
     new_status: str,
@@ -195,11 +217,12 @@ def _update_frontmatter(
 
     `assignee=None` leaves any existing claim untouched, so briefs written before the field
     existed keep transitioning unchanged; pass "" to release a claim. `blocked_by=None`
-    leaves the list alone; a list replaces it.
+    leaves the list alone; a list replaces it. Text with no frontmatter block raises, because
+    there is nowhere to write the change; `ensure_frontmatter` gives such a brief one first.
     """
-    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    m = _FRONTMATTER.match(text)
     if not m:
-        return text
+        raise ValueError("the brief has no frontmatter block, so nothing can be written to it")
     block = m.group(2)
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
@@ -268,7 +291,7 @@ def _update_probes(
     blocked_by: list[str],
 ) -> str:
     """Blocked briefs carry their `blocked_probe:` lines; leaving blocked/ drops them with the blocker."""
-    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    m = _FRONTMATTER.match(text)
     if not m:
         return text
     block = carry_blocker_lines(m.group(2), old_blocked_by, blocked_by)
@@ -397,7 +420,7 @@ def move_brief(
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
         text = _append_log(text, today, message)
-        new_path = root / new_status / f"{brief_id}.md"
+        new_path = root / new_status / path.name
         atomic_write(new_path, text)
         if new_path != path:
             path.unlink()
@@ -532,7 +555,7 @@ def main(argv: list[str] | None = None) -> None:
         for released_id in released:
             print(f"unblocked {released_id} → ready")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
+        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[new_path.stem, *released])
     if a.status == "in-progress":
         note_choice(root, "pick", a.brief_id)
     print(f"{a.brief_id} → {a.status}: {new_path}")

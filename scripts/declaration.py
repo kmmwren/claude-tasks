@@ -16,7 +16,13 @@ import sys
 from _concurrency import atomic_write, repo_lock
 from deps import parse_list
 from git_sync import sync_commit
-from transition import _append_log, _check_blockers, _update_frontmatter, find_brief
+from transition import (
+    _append_log,
+    _check_blockers,
+    _update_frontmatter,
+    ensure_frontmatter,
+    find_brief,
+)
 
 # Where check_deps reports an undeclared brief, so where a declaration is written in place.
 DECLARABLE_STATUSES = ("ready", "in-progress", "parked")
@@ -56,7 +62,9 @@ def declare_brief(
             )
         if not path.exists():
             raise ValueError(f"no brief with id {brief_id!r} (moved by another actor)")
-        text = _update_frontmatter(path.read_text(), path.parent.name, today, blocked_by=blocked_by)
+        status = path.parent.name
+        text = ensure_frontmatter(path.read_text(), path.stem, status, today)
+        text = _update_frontmatter(text, status, today, blocked_by=blocked_by)
         atomic_write(path, _append_log(text, today, message))
     return path
 
@@ -71,5 +79,5 @@ def run_declare(a: argparse.Namespace, root: pathlib.Path) -> None:
     except ValueError as e:
         sys.exit(f"error: {e}")
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): declare dependencies", root, ids=[a.brief_id])
+        sync_commit(f"brief({a.brief_id}): declare dependencies", root, ids=[path.stem])
     print(f"{a.brief_id} declared blocked_by: [{', '.join(blocked_by)}]: {path}")
