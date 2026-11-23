@@ -18,6 +18,7 @@ def brief_text(
     importance: str = "3",
     autonomy: str = "full",
     probed: bool = True,
+    body: str = "## Goal\n\ng\n",
 ) -> str:
     items = [i.strip() for i in blocked_by.strip("[]").split(",") if i.strip()]
     probes = "".join(
@@ -39,10 +40,7 @@ blocked_by: {blocked_by}
 milestone: {milestone}
 {probes}---
 
-## Goal
-
-g
-
+{body}
 ## Execution log
 
 2026-06-01: captured.

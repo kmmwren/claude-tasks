@@ -107,6 +107,7 @@ class Brief:
     status: str
     fields: dict[str, str]
     repeated: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+    body: str = ""
 
     @property
     def probe_gaps(self) -> list[int]:
@@ -167,7 +168,7 @@ def load_queue(root: pathlib.Path) -> list[Brief]:
         for f in sorted((root / d).glob("*.md")):
             text = f.read_text()
             fields = fm(text)
-            out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text)))
+            out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text), text))
     return out
 
 

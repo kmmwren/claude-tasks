@@ -9,6 +9,10 @@ Finds, in one pass:
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
   blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
   releasable         a blocked brief whose blockers are all done (run unblock.py)
+  prose-dependency   a ready or in-progress brief that says in prose it waits on a PR, brief or approval
+                     while blocked_by is empty
+  approved-needs-input  an autonomy: needs-input brief whose cited decision or prose already approves
+                     the work
   unknown-milestone  a `milestone:` not in the project's milestones file (only checked when
                      tasks.toml sets `milestones`)
   milestones-file    tasks.toml names a milestones file that cannot be read
@@ -30,6 +34,7 @@ from _paths import require_queue, resolve_root
 from deps import Brief, awaits_release, dependency_edges, load_queue
 from facts import declared_brief, facts_files
 from milestones import MilestonesError, milestone_titles
+from prose_dependency import decisions_dir, prose_problems
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,8 +78,10 @@ def check(root: pathlib.Path) -> list[Problem]:
     graph = {b.id: dependency_edges(b, known) & known for b in queue}
     for cycle in find_cycles(graph):
         problems.append(Problem("cycle", cycle[0], " -> ".join([*cycle, cycle[0]])))
+    directory = decisions_dir()
     for b in queue:
         problems += _brief_problems(b, known, done)
+        problems += [Problem(f.kind, b.id, f.detail) for f in prose_problems(b, known, directory)]
     problems += _milestone_problems(root, queue)
     for path in facts_files(root):
         problems += _facts_problems(path, known)
