@@ -24,6 +24,7 @@ def _brief(
     blockers="[]",
     body_extra="",
     enrichment="",
+    declared="",
 ):
     return f"""---
 id: {bid}
@@ -41,7 +42,7 @@ tags: {tags}
 parent:
 source: claude
 blockers: {blockers}
-related: []
+{declared}related: []
 ---
 
 ## Goal
@@ -53,6 +54,8 @@ Some goal mentioning {title}.
 2026-06-01: captured.
 {body_extra}"""
 
+
+DECLARED_NONE = "blocked_by: []\n"
 
 ENRICHMENT = """
 ## Context
@@ -104,7 +107,11 @@ def root(tmp_path):
     )
     (tmp_path / "inbox" / "enriched-staging-thought.md").write_text(
         _brief(
-            "inbox", "enriched-staging-thought", "Enriched staging thought", enrichment=ENRICHMENT
+            "inbox",
+            "enriched-staging-thought",
+            "Enriched staging thought",
+            enrichment=ENRICHMENT,
+            declared=DECLARED_NONE,
         )
     )
     return tmp_path
@@ -232,7 +239,9 @@ def test_move_blocks_an_enriched_inbox_brief(root):
 def parked(root):
     """An un-enriched and an enriched brief, both already sitting in parked/."""
     for bid, extra in (("parked-raw", ""), ("parked-enriched", ENRICHMENT)):
-        (root / "parked" / f"{bid}.md").write_text(_brief("parked", bid, bid, enrichment=extra))
+        (root / "parked" / f"{bid}.md").write_text(
+            _brief("parked", bid, bid, enrichment=extra, declared=DECLARED_NONE)
+        )
     return root
 
 
@@ -1247,3 +1256,58 @@ def test_a_move_whose_only_if_turns_false_under_the_lock_is_refused(root):
     with pytest.raises(ValueError, match="changed while waiting for the lock"):
         transition.move_brief("rotate-the-api-key", "done", root, only_if=lambda: False)
     assert (root / "ready" / "rotate-the-api-key.md").exists()
+
+
+def _blocked_by_line(path):
+    lines = [ln for ln in path.read_text().splitlines() if ln.startswith("blocked_by:")]
+    assert len(lines) <= 1
+    return lines[0] if lines else None
+
+
+def test_a_move_that_is_not_a_judgement_leaves_an_absent_blocked_by_absent(root):
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
+    assert _blocked_by_line(newp) is None
+
+
+def test_a_move_that_is_not_a_judgement_leaves_a_declared_blocked_by_untouched(root):
+    path = root / "ready" / "rotate-the-api-key.md"
+    path.write_text(
+        path.read_text().replace("related: []", "blocked_by: [other-brief]\nrelated: []")
+    )
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
+    assert _blocked_by_line(newp) == "blocked_by: [other-brief]"
+
+
+def test_leaving_blocked_writes_an_empty_blocked_by(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, **BLOCK_ARGS)
+    newp = transition.move_brief("rotate-the-api-key", "ready", root, today="2026-06-02")
+    assert _blocked_by_line(newp) == "blocked_by: []"
+
+
+def test_no_deps_writes_an_empty_blocked_by(root):
+    newp = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, today="2026-06-02", no_deps=True
+    )
+    assert _blocked_by_line(newp) == "blocked_by: []"
+
+
+def test_moving_to_blocked_writes_the_given_blockers(root):
+    newp = transition.move_brief("rotate-the-api-key", "blocked", root, **BLOCK_ARGS)
+    assert _blocked_by_line(newp) == "blocked_by: [external:vendor]"
+
+
+def test_promoting_an_undeclared_brief_from_inbox_is_refused(root):
+    path = root / "inbox" / "enriched-staging-thought.md"
+    path.write_text(path.read_text().replace(DECLARED_NONE, ""))
+    with pytest.raises(ValueError, match="declares no dependencies"):
+        transition.move_brief("enriched-staging-thought", "ready", root, today="2026-06-02")
+    assert path.exists()
+
+
+def test_promoting_an_undeclared_brief_is_allowed_with_no_deps_and_declares_it(root):
+    path = root / "inbox" / "enriched-staging-thought.md"
+    path.write_text(path.read_text().replace(DECLARED_NONE, ""))
+    newp = transition.move_brief(
+        "enriched-staging-thought", "ready", root, today="2026-06-02", no_deps=True
+    )
+    assert _blocked_by_line(newp) == "blocked_by: []"

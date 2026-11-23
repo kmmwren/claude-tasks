@@ -192,3 +192,38 @@ def test_an_orphan_that_is_also_unreadable_reports_both(tmp_path):
     root = make_queue(tmp_path, {"a": {}})
     _facts(root, "gone", "= bad\n")
     assert _kinds(root) == [("facts-orphan", "gone"), ("facts-unreadable", "gone")]
+
+
+def test_a_parked_brief_with_no_blocked_by_is_undeclared(tmp_path):
+    root = make_queue(tmp_path, {"p": {"status": "parked"}})
+    path = root / "parked" / "p.md"
+    path.write_text(
+        "".join(ln for ln in path.read_text().splitlines(True) if not ln.startswith("blocked_by:"))
+    )
+    assert _kinds(root) == [("undeclared", "p")]
+
+
+def _without_declaration(root, status, bid):
+    path = root / status / f"{bid}.md"
+    path.write_text(
+        "".join(ln for ln in path.read_text().splitlines(True) if not ln.startswith("blocked_by:"))
+    )
+
+
+@pytest.mark.parametrize("status", ["ready", "in-progress"])
+def test_a_live_brief_with_no_blocked_by_is_undeclared(tmp_path, status):
+    root = make_queue(tmp_path, {"a": {"status": status}})
+    _without_declaration(root, status, "a")
+    assert _kinds(root) == [("undeclared", "a")]
+
+
+@pytest.mark.parametrize("status", ["ready", "in-progress"])
+def test_an_empty_blocked_by_declares_depending_on_nothing(tmp_path, status):
+    root = make_queue(tmp_path, {"a": {"status": status, "blocked_by": "[]"}})
+    assert check_deps.check(root) == []
+
+
+def test_a_legacy_blockers_entry_counts_as_a_declaration(tmp_path):
+    root = make_queue(tmp_path, {"b": {}, "a": {"blockers": "[b]"}})
+    _without_declaration(root, "ready", "a")
+    assert ("undeclared", "a") not in _kinds(root)

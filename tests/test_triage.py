@@ -13,7 +13,7 @@ from triage_enrich import Fill
 from tests.queue_helpers import inbox_text, installed_launcher, make_inbox
 
 BC = triage.BriefClass
-READY = dict(goal="Ship it.", criteria=("It ships.",))
+READY = dict(goal="Ship it.", criteria=("It ships.",), blocked_by="[]")
 LIVE = {"o/r#1", "o/r#2"}.__contains__
 GATE = triage.Gate(LIVE)
 PEERS = {
@@ -30,7 +30,7 @@ QUEUE = {
 
 
 def _fill(briefs):
-    return {b.id: Fill("Ship.", ("Done.",), "Start at o/r#1.") for b in briefs}
+    return {b.id: Fill("Ship.", ("Done.",), "Start at o/r#1.", ()) for b in briefs}
 
 
 @pytest.fixture

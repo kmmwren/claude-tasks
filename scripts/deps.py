@@ -160,6 +160,16 @@ class Brief:
         """Every word of the free-text `blockers:` field; some are ids, some are prose."""
         return set(re.findall(r"[\w-]+", self.fields.get("blockers", "") or ""))
 
+    @property
+    def declares_dependencies(self) -> bool:
+        return declares_dependencies(self.fields)
+
+
+def declares_dependencies(fields: dict[str, str]) -> bool:
+    """A `blocked_by:` line, even `[]` for "depends on nothing", or a non-empty legacy form; silence is no declaration."""
+    depends = [t for t in parse_list(fields.get("tags", "")) if t.startswith("depends:")]
+    return "blocked_by" in fields or bool(parse_list(fields.get("blockers", "")) or depends)
+
 
 def load_queue(root: pathlib.Path) -> list[Brief]:
     """Every brief across the lifecycle folders. A folder that does not exist is empty."""

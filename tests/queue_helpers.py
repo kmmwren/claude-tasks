@@ -87,9 +87,11 @@ def inbox_text(
     tags: str = "[]",
     parent: str = "",
     importance: str = "3",
+    blocked_by: str | None = None,
 ) -> str:
-    """An inbox brief as add_task files it: stub fields unless given."""
+    """An inbox brief as add_task files it: stub fields unless given, no dependency line unless `blocked_by`."""
     title = title or f"Title of {bid}"
+    declaration = "" if blocked_by is None else f"blocked_by: {blocked_by}\n"
     checks = "\n".join(f"- [ ] {c}" for c in criteria) or f"- [ ] {title} is done."
     return f"""---
 id: {bid}
@@ -102,7 +104,7 @@ domain: work
 tags: {tags}
 parent: {parent}
 source: claude
----
+{declaration}---
 
 ## Goal
 

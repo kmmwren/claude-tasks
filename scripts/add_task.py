@@ -6,6 +6,10 @@ Fills out a brief from flags so Claude can self-capture follow-ups, discovered w
 improvements without hand-writing the file. Defaults to inbox/ (raw); a ready/ brief
 requires --goal, --criteria and --context so it never carries placeholder stubs.
 
+Every brief declares its dependencies: --no-deps writes `blocked_by: []`; --blocked-by ID (a brief
+id, or external:<reason> with a --probe 'N: <command>') files the brief to blocked/ until they clear.
+A ready/ or blocked/ brief is refused without one of them; an inbox/ brief may leave it to triage.
+
 A capture whose fingerprint (normalised title plus the sources it cites) matches a brief already
 in the queue is a repeat: --on-duplicate merge (default) adds it to that brief as a log line and,
 when it carries new context, a note; refuse files nothing and exits 1; file captures it anyway.
@@ -15,7 +19,12 @@ Examples:
   python scripts/add_task.py --title "Rotate the leaked API key" \
      --goal "The leaked key is rotated and the app still works." \
      --context "Key leaked in PR 123; rotate in the vault." --criteria "Old key rejected by the API" \
-     --domain security --importance 1 --autonomy needs-input --due 2026-06-05 --ready --commit
+     --domain security --importance 1 --autonomy needs-input --due 2026-06-05 --ready --no-deps --commit
+
+  # waits on another brief, or on something outside the queue (probe exits 0 once it is true)
+  python scripts/add_task.py --title "Ship the importer" --goal "..." --context "..." --criteria "..." \
+     --blocked-by 2026-11-04-fix-flaky-fixture --blocked-by "external:vendor PR merged" \
+     --probe "2: gh pr view 12 --json merged --jq .merged | grep -q true"
 
   # work found mid-task: queue it with the brief it blocks, so the prioritiser can rank it
   python scripts/add_task.py --title "Fix flaky fixture" --blocks 2026-11-04-ship-the-importer
@@ -33,6 +42,7 @@ import sys
 
 from _concurrency import atomic_write, require_lock, reserve_name
 from _paths import COMMENT_START, TASK_DIRS, require_queue, resolve_root
+from deps import CONFIRMED_KEY, PROBE_KEY, is_external, load_queue, probe_gaps
 from fingerprint import Fingerprint, Located, find_duplicate
 from git_sync import sync_commit as _sync_commit
 from readiness import (
@@ -100,6 +110,58 @@ def flow_list(items: list[str]) -> str:
     return "[" + ", ".join(items) + "]"
 
 
+def dependency_items(values: list[str]) -> list[str]:
+    """`--blocked-by` values: brief ids or `external:<reason>`, comma-separated or repeated."""
+    return [scalar(part) for value in values for part in value.split(",") if part.strip()]
+
+
+@dataclasses.dataclass(frozen=True)
+class Dependencies:
+    """What a new brief waits on, or an explicit "nothing"; silence is no declaration."""
+
+    blocked_by: list[str]
+    probes: list[str]
+    confirmed: list[str]
+    none: bool
+
+    @property
+    def declared(self) -> bool:
+        return self.none or bool(self.blocked_by)
+
+    def frontmatter(self) -> str:
+        if not self.declared:
+            return ""
+        lines = [f"blocked_by: {flow_list(self.blocked_by)}"]
+        lines += [f"{PROBE_KEY}: {p}" for p in self.probes]
+        lines += [f"{CONFIRMED_KEY}: {c}" for c in self.confirmed]
+        return "\n".join(lines) + "\n"
+
+    def problem(self, status: str) -> str | None:
+        """Why filing to `status` with this declaration is refused, else None."""
+        if self.none and self.blocked_by:
+            return "--blocked-by and --no-deps contradict each other"
+        if status == "ready" and self.blocked_by:
+            return "a brief that waits on something files to blocked/; drop --ready"
+        if status == "ready" and not self.declared:
+            return "a ready brief needs --blocked-by <id|external:reason>, or --no-deps when it depends on nothing"
+        if status == "blocked" and not self.blocked_by:
+            return "a blocked brief needs --blocked-by <id|external:reason>"
+        gaps = probe_gaps(self.blocked_by, {PROBE_KEY: self.probes, CONFIRMED_KEY: self.confirmed})
+        if status == "blocked" and gaps:
+            return f"blocker(s) {gaps} are external with no probe; add --probe 'N: <command>' (or 'N: human' with --confirmed)"
+        return None
+
+    def unknown_ids(self, root: pathlib.Path) -> list[str]:
+        known = {b.id for b in load_queue(root)}
+        return [b for b in self.blocked_by if not is_external(b) and b not in known]
+
+
+def filing_status(a: argparse.Namespace) -> str:
+    """The explicit status; otherwise a brief that waits files to blocked/ and anything else to inbox/."""
+    explicit = a.status or ("ready" if a.ready else None)
+    return explicit or ("blocked" if a.deps.blocked_by else "inbox")
+
+
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
     tags = flow_list(a.tags)
     reqs = flow_list(a.requirements)
@@ -125,7 +187,7 @@ parent: {a.parent}
 source: {a.provenance.source}
 source_ref: {a.provenance.ref}
 blockers: []
-blocks: {flow_list(a.blocks)}
+{a.deps.frontmatter()}blocks: {flow_list(a.blocks)}
 related: []
 requirements: {reqs}
 ---
@@ -212,6 +274,28 @@ def main(argv: list[str] | None = None) -> None:
         metavar="ID",
         help="repeatable id of a brief this one blocks (the inverse of that brief's blockers:)",
     )
+    ap.add_argument(
+        "--blocked-by",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="repeatable brief id or external:<reason> this brief waits on; files it to blocked/",
+    )
+    ap.add_argument(
+        "--probe",
+        action="append",
+        default=[],
+        help="`N: <command>` probe for external blocker N (or `N: human` with --confirmed)",
+    )
+    ap.add_argument(
+        "--confirmed",
+        action="append",
+        default=[],
+        help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N",
+    )
+    ap.add_argument(
+        "--no-deps", action="store_true", help="declare that the brief depends on nothing"
+    )
     ap.add_argument("--source", default="claude", choices=SOURCES)
     ap.add_argument(
         "--source-ref",
@@ -222,7 +306,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument(
         "--status",
-        choices=["inbox", "ready", "parked"],
+        choices=["inbox", "ready", "blocked", "parked"],
         default=None,
         help="lifecycle state to file the brief in (default: inbox)",
     )
@@ -244,7 +328,16 @@ def main(argv: list[str] | None = None) -> None:
         ap.error("--source intake needs --source-ref: an intake brief must say where it came from")
     a.provenance = Provenance(a.source, a.source_ref)
 
-    status = a.status or ("ready" if a.ready else "inbox")
+    a.deps = Dependencies(
+        dependency_items(a.blocked_by),
+        [scalar(p) for p in a.probe],
+        [scalar(c) for c in a.confirmed],
+        a.no_deps,
+    )
+    status = filing_status(a)
+    refused = a.deps.problem(status)
+    if refused:
+        ap.error(refused)
     a.criteria = [c.strip() for c in a.criteria if c.strip()]
     a.tags, a.requirements, a.blocks = (
         list_items([a.tags]),
@@ -254,14 +347,17 @@ def main(argv: list[str] | None = None) -> None:
     context = a.context.strip()
     if a.stdin and not sys.stdin.isatty():
         context = (context + "\n\n" + sys.stdin.read().strip()).strip()
-    if status == "ready":
+    if status in ("ready", "blocked"):
         missing = [FLAGS[f] for f in missing_ready_fields(a.goal, a.criteria, context)]
         if missing:
             ap.error(
-                f"a ready brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
-                "(omit --ready to file it in inbox/ instead)"
+                f"a {status} brief needs {', '.join(missing)}; a brief must not carry placeholder stubs "
+                "(file it with --status inbox instead)"
             )
     root = require_queue(a.root if a.root else resolve_root())
+    unknown = a.deps.unknown_ids(root)
+    if unknown:
+        ap.error(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
     today = datetime.date.today().isoformat()
     repeat = (
         None

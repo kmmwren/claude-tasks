@@ -5,7 +5,7 @@ import subprocess
 
 import judge
 import pytest
-from headless import ScriptLaunch
+from headless import DirectLaunch, ScriptLaunch
 from judge import Candidate, ClaudeBackend, JudgeError, SetwiseJudge
 
 CANDIDATES = [
@@ -128,7 +128,7 @@ def run_returning(stdout="", returncode=0, stderr="", raises=None):
 
 
 def test_backend_command_disables_tools_and_constrains_output():
-    cmd = ClaudeBackend(model="sonnet").command()
+    cmd = ClaudeBackend(model="sonnet", launch=DirectLaunch("claude")).command()
     assert (cmd[:4], cmd[-3:-1], "--strict-mcp-config" in cmd) == (
         ["claude", "-p", "--tools", ""],
         ["--model", "sonnet"],

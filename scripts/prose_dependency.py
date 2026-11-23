@@ -1,5 +1,5 @@
 """
-prose_dependency.py — find a brief that says in prose what its frontmatter does not.
+prose_dependency.py: find a brief that says in prose what its frontmatter does not.
 
 The prioritiser reads only `blocked_by`, `blockers` and `autonomy`, so two prose-only mistakes
 leave a brief mis-ranked: "after #5449 merges" with `blocked_by` empty runs too early, and an
@@ -25,7 +25,8 @@ QUOTED = re.compile(r"\"[^\"\n]*\"|`[^`\n]*`|“[^”\n]*”")
 PR_REF = re.compile(r"^(?:[\w.-]+/[\w.-]+)?#(\d+)$")
 MERGED_REF = re.compile(r"#(\d+)(?:\]\([^)\s]*\))?\s+(?:merged|landed)\b", re.I)
 AFTER_MERGES = re.compile(
-    r"\bafter\s+(?:PR\s+|brief\s+)?(\S+)\s+(?P<passive>(?:is|are)\s+)?(?P<verb>merges|merged|lands|landed)\b", re.I
+    r"\bafter\s+(?:PR\s+|brief\s+)?(\S+)\s+(?P<passive>(?:is|are)\s+)?(?P<verb>merges|merged|lands|landed)\b",
+    re.I,
 )
 FUTURE_VERBS = ("merges", "lands")
 WAIT_PHRASE = re.compile(
@@ -34,12 +35,19 @@ WAIT_PHRASE = re.compile(
     r"((?:\s+\S+){1,4})",
     re.I,
 )
-AWAITING_APPROVAL = re.compile(r"\bawaiting\s+(?:(?:her|his|their)\s+)?(?:approval|go-ahead|sign-?off)\b", re.I)
+AWAITING_APPROVAL = re.compile(
+    r"\bawaiting\s+(?:(?:her|his|their)\s+)?(?:approval|go-ahead|sign-?off)\b", re.I
+)
 HUMAN_WORDS = {"approval", "go-ahead", "decision", "sign-off", "signoff"}
 DECISION_STEM = r"\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9_.-]*?"
 DECISION_REF = re.compile(rf"(?<![\w-])({DECISION_STEM})(?:\.md)?(?![\w-])")
-DECISION_MENTION = re.compile(rf"(?:\bdecision\s+)?(?<![\w-]){DECISION_STEM}(?:\.md)?(?![\w-])", re.I)
-APPROVES = re.compile(r"go-ahead|green-?light|approved (?:the|to|that)|has approved|gave (?:the |her )?(?:go|approval)", re.I)
+DECISION_MENTION = re.compile(
+    rf"(?:\bdecision\s+)?(?<![\w-]){DECISION_STEM}(?:\.md)?(?![\w-])", re.I
+)
+APPROVES = re.compile(
+    r"go-ahead|green-?light|approved (?:the|to|that)|has approved|gave (?:the |her )?(?:go|approval)",
+    re.I,
+)
 APPROVER = r"(?:she|he|they|the\s+owner|(?-i:[A-Z][a-z]+))"
 POSSESSIVE = r"(?:her|his|their)"
 APPROVAL_RECORD = re.compile(
@@ -50,7 +58,9 @@ APPROVAL_RECORD = re.compile(
     rf"|\b(?:with|has|have|got)\s+{POSSESSIVE}\s+go-ahead\b",
     re.I,
 )
-NEGATED = re.compile(r"\b(?:not|no|until|unless|if|once|awaiting|needs?|requires?|before|without)\b", re.I)
+NEGATED = re.compile(
+    r"\b(?:not|no|until|unless|if|once|awaiting|needs?|requires?|before|without)\b", re.I
+)
 DECISION_BODY = re.compile(r"\*\*Decision:\*\*\s*(.+?)(?=\n\*\*[A-Z]|\Z)", re.S)
 
 
@@ -61,7 +71,9 @@ class Finding:
 
 
 def decisions_dir() -> pathlib.Path:
-    return pathlib.Path(os.environ.get("CLAUDE_DECISIONS_DIR") or pathlib.Path.home() / ".claude" / "decisions")
+    return pathlib.Path(
+        os.environ.get("CLAUDE_DECISIONS_DIR") or pathlib.Path.home() / ".claude" / "decisions"
+    )
 
 
 def prose_lines(body: str) -> list[str]:
@@ -77,7 +89,12 @@ def plan_line(line: str) -> str:
 
 def merged_numbers(lines: list[str]) -> set[str]:
     """PR numbers the brief itself reports as merged outside its acceptance criteria."""
-    return {m.group(1) for ln in lines if not UNCHECKED_CRITERION.match(ln) for m in MERGED_REF.finditer(ln)}
+    return {
+        m.group(1)
+        for ln in lines
+        if not UNCHECKED_CRITERION.match(ln)
+        for m in MERGED_REF.finditer(ln)
+    }
 
 
 def names_work(token: str, known: set[str], merged: set[str]) -> bool:
@@ -92,7 +109,7 @@ def names_human(token: str) -> bool:
 
 
 def after_merge_wait(line: str, known: set[str], merged: set[str]) -> str | None:
-    """"after X merges" is a wait; "after X merged" is history unless it is an unmet acceptance criterion."""
+    """ "after X merges" is a wait; "after X merged" is history unless it is an unmet acceptance criterion."""
     m = AFTER_MERGES.search(line)
     if not m or not names_work(m.group(1), known, merged):
         return None
@@ -146,7 +163,12 @@ def dependency_findings(b: Brief, known: set[str], lines: list[str]) -> list[Fin
     phrases = [p for p in (waits_in_prose(ln, known, merged, humans) for ln in lines) if p]
     if not phrases:
         return []
-    return [Finding("prose-dependency", f'prose says "{phrases[0]}" but blocked_by is empty; move it to blocked/ with --blocked-by')]
+    return [
+        Finding(
+            "prose-dependency",
+            f'prose says "{phrases[0]}" but blocked_by is empty; move it to blocked/ with --blocked-by',
+        )
+    ]
 
 
 def approval_findings(b: Brief, directory: pathlib.Path, lines: list[str]) -> list[Finding]:
@@ -154,8 +176,23 @@ def approval_findings(b: Brief, directory: pathlib.Path, lines: list[str]) -> li
         return []
     decision = approving_decision(b, directory)
     phrase = approval_in_prose(lines)
-    source = f"cites {decision}, which approves the work" if decision else f'says "{phrase}"' if phrase else None
-    return [Finding("approved-needs-input", f"autonomy is needs-input but it {source}; set autonomy: full")] if source else []
+    source = (
+        f"cites {decision}, which approves the work"
+        if decision
+        else f'says "{phrase}"'
+        if phrase
+        else None
+    )
+    return (
+        [
+            Finding(
+                "approved-needs-input",
+                f"autonomy is needs-input but it {source}; set autonomy: full",
+            )
+        ]
+        if source
+        else []
+    )
 
 
 def prose_problems(b: Brief, known: set[str], directory: pathlib.Path) -> list[Finding]:

@@ -9,6 +9,7 @@ Finds, in one pass:
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
   blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
   releasable         a blocked brief whose blockers are all done (run unblock.py)
+  undeclared         a ready, in-progress or parked brief with no `blocked_by:` line (`[]` declares "depends on nothing")
   prose-dependency   a ready or in-progress brief that says in prose it waits on a PR, brief or approval
                      while blocked_by is empty
   approved-needs-input  an autonomy: needs-input brief whose cited decision or prose already approves
@@ -107,6 +108,14 @@ def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:
 
 def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
     out = [Problem("dangling", b.id, d) for d in sorted(b.declared_ids - known)]
+    if b.status in ("ready", "in-progress", "parked") and not b.declares_dependencies:
+        out.append(
+            Problem(
+                "undeclared",
+                b.id,
+                f"no blocked_by; run transition.py declare {b.id} --no-deps, or --blocked-by <ids> (a waiting ready brief: move it to blocked)",
+            )
+        )
     if b.status == "in-progress":
         waiting = sorted(
             d for d in dependency_edges(b, known) | set(b.external_blockers) if d not in done

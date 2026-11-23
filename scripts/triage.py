@@ -27,7 +27,7 @@ from _paths import resolve_root
 from class_log import BriefClass, ClassLog, Verdict
 from fingerprint import index
 from git_sync import sync_commit
-from headless import configured_launch, reset_capacity
+from headless import TALLY, configured_launch, reset_capacity
 from triage_brief import InboxBrief, load_inbox
 from triage_classify import (
     EXAMPLE_LIMIT,
@@ -63,6 +63,8 @@ class Report:
     inbox_after: int = 0
     ready_after: int = 0
     committed: bool = False
+    llm_calls: int = 0
+    llm_failed: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -225,7 +227,12 @@ def main(argv: list[str] | None = None) -> None:
         datetime.date.today().isoformat(),
         classifier,
     )
-    print(json.dumps(dataclasses.asdict(run(opts)), indent=2))
+    report = run(opts)
+    report.llm_calls, report.llm_failed = TALLY.calls, TALLY.failed
+    print(json.dumps(dataclasses.asdict(report), indent=2))
+    if TALLY.all_failed:
+        # A scheduled run that fills nothing still looked healthy; failing lets the watchdog see it.
+        sys.exit(f"inbox-triage: all {TALLY.calls} headless claude calls failed")
 
 
 if __name__ == "__main__":

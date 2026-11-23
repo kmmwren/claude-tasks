@@ -23,6 +23,10 @@ Usage:
   python scripts/transition.py move <brief-id> in-progress
   python scripts/transition.py move <brief-id> done   --log "shipped; tests green"
   python scripts/transition.py move <brief-id> parked --log "ESCALATED — needs a login"
+
+  # declare what a ready, in-progress or parked brief waits on, in place (declaration.py)
+  python scripts/transition.py declare <brief-id> --no-deps
+  python scripts/transition.py declare <brief-id> --blocked-by other-brief,external:vendor-reply
 """
 
 import argparse
@@ -41,6 +45,7 @@ from deps import (
     PROBE_KEY,
     Brief,
     blocker_number,
+    declares_dependencies,
     fm,
     fm_repeated,
     is_external,
@@ -96,6 +101,18 @@ def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> Non
         raise ValueError(
             f"{brief_id!r} is still in {source}/ and cannot move to {new_status} without "
             f"{', '.join(missing)}; enrich it first"
+        )
+
+
+def _require_declared(brief_id: str, new_status: str, path: pathlib.Path, no_deps: bool) -> None:
+    """Refuse to promote a brief into work that never said what it waits on; --no-deps says "nothing"."""
+    source = path.parent.name
+    if no_deps or source in ENRICHED_STATUSES or new_status not in ("ready", "in-progress"):
+        return
+    if not declares_dependencies(fm(path.read_text())):
+        raise ValueError(
+            f"{brief_id!r} declares no dependencies; move it to blocked with --blocked-by <id|external:reason>, "
+            f"or pass --no-deps when it depends on nothing"
         )
 
 
@@ -310,6 +327,7 @@ def move_brief(
     only_if: Callable[[], bool] | None = None,
     probes: list[str] | None = None,
     confirmed: list[str] | None = None,
+    no_deps: bool = False,
 ) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
@@ -324,8 +342,9 @@ def move_brief(
     A non-empty `assignee` is also checked against the current one under the lock and
     raises ValueError rather than stealing another actor's claim; `assignee=""` releases
     whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
-    `external:<reason>`) so a blocked brief always says what it waits for; any other target
-    clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
+    `external:<reason>`) so a blocked brief always says what it waits for. Leaving blocked/ or
+    passing `no_deps` writes `[]`; any other move leaves the field exactly as it was, absent
+    included, because the key's presence is the declaration. `only_if` is re-evaluated under the lock; when it is false the brief is
     left alone and ValueError is raised. Callers commit separately via sync_commit.
     Returns the new path.
     """
@@ -340,7 +359,16 @@ def move_brief(
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
+    # Only a judgement may write `[]`: the blockers resolved, or the caller said "nothing".
+    written = (
+        blocked_by
+        if new_status == "blocked"
+        else []
+        if no_deps or path.parent.name == "blocked"
+        else None
+    )
     _require_enriched(brief_id, new_status, path)
+    _require_declared(brief_id, new_status, path, no_deps)
     today = today or datetime.date.today().isoformat()
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
@@ -362,9 +390,7 @@ def move_brief(
                     f'--assignee "".'
                 )
         old_blocked_by = parse_list(fm(text).get("blocked_by", ""))
-        text = _update_frontmatter(
-            text, new_status, today, assignee=assignee, blocked_by=blocked_by
-        )
+        text = _update_frontmatter(text, new_status, today, assignee=assignee, blocked_by=written)
         text = _update_probes(
             text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by
         )
@@ -422,11 +448,33 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N is still blocked (repeatable)",
     )
+    m.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="declare that a brief promoted out of inbox/ or parked/ depends on nothing",
+    )
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
+    d = sub.add_parser("declare", help="write a brief's blocked_by in place, without moving it")
+    d.add_argument("brief_id")
+    what = d.add_mutually_exclusive_group(required=True)
+    what.add_argument("--blocked-by", help="comma-separated brief ids or external:<reason>")
+    what.add_argument("--no-deps", action="store_true", help="the brief depends on nothing")
+    d.add_argument("--root", default=None)
+    d.add_argument("--log", default=None, help="execution-log line")
+    d.add_argument("--today", default=None, help="override date (testing)")
+    d.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
+
     a = ap.parse_args(argv)
     root = pathlib.Path(a.root) if a.root else resolve_root()
+    if a.cmd == "declare":
+        from declaration import (
+            run_declare,
+        )  # declaration imports this module; defer to break the cycle
+
+        run_declare(a, root)
+        return
 
     if a.cmd == "resolve":
         hits = resolve_brief(a.query, root)
@@ -469,6 +517,7 @@ def main(argv: list[str] | None = None) -> None:
             blocked_by=parse_list(a.blocked_by or ""),
             probes=a.probe,
             confirmed=a.confirmed,
+            no_deps=a.no_deps,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)

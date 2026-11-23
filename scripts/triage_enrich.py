@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-triage_enrich.py — fill a brief's missing goal, criteria or context from its own text.
+triage_enrich.py — fill a brief's missing goal, criteria, context and dependency declaration
+from its own text.
 
 The model sees briefs only as delimited data, runs with every tool and MCP server off, and
 must answer in a fixed JSON schema. Anything that fails the schema is dropped, which leaves
@@ -13,6 +14,7 @@ import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from deps import declares_dependencies
 from headless import DirectLaunch, Launch, ask_json
 from triage_brief import InboxBrief
 
@@ -26,12 +28,13 @@ FILL_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["id", "goal", "criteria", "context"],
+                "required": ["id", "goal", "criteria", "context", "blocked_by"],
                 "properties": {
                     "id": {"type": "string"},
                     "goal": {"type": "string"},
                     "criteria": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
                     "context": {"type": "string"},
+                    "blocked_by": {"type": "array", "items": {"type": "string"}},
                 },
             },
         }
@@ -47,6 +50,9 @@ For every brief return:
   for character, at least one reference that appears in the brief: a URL, a file path, an
   owner/repo#N PR reference or a ticket key (PROJECT-NUMBER). Never invent a reference; if
   the brief has none, return "".
+- blocked_by: what the brief says must happen before the work can start. Use another brief's
+  id when the brief names one, else `external:<short reason without commas>` (a PR to merge,
+  an approval, a login). Return [] only when the brief waits on nothing.
 Return every brief id you were given, exactly once."""
 
 
@@ -55,6 +61,7 @@ class Fill:
     goal: str
     criteria: tuple[str, ...]
     context: str
+    blocked_by: tuple[str, ...]
 
 
 PredictFn = Callable[[Sequence[InboxBrief]], Mapping[str, Fill]]
@@ -65,12 +72,13 @@ def render_prompt(briefs: Sequence[InboxBrief]) -> str:
     return f"{INSTRUCTIONS}\n\n{body}"
 
 
+def _string_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
 def _strings(item: dict[str, Any]) -> bool:
-    criteria = item.get("criteria")
-    return (
-        all(isinstance(item.get(k), str) for k in ("id", "goal", "context"))
-        and isinstance(criteria, list)
-        and all(isinstance(c, str) for c in criteria)
+    return all(isinstance(item.get(k), str) for k in ("id", "goal", "context")) and all(
+        _string_list(item.get(k)) for k in ("criteria", "blocked_by")
     )
 
 
@@ -79,6 +87,7 @@ def _fill(item: dict[str, Any]) -> Fill:
         item["goal"].strip(),
         tuple(c.strip() for c in item["criteria"] if c.strip()),
         item["context"].strip(),
+        tuple(b.strip().replace(",", ";") for b in item["blocked_by"] if b.strip()),
     )
 
 
@@ -104,7 +113,8 @@ def claude_predict(
 
 
 def apply_fill(brief: InboxBrief, fill: Fill) -> InboxBrief:
-    """The brief with each missing field replaced by the fill's non-empty value."""
+    """The brief with each missing field replaced by the fill's non-empty value, and the fill's
+    `blocked_by` when the brief declared none."""
     bodies = {
         "goal": ("Goal", fill.goal),
         "criteria": ("Success criteria", "\n".join(f"- [ ] {c}" for c in fill.criteria)),
@@ -113,4 +123,6 @@ def apply_fill(brief: InboxBrief, fill: Fill) -> InboxBrief:
     for field in brief.missing:
         name, body = bodies[field]
         brief = brief.with_section(name, body) if body else brief
-    return brief
+    if declares_dependencies(brief.fields):
+        return brief
+    return brief.with_field("blocked_by", f"[{', '.join(fill.blocked_by)}]")

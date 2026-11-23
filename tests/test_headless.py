@@ -128,7 +128,7 @@ def test_the_deprecated_alias_still_names_a_launcher_and_says_so(tmp_path, monke
 
 
 def test_a_direct_launch_adds_dash_p_and_no_environment():
-    assert DirectLaunch().argv(["--x"]) == ["claude", "-p", "--x"]
+    assert DirectLaunch("claude").argv(["--x"]) == ["claude", "-p", "--x"]
     assert DirectLaunch().env("why") is None
 
 
@@ -187,7 +187,7 @@ def test_a_launcher_that_is_not_a_path_is_ignored_with_a_notice(tmp_path, capsys
 
 
 def test_command_turns_off_tools_mcp_settings_and_sessions():
-    cmd = command("sonnet", SCHEMA, DirectLaunch())
+    cmd = command("sonnet", SCHEMA, DirectLaunch("claude"))
     assert cmd[:2] == ["claude", "-p"]
     assert cmd[cmd.index("--tools") + 1] == "" and cmd[cmd.index("--setting-sources") + 1] == ""
     assert {"--strict-mcp-config", "--no-session-persistence"} <= set(cmd)
@@ -244,5 +244,5 @@ def test_a_failed_call_is_none_and_names_the_program(monkeypatch, capsys):
         raise subprocess.CalledProcessError(3, cmd)
 
     monkeypatch.setattr(subprocess, "run", boom)
-    assert ask_json("prompt", SCHEMA, "sonnet", "why") is None
+    assert ask_json("prompt", SCHEMA, "sonnet", "why", launch=DirectLaunch("claude")) is None
     assert "headless call (claude) failed" in capsys.readouterr().err

@@ -21,7 +21,9 @@ def _kinds(tmp_path, body, **kwargs):
     """Finding kinds reported for one brief `b` carrying `body` (other briefs: `other`, `done-one`)."""
     briefs = {"other": {}, "done-one": {"status": "done"}, "b": {"body": body, **kwargs}}
     root = make_queue(tmp_path, briefs)
-    return [p.kind for p in check_deps.check(root) if p.brief == "b" and p.kind in (PROSE, APPROVED)]
+    return [
+        p.kind for p in check_deps.check(root) if p.brief == "b" and p.kind in (PROSE, APPROVED)
+    ]
 
 
 @pytest.mark.parametrize("status", ["ready", "in-progress"])
@@ -40,6 +42,7 @@ def test_the_same_wait_carried_by_blocked_by_is_not_reported(tmp_path):
     "sentence",
     [
         "Raise it after #5449 is merged.",
+        "Raise it after other merges.",
         "This waits for other before it starts.",
         "It is gated on #119 and must not start earlier.",
         "Blocked on her approval before the next step.",
@@ -56,6 +59,7 @@ def test_future_and_unmet_waits_are_reported(tmp_path, sentence):
     [
         "Landed after #5449 merged and was reverted.",
         "After org/repo#41 merged, the gate named stale ids.",
+        "It started after other merged, as planned.",
         "2026-11-10: parked, waits for #5449.",
         "Option A is built and gated on #119: a deployment PR needs her ask.",
         'The wait "#5464 after #5449 merges" lived only in prose.',
@@ -98,7 +102,11 @@ def test_a_decision_already_made_is_not_a_pending_decision(tmp_path):
 
 @pytest.mark.parametrize(
     "sentence",
-    ["Her ask is the approval for this change.", "Dana gave the go-ahead on 2026-11-20.", "Approved by Dana."],
+    [
+        "Her ask is the approval for this change.",
+        "Dana gave the go-ahead on 2026-11-20.",
+        "Approved by Dana.",
+    ],
 )
 def test_an_approval_recorded_in_prose_on_a_needs_input_brief_is_reported(tmp_path, sentence):
     assert _kinds(tmp_path, f"## Goal\n\n{sentence}\n", autonomy="needs-input") == [APPROVED]
@@ -121,7 +129,9 @@ def test_an_approval_still_to_come_does_not_make_needs_input_stale(tmp_path, sen
 
 
 def test_a_cited_decision_that_approves_the_work_is_reported(tmp_path, _decisions):
-    (_decisions / "2026-11-20-ship-it.md").write_text("**Decision:** Dana gave the go-ahead to ship.\n")
+    (_decisions / "2026-11-20-ship-it.md").write_text(
+        "**Decision:** Dana gave the go-ahead to ship.\n"
+    )
     body = "## Context\n\nSee 2026-11-20-ship-it for the call.\n"
     assert _kinds(tmp_path, body, autonomy="needs-input") == [APPROVED]
 

@@ -372,6 +372,7 @@ def test_add_task_requirements_flag_covers_the_register(queue, capsys):
             "Cover it",
             "--status",
             "ready",
+            "--no-deps",
             "--criteria",
             "a test proves it",
             "--requirements",
