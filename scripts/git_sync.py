@@ -8,6 +8,7 @@ for the whole burst. `--sweep` is the timer's net: it commits what no writer nam
 
 import contextlib
 import datetime
+import enum
 import os
 import pathlib
 import re
@@ -22,11 +23,13 @@ from typing import Any
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import Deadline, HeldLock, repo_lock  # noqa: E402
+from _concurrency import NETWORK_TIMEOUT, Deadline, HeldLock, repo_lock  # noqa: E402
+from _credentials import carries_credential  # noqa: E402
 from _default_branch import default_branch  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
 from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
+from host_land import land_host_queue  # noqa: E402
 
 
 def _git(root: pathlib.Path, *args: str, **kw: Any) -> "subprocess.CompletedProcess[Any]":
@@ -43,24 +46,6 @@ def host_repo_name(root: pathlib.Path) -> str | None:
     """The name of the git repo that holds `root`, None when `root` is in no repo."""
     top = _git(root, "rev-parse", "--show-toplevel", capture_output=True, text=True)
     return pathlib.Path(top.stdout.strip()).name if top.returncode == 0 else None
-
-
-# High-signal credential shapes only: a sweep stages whole files, so one that carries a key stays local.
-# The last group is a signed or token-bearing link (AWS presigned, Azure SAS, CloudFront, a bare token
-# parameter): it expires, so it must never sit in git history.
-_SECRET = re.compile(
-    r"AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
-    r"|(?i:[?&]x-amz-(?:signature|credential)="
-    r"|(?=\S*[?&](?:se|sp)=)\S*[?&]sig="
-    r"|[?&](?:signature|key-pair-id|policy)="
-    r"|[?&](?:access_)?token=)"
-)
-
-
-def carries_credential(text: str) -> bool:
-    """True when `text` holds a credential or a signed link."""
-    return _SECRET.search(text) is not None
 
 
 def _split_z(output: str) -> list[str]:
@@ -126,7 +111,6 @@ def _tracked(root: pathlib.Path, *flags: str) -> list[str]:
 
 
 FETCH_MAX_AGE = 45.0  # under the 60 s sweep interval, so every timed sweep fetches
-NETWORK_TIMEOUT = 20.0  # a hung remote must not spend the sweep's whole budget
 
 
 def _fetch_head(root: pathlib.Path) -> pathlib.Path | None:
@@ -546,30 +530,41 @@ def _commit_locked(
     _git(root, "commit", "-q", "-m", message, capture_output=True, text=True)
 
 
+class SyncResult(enum.Enum):
+    """Where a write went: the queue's own main, a wip branch of its host repo, or nowhere yet."""
+
+    COMMITTED = "committed"  # on the queue's own main; the push is a separate step
+    DEFERRED = (
+        "deferred"  # not recorded (lock held, a git step failed, no repo); files stay on disk
+    )
+    HOSTED = "hosted"  # a queue inside another repo, landed on that repo's origin wip branch
+
+
 def _commit_for_push(
     message: str,
     root: pathlib.Path,
     ids: Sequence[str],
     paths: Sequence[str],
     lock_held: bool = False,
-) -> bool:
-    """Commit and mark the clone dirty; False if deferred or the queue belongs to another repo.
+) -> SyncResult:
+    """Commit and mark the clone dirty; a queue inside another repo is landed on that repo's wip branch.
 
     `lock_held` means the caller already holds the queue lock around its own writes, so one hold
     covers write and commit; taking it again would wait on itself.
     """
     if not owns_repo(root):
-        return False  # a project queue lives inside another repo, which ships it
+        landed = land_host_queue(root, message, lock_held=lock_held)
+        return SyncResult.HOSTED if landed else SyncResult.DEFERRED
     state = PushState(root)
     with state.writing():
         if lock_held:
             _commit_locked(message, root, ids, paths)
         elif not _commit(message, root, ids, paths):
-            return False
+            return SyncResult.DEFERRED
         # An idle sweep, or a commit a running pusher already carried, needs no push.
         if _ahead_of_origin(root):
             state.mark_dirty()
-    return True
+    return SyncResult.COMMITTED
 
 
 def sync_commit(
@@ -579,24 +574,30 @@ def sync_commit(
     paths: Sequence[str] = (),
     *,
     lock_held: bool = False,
-) -> bool:
+) -> SyncResult:
     """Commit only the briefs `ids` and pathspecs `paths` name, under the lock; the push runs detached.
 
-    False means deferred, and the caller re-runs with the same args.
+    DEFERRED means the caller re-runs with the same args; HOSTED means a queue inside another repo
+    was landed on that repo's wip branch, with nothing recorded in its checkout.
     """
     root = resolve_root() if root is None else root
-    if not _commit_for_push(message, root, ids, paths, lock_held):
-        return False
-    if PushState(root).is_dirty():
+    result = _commit_for_push(message, root, ids, paths, lock_held)
+    if result is SyncResult.COMMITTED and PushState(root).is_dirty():
         request_push(root)
-    return True
+    return result
 
 
 def sync_commit_and_push(
     message: str, root: pathlib.Path, ids: Sequence[str] = (), paths: Sequence[str] = ()
 ) -> bool:
     """sync_commit, then push before returning; True only once origin carries the commit."""
-    return _commit_for_push(message, root, ids, paths) and push_now(root)
+    match _commit_for_push(message, root, ids, paths):
+        case SyncResult.COMMITTED:
+            return push_now(root)
+        case SyncResult.HOSTED:
+            return True  # the landing pushed the wip branch itself
+        case _:
+            return False
 
 
 def sweep(root: pathlib.Path | None = None) -> bool:
@@ -609,8 +610,9 @@ def sweep(root: pathlib.Path | None = None) -> bool:
     deadline = Deadline.in_(SWEEP_BUDGET)
     if owns_repo(root):
         _fetch_if_stale(root)
-    if not _commit_for_push("queue: sync uncommitted briefs", root, (), (".",)):
-        return False
+    committed = _commit_for_push("queue: sync uncommitted briefs", root, (), (".",))
+    if committed is not SyncResult.COMMITTED:
+        return committed is SyncResult.HOSTED  # a hosted queue has no main of its own to push
     # Ahead, not dirty: a running pusher may already have taken the mark and still be pushing.
     if not _ahead_of_origin(root):
         return True

@@ -48,7 +48,8 @@ from facts import (
     HealthRow,
     facts_path,
 )
-from git_sync import carries_credential, host_repo_name, owns_repo, sync_commit
+from git_sync import SyncResult, carries_credential, host_repo_name, sync_commit
+from host_land import HostQueue
 
 PROG = "project_facts"
 EXIT_OK, EXIT_INVALID, EXIT_LOCKED = 0, 1, 2
@@ -538,12 +539,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _land(root: pathlib.Path, command: Command, paths: tuple[str, ...]) -> str:
-    """Commit `paths` when the queue is its own repo; a host repo ships them with its own land."""
-    if owns_repo(root):
-        sync_commit(f"facts: {command.message}", root, paths=paths, lock_held=True)
-        return f"recorded: {command.message}"
-    host = host_repo_name(root)
-    return f"recorded, ships with the next land of {host}" if host else "recorded"
+    """Commit `paths` when the queue is its own repo; a queue inside a host repo lands on a wip branch of it."""
+    match sync_commit(f"facts: {command.message}", root, paths=paths, lock_held=True):
+        case SyncResult.HOSTED:
+            return f"recorded, landed on {host_repo_name(root)} origin/{_wip_branch(root)}"
+        case SyncResult.DEFERRED:
+            return "recorded"
+        case _:
+            return f"recorded: {command.message}"
+
+
+def _wip_branch(root: pathlib.Path) -> str:
+    queue = HostQueue.of(root)
+    return queue.branch if queue else ""
 
 
 def run(command: Command, root: pathlib.Path) -> str:

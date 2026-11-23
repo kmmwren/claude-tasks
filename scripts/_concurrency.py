@@ -38,6 +38,7 @@ import time
 from collections.abc import Iterable, Iterator
 
 TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
+NETWORK_TIMEOUT = 20.0  # a hung remote must not spend a sweep's whole budget
 
 
 def clone_state_path(root: pathlib.Path, name: str) -> pathlib.Path:

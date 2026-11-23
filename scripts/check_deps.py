@@ -20,6 +20,8 @@ Finds, in one pass:
   facts-orphan       a facts/<id>.toml with no brief of that id
   facts-brief-mismatch  a facts file whose `brief` field is not its file stem
   facts-unreadable   a facts file that is not valid TOML
+  unshipped          a brief in a queue inside another repo that has sat untracked or modified there for
+                     over 6 hours: nothing landed it on the host's wip branch (scripts/host_land.py <queue>)
 
   python scripts/check_deps.py [--json]
 """
@@ -29,13 +31,17 @@ import dataclasses
 import json
 import pathlib
 import sys
+import time
 import tomllib
 
-from _paths import require_queue, resolve_root
+from _paths import is_brief, require_queue, resolve_root
 from deps import Brief, awaits_release, dependency_edges, load_queue
 from facts import declared_brief, facts_files
+from host_land import HostQueue, LandError
 from milestones import MilestonesError, milestone_titles
 from prose_dependency import decisions_dir, prose_problems
+
+UNSHIPPED_AFTER = 6 * 3600.0  # seconds a brief may wait in a host checkout before it is a finding
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,9 +90,37 @@ def check(root: pathlib.Path) -> list[Problem]:
         problems += _brief_problems(b, known, done)
         problems += [Problem(f.kind, b.id, f.detail) for f in prose_problems(b, known, directory)]
     problems += _milestone_problems(root, queue)
+    problems += _unshipped_problems(root)
     for path in facts_files(root):
         problems += _facts_problems(path, known)
     return problems
+
+
+def _unshipped_problems(root: pathlib.Path) -> list[Problem]:
+    """One finding per brief of a nested queue left in the host checkout past UNSHIPPED_AFTER.
+
+    The detail never carries the age or the state, so the daily alert keeps one stable key per brief.
+    """
+    host = HostQueue.of(root)
+    if host is None:
+        return []
+    try:
+        waiting = host.pending()
+    except LandError:
+        return []
+    cutoff = time.time() - UNSHIPPED_AFTER
+    return [
+        Problem("unshipped", pathlib.Path(rel).stem, f"not landed from {host.top.name}")
+        for rel in waiting
+        if is_brief(rel) and _modified_before(host.top / rel, cutoff)
+    ]
+
+
+def _modified_before(path: pathlib.Path, cutoff: float) -> bool:
+    try:
+        return path.stat().st_mtime < cutoff
+    except OSError:
+        return False  # deleted: a mirrored deletion, not a brief waiting
 
 
 def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:

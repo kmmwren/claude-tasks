@@ -25,7 +25,7 @@ from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue, warn
 from config import load_config
 from deps import Brief, fm, load_queue
 from facts import facts_path
-from git_sync import owns_repo, sync_commit
+from git_sync import host_repo_name, sync_commit
 
 OPEN_DIRS = tuple(d for d in TASK_DIRS if d != "done")
 _STUB = re.compile(r"\A---\n(?:(?!---\n).*\n)*?moved_to:")
@@ -130,7 +130,7 @@ class SessionQueue:
     def _sync(self, moves: list[Move]) -> None:
         message = f"fold session {self.id}: {len(moves)} brief(s) into {self.fold_to.name}"
         for root in (self.fold_to, self.root):
-            if owns_repo(root):
+            if host_repo_name(root) is not None:  # its own repo, or a host that gets a wip landing
                 sync_commit(message, root, paths=(".",))
 
 

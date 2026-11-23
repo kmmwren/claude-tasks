@@ -26,7 +26,7 @@ from collections.abc import Collection, Mapping, Sequence
 from _paths import resolve_root
 from class_log import BriefClass, ClassLog, Verdict
 from fingerprint import index
-from git_sync import sync_commit
+from git_sync import SyncResult, sync_commit
 from headless import TALLY, configured_launch, no_capacity, reset_capacity
 from triage_brief import InboxBrief, load_inbox
 from triage_classify import (
@@ -178,11 +178,14 @@ def run(opts: Options) -> Report:
     if opts.apply:
         _record(log, verdicts, {p.original.id for p in moved})
     touched += [p.original.id for p in moved]
-    report.committed = bool(touched) and sync_commit(
-        f"triage: collapse {report.collapsed_children} into {report.collapsed_groups}, "
-        f"promote {report.promoted_as_filed + report.promoted_enriched} inbox briefs to ready",
-        opts.root,
-        ids=sorted(set(touched)),
+    report.committed = bool(touched) and (
+        sync_commit(
+            f"triage: collapse {report.collapsed_children} into {report.collapsed_groups}, "
+            f"promote {report.promoted_as_filed + report.promoted_enriched} inbox briefs to ready",
+            opts.root,
+            ids=sorted(set(touched)),
+        )
+        is not SyncResult.DEFERRED
     )
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report

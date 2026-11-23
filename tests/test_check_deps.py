@@ -1,11 +1,14 @@
 """check_deps.py — each defect class is injected into an otherwise clean queue and must fire."""
 
 import json
+import os
+import time
 
 import check_deps
 import pytest
 
-from tests.queue_helpers import MILESTONES, make_queue
+from tests.queue_helpers import MILESTONES, brief_text, make_queue
+from tests.test_git_sync import make_repo
 
 
 def _kinds(root):
@@ -227,3 +230,52 @@ def test_a_legacy_blockers_entry_counts_as_a_declaration(tmp_path):
     root = make_queue(tmp_path, {"b": {}, "a": {"blockers": "[b]"}})
     _without_declaration(root, "ready", "a")
     assert ("undeclared", "a") not in _kinds(root)
+
+
+# --- unshipped: a brief left in a host checkout ---------------------------------------------
+
+
+def _nested_brief(tmp_path, age_hours):
+    repo = make_repo(tmp_path)
+    queue = repo / "project" / ".tasks"
+    (queue / "ready").mkdir(parents=True)
+    brief = queue / "ready" / "waiting.md"
+    brief.write_text(brief_text("waiting"))
+    aged = time.time() - age_hours * 3600
+    os.utime(brief, (aged, aged))
+    return queue
+
+
+def _unshipped(root):
+    return [(p.brief, p.detail) for p in check_deps.check(root) if p.kind == "unshipped"]
+
+
+def test_an_untracked_brief_in_a_host_checkout_past_six_hours_is_unshipped(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=7)
+
+    assert _unshipped(queue) == [("waiting", "not landed from clone")]
+
+
+def test_a_fresh_brief_in_a_host_checkout_is_not_yet_unshipped(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=1)
+
+    assert _unshipped(queue) == []
+
+
+def test_the_unshipped_key_does_not_change_as_the_brief_ages(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=7)
+    first = _unshipped(queue)
+    aged = time.time() - 30 * 3600
+    os.utime(queue / "ready" / "waiting.md", (aged, aged))
+
+    assert _unshipped(queue) == first
+
+
+def test_a_queue_that_owns_its_repo_has_no_unshipped_findings(tmp_path):
+    repo = make_repo(tmp_path)
+    brief = repo / "ready" / "waiting.md"
+    brief.write_text(brief_text("waiting"))
+    aged = time.time() - 30 * 3600
+    os.utime(brief, (aged, aged))
+
+    assert _unshipped(repo) == []

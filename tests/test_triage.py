@@ -7,6 +7,7 @@ import subprocess
 import pytest
 import triage
 from class_log import Correction
+from git_sync import SyncResult
 from headless import ScriptLaunch
 from triage_enrich import Fill
 
@@ -37,7 +38,9 @@ def _fill(briefs):
 def synced(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True
+        triage,
+        "sync_commit",
+        lambda msg, root, ids: calls.append(sorted(ids)) or SyncResult.COMMITTED,
     )
     return calls
 
