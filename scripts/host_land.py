@@ -23,6 +23,7 @@ import sys
 import tempfile
 from collections.abc import Iterable, Iterator
 
+from _advance import advance_to_origin
 from _concurrency import NETWORK_TIMEOUT, repo_lock
 from _credentials import carries_credential
 from _default_branch import default_branch
@@ -172,6 +173,33 @@ def _ship(queue: HostQueue, paths: list[str], message: str) -> None:
             _git(wt, "push", "-q", "--force", "origin", ref, timeout=NETWORK_TIMEOUT)
 
 
+def _on_default_and_behind(queue: HostQueue) -> bool:
+    """True when the host sits on its default branch holding no commit that origin's copy lacks.
+
+    A checkout on another branch, or ahead of origin, is somebody's work in progress and is never moved.
+    """
+    default = default_branch(queue.top)
+    try:
+        if _git(queue.top, "symbolic-ref", "--short", "-q", "HEAD").strip() != default:
+            return False
+        _git(queue.top, "merge-base", "--is-ancestor", "HEAD", f"origin/{default}")
+    except LandError:
+        return False  # detached, or HEAD holds commits origin lacks
+    return True
+
+
+def _advance_host(queue: HostQueue) -> None:
+    """Bring the host checkout up to origin's default once the wip branch has merged there; never raises."""
+    if not _on_default_and_behind(queue):
+        return
+    default = default_branch(queue.top)
+    if not advance_to_origin(queue.top, default):
+        print(
+            "  (host checkout not advanced: uncommitted edits overlap incoming changes; "
+            f"commit or move them, then run: git reset --keep origin/{default})"
+        )
+
+
 def _locked(root: pathlib.Path, lock_held: bool) -> contextlib.AbstractContextManager[bool]:
     return contextlib.nullcontext(True) if lock_held else repo_lock(root)
 
@@ -192,11 +220,14 @@ def land_host_queue(
             print("  (host land deferred: lock held; your files are safe on disk.)")
             return False
         try:
-            if paths := queue.shippable():
+            paths = queue.shippable()
+            if paths:
                 _ship(queue, paths, message)
         except LandError as e:
             print(f"  (host land deferred: {e}; your files are safe on disk.)")
             return False
+        if paths:
+            _advance_host(queue)
     return True
 
 

@@ -23,6 +23,7 @@ from typing import Any
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+from _advance import advance_to_origin  # noqa: E402
 from _concurrency import NETWORK_TIMEOUT, Deadline, HeldLock, repo_lock  # noqa: E402
 from _credentials import carries_credential  # noqa: E402
 from _default_branch import default_branch  # noqa: E402
@@ -325,8 +326,7 @@ def _advance_checkout(root: pathlib.Path, deadline: Deadline) -> None:
             f"run: git fetch origin {branch} && git reset --keep origin/{branch})"
         )
         return
-    reset = _git(root, "reset", "--keep", f"origin/{branch}", capture_output=True, text=True)
-    if reset.returncode != 0:
+    if not advance_to_origin(root, branch):
         print(
             "  (pushed, but the checkout was not advanced: uncommitted edits overlap incoming changes; "
             f"commit or move them, then run: git reset --keep origin/{branch})"

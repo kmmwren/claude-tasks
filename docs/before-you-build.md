@@ -10,3 +10,19 @@
 8. **Cost.** Triage adds one array field to an existing batched `claude -p` call; nothing else calls a model.
 9. **Risk.** Low: gates refuse a move or a filing, never rewrite a brief's content. Full autonomy.
 10. **Capture.** The `undeclared` finding, the transition and add_task refusals, and the daily check that alerts Claude.
+
+## 2026-11-23 a checkout advances past briefs it already holds untracked
+
+1. **Outcome check.** A test repo whose checkout holds an untracked brief byte-identical to the same path on `origin/<default>` advances to `origin/<default>` through `_advance_checkout`, leaving the file tracked with no content lost. An untracked file that differs, or a tracked edit that overlaps, still blocks the advance, and the blocked file is never deleted. `host_land` advances the host checkout the same way when it is on its default branch.
+2. **True constraints.**
+   - A nested queue's writes land on `wip/tasks-<slug>` and leave untracked copies in the host checkout (`docs/queue-sync.md`). Once that branch merges, `git reset --keep` and `git merge --ff-only` both refuse to overwrite the copies. Observed on ai-knowledge-mm, 2026-11-23.
+   - The checkout's uncommitted work is never lost: `reset --keep` semantics (`scripts/git_sync.py` `_advance_checkout`).
+   - Graceful degradation (CLAUDE.md): a failed advance prints the recovery line and never fails the write.
+3. **Check first.** Write the tests above against real temporary git repos before the code.
+4. **Already exists.** `_advance_checkout` in `git_sync.py`: extend it, and have `host_land` call it; write no second advance.
+5. **Cheapest experiment.** Unit tests plus one real nested write against ai-knowledge-mm.
+6. **Waiting.** None; claude-tasks lands by direct push to main.
+7. **Interface.** None new.
+8. **Cost.** One `git ls-files --others` and one `git hash-object` per untracked file at each advance.
+9. **Risk.** Low. A file is removed only when its blob equals the incoming one, so the advance restores it. Full autonomy.
+10. **Capture.** The tests.
