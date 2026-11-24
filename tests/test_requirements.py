@@ -212,6 +212,12 @@ def test_a_brief_in_any_lifecycle_folder_covers(queue):
     assert requirements_check.check(queue) == []
 
 
+def test_a_blocked_brief_covers(queue):
+    two_requirements(queue)
+    brief(queue, "blocked", "a", ["PL-R001", "PL-R002"], ["- [ ] one"])
+    assert requirements_check.check(queue) == []
+
+
 def test_check_fails_on_unknown_id(queue):
     reg.append_items(queue, [item()])
     brief(queue, "ready", "a", ["PL-R001", "PL-R099"], ["- [ ] one"])
