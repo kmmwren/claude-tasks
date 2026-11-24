@@ -83,9 +83,9 @@ def test_evidence_is_required_only_when_the_brief_says_required():
 
 
 def test_a_qualified_id_parses_into_queue_and_brief_and_plain_items_do_not():
-    assert deps.QueueRef.parse("work-tasks:abc") == deps.QueueRef("work-tasks", "abc")
+    assert deps.QueueRef.parse("other-queue:abc") == deps.QueueRef("other-queue", "abc")
     assert deps.QueueRef.parse("/q/tasks:abc") == deps.QueueRef("/q/tasks", "abc")
-    assert str(deps.QueueRef("work-tasks", "abc")) == "work-tasks:abc"
+    assert str(deps.QueueRef("other-queue", "abc")) == "other-queue:abc"
     for plain in ("abc", "external:vendor reply", "owner/repo#12", "split", ":abc", "queue:"):
         assert deps.QueueRef.parse(plain) is None
 
