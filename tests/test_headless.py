@@ -246,3 +246,53 @@ def test_a_failed_call_is_none_and_names_the_program(monkeypatch, capsys):
     monkeypatch.setattr(subprocess, "run", boom)
     assert ask_json("prompt", SCHEMA, "sonnet", "why", launch=DirectLaunch("claude")) is None
     assert "headless call (claude) failed" in capsys.readouterr().err
+
+
+def _launcher_that_records(tmp_path):
+    script = tmp_path / "launcher.sh"
+    script.write_text('#!/bin/sh\nprintf "%s|%s|%s" "$1" "$EXTRA" "$PWD" > "$OUT"\n')
+    script.chmod(0o755)
+    return script
+
+
+def _wait_for(path):
+    import time
+
+    deadline = time.monotonic() + 10
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return path.read_text()
+
+
+def test_a_detached_run_is_not_waited_for_and_gets_its_args_env_and_cwd(tmp_path, monkeypatch):
+    out = tmp_path / "out.txt"
+    monkeypatch.setenv("OUT", str(out))
+    work = tmp_path / "work"
+    work.mkdir()
+    launch = ScriptLaunch(str(_launcher_that_records(tmp_path)))
+    log = tmp_path / "logs" / "run.log"
+    pid = headless.spawn_detached(launch, ["go"], "why", log, work, {"EXTRA": "x"})
+    assert pid > 0 and log.exists()
+    assert _wait_for(out) == f"go|x|{work.resolve()}"
+
+
+def test_a_detached_run_appends_its_output_to_the_log(tmp_path, monkeypatch):
+    log = tmp_path / "run.log"
+    log.write_bytes(b"earlier\n")
+    script = tmp_path / "talk.sh"
+    script.write_text("#!/bin/sh\necho hello\n")
+    script.chmod(0o755)
+    headless.spawn_detached(ScriptLaunch(str(script)), [], "why", log, tmp_path)
+    import time
+
+    deadline = time.monotonic() + 10
+    while b"hello" not in log.read_bytes() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert log.read_bytes() == b"earlier\nhello\n"
+
+
+def test_a_launcher_that_does_not_exist_raises_so_the_caller_can_report_it(tmp_path):
+    with pytest.raises(OSError):
+        headless.spawn_detached(
+            ScriptLaunch(str(tmp_path / "missing.sh")), [], "why", tmp_path / "l.log", tmp_path
+        )

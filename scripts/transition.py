@@ -37,7 +37,7 @@ import json
 import pathlib
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from itertools import chain
 from typing import Any
 
@@ -205,6 +205,17 @@ def set_field(block: str, key: str, value: str) -> str:
     line = f"{key}: {value}".rstrip()
     block, n = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda _: line, block, count=1)
     return block if n else block + "\n" + line
+
+
+def set_frontmatter_fields(text: str, fields: Mapping[str, str]) -> str:
+    """`text` with each `key: value` of `fields` set in its frontmatter block; a brief with no block raises."""
+    m = _FRONTMATTER.match(text)
+    if not m:
+        raise ValueError("the brief has no frontmatter block, so nothing can be written to it")
+    block = m.group(2)
+    for key, value in fields.items():
+        block = set_field(block, key, value)
+    return text[: m.start(2)] + block + text[m.end(2) :]
 
 
 def ensure_frontmatter(text: str, brief_id: str, status: str, today: str) -> str:

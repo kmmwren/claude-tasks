@@ -22,3 +22,17 @@ def parse_date(value: Any) -> dt.date | None:
         except ValueError:
             return None
     return None
+
+
+def parse_moment(value: str) -> dt.datetime | None:
+    """An ISO date or datetime as an aware UTC moment: a bare date is its 00:00 UTC, a naive time is UTC.
+
+    None for an empty or unreadable value, so a caller decides whether that is a warning.
+    """
+    try:
+        moment = dt.datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=dt.timezone.utc)
+    return moment.astimezone(dt.timezone.utc)

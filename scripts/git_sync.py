@@ -278,7 +278,8 @@ def _fetch_origin(root: pathlib.Path, deadline: Deadline) -> None:
 
 
 @contextlib.contextmanager
-def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
+def scratch_worktree(root: pathlib.Path, ref: str = "HEAD") -> Iterator[pathlib.Path]:
+    """A throwaway detached worktree of `ref`, removed on exit, so a write is built and pushed off the checkout."""
     with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         _git(
@@ -288,7 +289,7 @@ def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
             "-q",
             "--detach",
             str(wt),
-            "HEAD",
+            ref,
             capture_output=True,
             text=True,
         )
@@ -384,7 +385,7 @@ def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
         )
         _report_divergence(root, why, _park_local_commits(root, deadline))
         return False
-    with _scratch_worktree(root) as wt:
+    with scratch_worktree(root) as wt:
         if not _rebase_and_push(root, wt, deadline):
             return False
     _advance_checkout(root, deadline)

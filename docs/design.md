@@ -69,9 +69,31 @@ personal queue, and project-scoped queues checked into a repo.
 YAML frontmatter (the queryable surface) + markdown body (the context). Required fields:
 `id`, `title`, `created`, `updated`, `status`, `type`, `importance`, `autonomy`. Optional:
 `estimated-effort`, `due`, `not_before`, `domain`, `tags`, `parent`, `assignee`, `source`,
-`source_ref`, `blockers`, `clears`, `related`, `requires-repo`, `requires-local`. `assignee` is who
+`source_ref`, `blockers`, `clears`, `related`, `requires-repo`, `requires-local`, and the wake
+fields `wake_probe`, `wake_generation`, `valid_until`, `needs`, `escalate_after` (plus the
+`lease_*` and `wake_key` fields `maintain.py` writes when it claims a brief). `assignee` is who
 has claimed the brief (empty = unclaimed): advisory coordination for a shared queue, not a lock
 across clones.
+
+### Waking due briefs (`maintain.py`)
+
+`maintain.py --tier laptop|cloud` is the one trigger-agnostic entry point; a LaunchAgent
+(`launchd/`) calls it every five minutes and a cloud routine can call it hourly. Each tier keeps
+a last-run record in the queue (`maintain/last-run/<tier>.json`); a tick younger than the tier's
+interval exits at once without touching git.
+
+A `ready/` or `inbox/` brief is due when `not_before` has passed or `wake_probe` exits 0
+(10 = not yet, anything else is logged and not due). A brief past `valid_until` is reported
+`overdue` and not run. A brief whose `needs:` the tier lacks is skipped, and reported
+`overdue-needs-<cap>` once `escalate_after` has passed.
+
+A due brief is claimed by compare-and-set on origin: the lease (holder, expiry, attempts), the move
+to `in-progress/` and the wake's run record go in one commit, pushed without rebasing. A rejected
+push means another runner won and the claim is dropped; an expired lease can be reclaimed. Only a
+published claim is handed to a detached headless run through the configured launcher. The run
+record `maintain/runs/<key>.json` (brief id, trigger, generation) stops any tier running the same
+wake twice. Settings live in `tasks.toml` under `[maintain]`, `[maintain.laptop]` and
+`[maintain.cloud]`.
 Body sections: Goal, Context, Success criteria,
 Constraints, Notes / open questions, Execution log. Full reference in `_template.md`.
 
