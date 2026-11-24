@@ -251,6 +251,27 @@ def test_a_committed_brief_whose_push_was_deferred_says_so(repos, monkeypatch):
         append_log.append_log(PEER, "x", root=main)
 
 
+def _commit_peer_brief_locally(main):
+    _file_uncommitted_peer_brief(main)
+    git(main, "add", f"inbox/{PEER}.md")
+    git(main, "commit", "-qm", "file peer brief")
+
+
+def test_a_brief_committed_locally_but_not_pushed_is_pushed_then_logged(repos):
+    origin, main = repos
+    _commit_peer_brief_locally(main)
+    sha = append_log.append_log(PEER, "pushed first", root=main, today="2026-11-10")
+    assert "2026-11-10: pushed first" in git(origin, "show", f"{sha}:inbox/{PEER}.md")
+
+
+def test_a_committed_brief_whose_push_is_deferred_asks_for_a_retry(repos, monkeypatch):
+    _, main = repos
+    _commit_peer_brief_locally(main)
+    monkeypatch.setattr(append_log, "push_now", lambda root: False)
+    with pytest.raises(RuntimeError, match="push was deferred; retry"):
+        append_log.append_log(PEER, "x", root=main)
+
+
 def test_staged_but_uncommitted_brief_is_committed_then_logged(repos):
     origin, main = repos
     _file_uncommitted_peer_brief(main)

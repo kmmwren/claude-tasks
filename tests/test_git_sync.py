@@ -385,6 +385,39 @@ def test_sweep_refuses_id_that_is_done_only_on_origin(tmp_path):
     assert "inbox/moved.md" not in committed_files(repo, "origin/main")
 
 
+def test_a_push_refuses_a_brief_whose_id_origin_filed_elsewhere_since_the_commit(tmp_path, capsys):
+    """A rival pushed after the commit rebases cleanly, so only the push-time check can stop it."""
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    (other / "done").mkdir(exist_ok=True)
+    _push_from_other(other, "done/moved.md", "closed\n")
+    (repo / "inbox" / "moved.md").write_text("\nlate note\n")
+
+    assert git_sync.sync_commit_and_push("brief(moved): note", root=repo, ids=["moved"]) is False
+
+    files = committed_files(repo, "origin/main")
+    assert "done/moved.md" in files and "inbox/moved.md" not in files
+    branch = git_sync._wip_branch()
+    parked = git(repo, "ls-remote", "--heads", "origin", branch).stdout.split()[0]
+    assert parked == git(repo, "rev-parse", "HEAD").stdout.strip()
+    out = capsys.readouterr().out
+    assert "inbox/moved.md would duplicate" in out and f"parked on origin/{branch}" in out
+
+
+def test_a_push_of_a_move_is_not_blocked_by_the_old_path_still_on_origin(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "moving")
+    git(repo, "push", "-q", "origin", "main")
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/from-other.md", "x")
+    git(repo, "mv", "ready/moving.md", "done/moving.md")
+
+    assert git_sync.sync_commit_and_push("brief(moving): done", root=repo, ids=["moving"]) is True
+
+    files = committed_files(repo, "origin/main")
+    assert "done/moving.md" in files and "ready/moving.md" not in files
+
+
 def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
     """The documented `git_sync.py <msg> <id>` form must not stage the refused file back in."""
     repo = make_repo(tmp_path)

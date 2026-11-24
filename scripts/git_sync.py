@@ -183,6 +183,43 @@ def _shadowing_briefs(root: pathlib.Path) -> list[str]:
     return shadows
 
 
+def _diff_names(root: pathlib.Path, rev_range: str, kind: str) -> list[str]:
+    """Paths of one change kind (A or D) in `rev_range`; renames are split so a move shows as both."""
+    out = _git(
+        root,
+        "diff",
+        "--relative",
+        "--no-renames",
+        "--name-only",
+        f"--diff-filter={kind}",
+        rev_range,
+        capture_output=True,
+        text=True,
+    )
+    names: list[str] = out.stdout.splitlines()
+    return names
+
+
+def _rival_briefs(root: pathlib.Path) -> list[str]:
+    """Briefs the unpushed commits add whose id origin already files in another state dir.
+
+    The commit-time check sees only the state fetched then; a rival pushed since rebases cleanly
+    (different paths), so the push must refuse it once origin is refreshed.
+    """
+    remote = f"origin/{default_branch(root)}"
+    listed = _git(
+        root, "ls-tree", "-r", "--name-only", remote, capture_output=True, text=True
+    ).stdout.splitlines()
+    moved_away = set(_diff_names(root, f"{remote}...HEAD", "D"))  # the old half of our own move
+    filed = [pathlib.PurePath(p) for p in listed if p not in moved_away and is_brief(p)]
+    added = (pathlib.PurePath(p) for p in _diff_names(root, f"{remote}...HEAD", "A") if is_brief(p))
+    return [
+        str(new)
+        for new in added
+        if any(f.name == new.name and f.parent != new.parent for f in filed)
+    ]
+
+
 def _stage_named_briefs(
     root: pathlib.Path, ids: Sequence[str], refused: Sequence[str] = ()
 ) -> None:
@@ -340,6 +377,13 @@ def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
     refuses to move when an edit overlaps an incoming change.
     """
     _fetch_origin(root, deadline)
+    rivals = _rival_briefs(root)
+    if rivals:
+        why = (
+            f"{', '.join(rivals)} would duplicate a brief id origin already files in another state"
+        )
+        _report_divergence(root, why, _park_local_commits(root, deadline))
+        return False
     with _scratch_worktree(root) as wt:
         if not _rebase_and_push(root, wt, deadline):
             return False

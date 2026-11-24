@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _concurrency import repo_lock  # noqa: E402
 from _paths import resolve_root  # noqa: E402
-from git_sync import NETWORK_TIMEOUT, _git, sync_commit_and_push  # noqa: E402
+from git_sync import NETWORK_TIMEOUT, _git, push_now, sync_commit_and_push  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
 PUSH_ATTEMPTS = 8
@@ -78,15 +78,35 @@ def _find(queue: pathlib.Path, brief_id: str) -> pathlib.Path | None:
     return None
 
 
-def _committed(root: pathlib.Path, path: pathlib.Path) -> bool:
+def _in_tree(root: pathlib.Path, path: pathlib.Path, ref: str) -> bool:
     rel = path.resolve().relative_to(_repo_top(root)).as_posix()
-    return _run(root, "cat-file", "-e", f"HEAD:{rel}").returncode == 0
+    return _run(root, "cat-file", "-e", f"{ref}:{rel}").returncode == 0
+
+
+def _committed(root: pathlib.Path, path: pathlib.Path) -> bool:
+    return _in_tree(root, path, "HEAD")
+
+
+def _published(root: pathlib.Path, path: pathlib.Path) -> bool:
+    return _in_tree(root, path, "origin/main")
+
+
+def _publish_committed(root: pathlib.Path, brief_id: str) -> None:
+    """The fresh-origin worktree can only log a brief origin already carries, so push a local-only one first."""
+    if not push_now(root):
+        raise RuntimeError(
+            f"brief {brief_id!r} is committed in {root} but not on origin and the push was deferred; retry"
+        )
 
 
 def _commit_if_uncommitted(root: pathlib.Path, brief_id: str) -> None:
     """Pushing a path the main checkout holds uncommitted would make its next pull refuse, so file it first."""
     local = _find(root, brief_id)
-    if local is None or _committed(root, local):
+    if local is None:
+        return
+    if _committed(root, local):
+        if not _published(root, local):
+            _publish_committed(root, brief_id)
         return
     if not sync_commit_and_push(f"brief({brief_id}): file uncommitted brief", root, ids=[brief_id]):
         step = "pushing" if _committed(root, local) else "committing"
