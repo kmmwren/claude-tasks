@@ -101,6 +101,14 @@ One run can override them: `--source Work=https://github.com/example/team-notes.
 --source Home=~/projects/garden#docs/tasks`; a `--config` given with `--source` is ignored, with a
 warning. Run `rollup.py sources` to check what each source gives.
 
+## What every project records
+
+Each project names an `initiative` in `project.toml`, and each milestone that is not done has a due
+date. `rollup.py gaps` lists every project that falls short, each with the command or line that fixes
+it, and exits 1 while anything is missing, so a scheduled job or CI step can fail on it. Every view's
+JSON carries the same list as `gaps`. A new rule is one more `Expectation` subclass in
+`rollup_gaps.EXPECTATIONS`.
+
 ## Desktop or chat: read a published copy
 
 `rollup.py write --out <dir>` writes `README.md` (what the files are and how someone else gets their own

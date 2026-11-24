@@ -19,6 +19,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
 import project_view as pv
+import rollup_gaps as rg
 import rollup_views as rv
 from _concurrency import atomic_write
 from _paths import PROJECT_MARKER, is_queue, resolve_root, warn
@@ -414,7 +415,7 @@ class Command(ABC):
         return build(self.sources, self.now())
 
     @abstractmethod
-    def run(self) -> None: ...
+    def run(self) -> int | None: ...
 
 
 @dataclasses.dataclass(frozen=True)
@@ -503,6 +504,25 @@ class Write(Command):
         print("\n".join(map(str, written)) if written else f"{self.out} is up to date")
 
 
+@dataclasses.dataclass(frozen=True)
+class Gaps(Command):
+    name = "gaps"
+    summary = "list what each project has not recorded; exit 1 while anything is missing"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        SourceOptions.add_arguments(parser)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, env: Mapping[str, str], now: Now) -> "Gaps":
+        return cls(SourceOptions.load(args, env), now)
+
+    def run(self) -> int:
+        found = [g for e in self.rollup().entries for g in rg.gaps(e.project)]
+        print("\n".join(g.line() for g in found) or "every project records what the roll-up needs")
+        return 1 if found else 0
+
+
 class RollupServer(http.server.ThreadingHTTPServer):
     """Localhost only; each request rebuilds the roll-ups, so a page is never older than the default branch."""
 
@@ -574,7 +594,15 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
-COMMANDS: tuple[type[Command], ...] = (ShowJson, ShowMarkdown, ShowHtml, ListSources, Write, Serve)
+COMMANDS: tuple[type[Command], ...] = (
+    ShowJson,
+    ShowMarkdown,
+    ShowHtml,
+    ListSources,
+    Gaps,
+    Write,
+    Serve,
+)
 
 
 def usage_line(command: type[Command]) -> str:
@@ -611,11 +639,10 @@ def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        parse(args, os.environ if env is None else env).run()
+        return parse(args, os.environ if env is None else env).run() or 0
     except RollupError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    return 0
 
 
 if __name__ == "__main__":

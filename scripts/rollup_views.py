@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 import facts
 import prioritise
 import project_view as pv
+import rollup_gaps as rg
 import rollup_model as rm
 from _dates import parse_date
 from _paths import warn_undecodable
@@ -1039,6 +1040,7 @@ class View(ABC):
             "title": p.title,
             "outcome": p.outcome,
             "initiative": p.initiative,
+            "gaps": [g.table() for g in rg.gaps(p)],
             "as_at": p.as_at.table(),
         }
 

@@ -24,6 +24,9 @@ from prioritise import EFFORT_DAYS
 from queue_snapshot import QueueSnapshot
 
 SHIPPED_DAYS = 14
+# A done brief of these kinds or tags records a conversation, not delivered work.
+CONVERSATION_KINDS = frozenset({"question"})
+CONVERSATION_TAGS = frozenset({"peer"})
 WORD = {**pv.LABEL, "": "Not set by owner"}
 SENTENCE_WORD = {**{k: v.lower() for k, v in pv.LABEL.items()}, "": "not yet rated by its owner"}
 
@@ -84,6 +87,7 @@ class BriefSummary:
     due: dt.date | None
     effort: str
     kind: str
+    tags: frozenset[str]
     blockers: tuple[str, ...]
     as_at: AsAt
 
@@ -98,9 +102,18 @@ class BriefSummary:
             parse_date(b["due"]),
             b["effort"],
             b["type"],
+            frozenset(b["tags"]),
             blockers,
             as_at,
         )
+
+    @property
+    def ships(self) -> bool:
+        return self.state == "done" and not self.is_conversation
+
+    @property
+    def is_conversation(self) -> bool:
+        return self.kind in CONVERSATION_KINDS or not self.tags.isdisjoint(CONVERSATION_TAGS)
 
     @property
     def updated_iso(self) -> str:
@@ -470,7 +483,7 @@ def _milestones(
 
 def _shipped(briefs: Iterable[BriefSummary], today: dt.date) -> tuple[BriefSummary, ...]:
     since = today - dt.timedelta(days=SHIPPED_DAYS)
-    done = [b for b in briefs if b.state == "done" and b.updated and b.updated >= since]
+    done = [b for b in briefs if b.ships and b.updated and b.updated >= since]
     return tuple(sorted(done, key=lambda b: b.updated_iso, reverse=True))
 
 
@@ -483,7 +496,7 @@ def _shipped_by_release(
     for b in summaries:
         recorded = read.facts_of(b.id)
         release = recorded.release or milestone_release.get(b.id)
-        if b.state == "done" and release:
+        if b.ships and release:
             line = ShippedLine(
                 b.id, b.title, recorded.shipped or "", recorded.shipped_on or b.updated
             )

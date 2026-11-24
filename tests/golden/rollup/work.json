@@ -28,6 +28,20 @@
       "title": "Atlas",
       "outcome": "Teams see what shipped.",
       "initiative": "Platform",
+      "gaps": [
+        {
+          "project": "atlas",
+          "subject": "m3",
+          "missing": "due date",
+          "fix": "project_facts.py set-due --milestone m3 --due YYYY-MM-DD --reason ... --set-by ..."
+        },
+        {
+          "project": "atlas",
+          "subject": "m4",
+          "missing": "due date",
+          "fix": "project_facts.py set-due --milestone m4 --due YYYY-MM-DD --reason ... --set-by ..."
+        }
+      ],
       "as_at": {
         "sha": "FULLSHA1",
         "committed": "2026-11-19T09:00:00+00:00",
@@ -121,6 +135,14 @@
       "title": "Beta",
       "outcome": "Beta works.",
       "initiative": "",
+      "gaps": [
+        {
+          "project": "beta",
+          "subject": "project",
+          "missing": "initiative",
+          "fix": "add initiative = \"<name>\" above [project] in project.toml"
+        }
+      ],
       "as_at": {
         "sha": "FULLSHA2",
         "committed": "2026-11-19T09:00:00+00:00",
@@ -136,6 +158,14 @@
       "title": "Gamma",
       "outcome": "Gamma works.",
       "initiative": "Growth",
+      "gaps": [
+        {
+          "project": "gamma",
+          "subject": "m1",
+          "missing": "due date",
+          "fix": "project_facts.py set-due --milestone m1 --due YYYY-MM-DD --reason ... --set-by ..."
+        }
+      ],
       "as_at": {
         "sha": "FULLSHA3",
         "committed": "2026-11-19T09:00:00+00:00",

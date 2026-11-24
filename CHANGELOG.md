@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **`rollup.py gaps` names what a project has not recorded.** Each project is checked against
+  `rollup_gaps.EXPECTATIONS` (an initiative; a due date on every milestone not done); each gap names
+  its fix, the command exits 1 while any remain, and every view's JSON lists them as `gaps`.
+- **Shipped work leaves out conversations.** A done brief of `type: question`, or tagged `peer`, no
+  longer appears under shipped or in a release.
 - **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
   trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
   is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a

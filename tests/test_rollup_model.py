@@ -29,18 +29,21 @@ class BriefSpec:
     ticked: int = 1
     unticked: int = 0
     blocked_by: str = ""
+    kind: str = "feature"
+    tags: str = ""
 
     def text(self) -> str:
         optional = {
             "milestone": self.milestone,
             "estimated-effort": self.effort,
             "blocked_by": self.blocked_by,
+            "tags": self.tags,
         }
         extra = "".join(f"{key}: {value}\n" for key, value in optional.items() if value)
         criteria = "- [x] done\n" * self.ticked + "- [ ] open\n" * self.unticked
         return (
             f"---\nid: {self.id}\ntitle: {self.id.upper()}\nstatus: {self.folder}\n"
-            f"type: feature\ndomain: demo\nupdated: {self.updated}\n{extra}---\n\n"
+            f"type: {self.kind}\ndomain: demo\nupdated: {self.updated}\n{extra}---\n\n"
             f"# {self.id}\n\n## Success criteria\n{criteria}"
         )
 
@@ -673,6 +676,28 @@ def test_shipped_by_release_groups_by_the_release_a_brief_names_else_its_milesto
 
 def test_a_release_with_nothing_shipped_in_it_is_left_out(world: World) -> None:
     assert "r2" not in [r.release for r in world.project.shipped_by_release]
+
+
+@pytest.mark.parametrize(
+    "conversation",
+    [
+        BriefSpec("talk", "done", kind="question"),
+        BriefSpec("talk", "done", tags="[peer, ops]"),
+    ],
+    ids=["a question", "a peer message"],
+)
+def test_a_done_conversation_is_not_shipped_work(
+    tmp_path: pathlib.Path, conversation: BriefSpec
+) -> None:
+    release = 'brief = "{}"\nrelease = "r1"\n'
+    spec = QueueSpec(
+        project_toml(),
+        (conversation, BriefSpec("work", "done")),
+        {f"facts/{b}.toml": release.format(b) for b in ("talk", "work")},
+    )
+    project = built(tmp_path, spec)
+    assert [b.id for b in project.shipped] == ["work"]
+    assert [line.brief for r in project.shipped_by_release for line in r.lines] == ["work"]
 
 
 # --- the slug ------------------------------------------------------------------------------

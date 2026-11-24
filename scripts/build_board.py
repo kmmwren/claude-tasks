@@ -89,6 +89,7 @@ def load_briefs(queue: QueueBriefs) -> list[dict[str, Any]]:
                 "architecture": fm.get("architecture", ""),
                 "updated": fm.get("updated", ""),
                 "blocked_by": parse_list(fm.get("blocked_by", "")),
+                "tags": parse_list(fm.get("tags", "")),
                 "requirements": cited_ids(header[1]) if header else [],
                 "goal": goal if goal != "# TODO" else "",
                 "crit": crit,
