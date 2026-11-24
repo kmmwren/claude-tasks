@@ -38,20 +38,45 @@ context that's already discoverable.
 | `context` | Everything a zero-context agent needs (paths, repos, links, why) |
 | `criteria` | Checkable conditions — if you can't check it, rewrite it |
 | `importance` | 1–4 (default 3 unless clearly urgent/strategic) |
-| `autonomy` | Honest: `full` ONLY if a future agent can complete end-to-end with zero user input |
+| `autonomy` | Honest: `full` ONLY if a future agent can complete end-to-end with zero user input. Work the user already asked for or approved is `full`; `needs-input` needs a real undecided question, written in Notes |
 | `estimated-effort` | xs / s / m / l / xl |
 | `not_before` | ISO date; the brief is not offered before it (omit unless the work is waiting on a date) |
 | `domain` | one of the domains in `tasks.toml` |
-| `tags` | free-form labels (e.g. `depends:<other-id>`) |
+| `blocked_by` | Required. The briefs (`<id>`) and outside gates (`external:<reason without commas>`, each with a `blocked_probe: N: <command\|human>`) the work waits on; `[]` when it waits on nothing. Never leave it out |
+| `tags` | free-form labels |
 | `assignee` | leave empty — enrichment doesn't claim work; `action-task` sets it |
 | `clears` | id of the fleet blocker this brief clears (the reverse of `blockers`); only when a blocker record names it |
 | `requires-local` | `true` if the brief needs local-machine files or creds |
 | `requires-repo` | repo slug if the brief needs a repo other than this queue |
 
-### 4. Write to ready/
-Use `add_task.py --ready --goal "<end state>" --criteria "<checkable condition>" --context "<...>"` (all three are required with `--ready`), or write directly to `ready/` with `status: ready` and commit.
+### 4. Check the dependencies before filing
 
-### 5. Archive the raw file
+- A wait written only in prose ("after #942 merges", "once X approves") is a defect:
+  `check_deps.py` reports it as `prose-dependency`. Every wait goes into `blocked_by`.
+- An approved item left at `autonomy: needs-input` is a defect: `check_deps.py` reports it
+  as `approved-needs-input`.
+
+### 5. Write to ready/ or blocked/
+
+Waits on nothing:
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" --ready --no-deps \
+  --goal "<end state>" --criteria "<checkable condition>" --context "<...>"
+```
+
+Waits on something (files to blocked/; it returns to ready/ when the blocker clears):
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
+  --blocked-by <id|external:reason> --probe "1: <command that exits 0 once it clears|human>" \
+  --goal "<end state>" --criteria "<checkable condition>" --context "<...>"
+```
+
+`--ready` refuses a brief with no declaration and refuses one with `--blocked-by`; goal,
+criteria and context are required for both. Then run
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_deps.py" --root <queue>` and fix every finding
+on the briefs you filed before ending.
+
+### 6. Archive the raw file
 ```bash
 mkdir -p "$CLAUDE_TASKS_DIR/inbox/.processed"
 mv "$CLAUDE_TASKS_DIR/inbox/<file>.md" "$CLAUDE_TASKS_DIR/inbox/.processed/<file>.md"

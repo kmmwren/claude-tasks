@@ -10,6 +10,7 @@ Stdlib only.
 
 import dataclasses
 import functools
+import hashlib
 import pathlib
 import re
 
@@ -35,6 +36,11 @@ class InboxBrief:
     @functools.cached_property
     def fields(self) -> dict[str, str]:
         return fm(self.text)
+
+    @functools.cached_property
+    def digest(self) -> str:
+        """Identifies this text, so a classification can tell whether the brief changed since."""
+        return hashlib.sha256(self.text.encode()).hexdigest()
 
     @property
     def structured(self) -> bool:

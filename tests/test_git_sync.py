@@ -94,7 +94,10 @@ def test_sync_commit_stages_explicit_paths(tmp_path):
     (repo / "docs" / "note.md").write_text("hi")
     (repo / "other.txt").write_text("not named")
 
-    assert git_sync.sync_commit("test: docs", root=repo, paths=["docs"]) is True
+    assert (
+        git_sync.sync_commit("test: docs", root=repo, paths=["docs"])
+        is git_sync.SyncResult.COMMITTED
+    )
 
     assert "docs/note.md" in committed_files(repo)
     assert "other.txt" not in committed_files(repo)
@@ -120,7 +123,7 @@ def test_sync_commit_paths_respect_gitignore(tmp_path):
 def test_sync_deferred_when_lock_held(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
     git(tmp_path, "init", "-q")
-    assert git_sync.sync_commit("x", root=tmp_path) is False
+    assert git_sync.sync_commit("x", root=tmp_path) is git_sync.SyncResult.DEFERRED
     assert "Re-run git_sync.py" in capsys.readouterr().out
 
 
@@ -130,7 +133,7 @@ def test_sync_resolves_root_when_none(tmp_path, monkeypatch):
     monkeypatch.setattr(git_sync, "resolve_root", lambda: called.setdefault("r", tmp_path))
     monkeypatch.setattr(git_sync, "repo_lock", _lock_held)
     git(tmp_path, "init", "-q")
-    assert git_sync.sync_commit("x") is False
+    assert git_sync.sync_commit("x") is git_sync.SyncResult.DEFERRED
     assert called["r"] == tmp_path
 
 
@@ -382,6 +385,39 @@ def test_sweep_refuses_id_that_is_done_only_on_origin(tmp_path):
     assert "inbox/moved.md" not in committed_files(repo, "origin/main")
 
 
+def test_a_push_refuses_a_brief_whose_id_origin_filed_elsewhere_since_the_commit(tmp_path, capsys):
+    """A rival pushed after the commit rebases cleanly, so only the push-time check can stop it."""
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    (other / "done").mkdir(exist_ok=True)
+    _push_from_other(other, "done/moved.md", "closed\n")
+    (repo / "inbox" / "moved.md").write_text("\nlate note\n")
+
+    assert git_sync.sync_commit_and_push("brief(moved): note", root=repo, ids=["moved"]) is False
+
+    files = committed_files(repo, "origin/main")
+    assert "done/moved.md" in files and "inbox/moved.md" not in files
+    branch = git_sync._wip_branch()
+    parked = git(repo, "ls-remote", "--heads", "origin", branch).stdout.split()[0]
+    assert parked == git(repo, "rev-parse", "HEAD").stdout.strip()
+    out = capsys.readouterr().out
+    assert "inbox/moved.md would duplicate" in out and f"parked on origin/{branch}" in out
+
+
+def test_a_push_of_a_move_is_not_blocked_by_the_old_path_still_on_origin(tmp_path):
+    repo = make_repo(tmp_path)
+    _seed_brief(repo, "ready", "moving")
+    git(repo, "push", "-q", "origin", "main")
+    other = _clone_other(tmp_path)
+    _push_from_other(other, "inbox/from-other.md", "x")
+    git(repo, "mv", "ready/moving.md", "done/moving.md")
+
+    assert git_sync.sync_commit_and_push("brief(moving): done", root=repo, ids=["moving"]) is True
+
+    files = committed_files(repo, "origin/main")
+    assert "done/moving.md" in files and "ready/moving.md" not in files
+
+
 def test_sync_refusal_holds_when_the_id_is_named_explicitly(tmp_path):
     """The documented `git_sync.py <msg> <id>` form must not stage the refused file back in."""
     repo = make_repo(tmp_path)
@@ -485,14 +521,89 @@ def test_sweep_commits_a_deleted_brief_without_scanning_it(tmp_path):
     assert "ready/gone.md" not in committed_files(repo, "origin/main")
 
 
-def test_a_queue_inside_another_repo_is_never_synced(tmp_path):
+def _nested_queue(tmp_path):
     repo = make_repo(tmp_path)
-    project_queue = repo / "project" / ".tasks"
-    project_queue.mkdir(parents=True)
-    (project_queue / "x.md").write_text("x")
+    queue = repo / "project" / ".tasks"
+    (queue / "ready").mkdir(parents=True)
+    return repo, queue
 
-    assert git_sync.sync_commit("x", root=project_queue, paths=["."]) is False
-    assert "project/.tasks/x.md" not in committed_files(repo)
+
+def _wip_files(tmp_path, slug="project"):
+    return set(
+        git(tmp_path / "remote", "ls-tree", "-r", "--name-only", f"wip/tasks-{slug}").stdout.split()
+    )
+
+
+def test_a_nested_queue_write_lands_on_the_wip_branch_and_leaves_the_host_untouched(tmp_path):
+    repo, queue = _nested_queue(tmp_path)
+    (queue / "ready" / "x.md").write_text("x")
+    head, index = git(repo, "rev-parse", "HEAD").stdout, git(repo, "write-tree").stdout
+
+    result = git_sync.sync_commit("brief(x): captured", root=queue, paths=["."])
+
+    assert result is git_sync.SyncResult.HOSTED
+    assert "project/.tasks/ready/x.md" in _wip_files(tmp_path)
+    assert "project/.tasks/ready/x.md" not in committed_files(tmp_path / "remote", "main")
+    assert git(repo, "rev-parse", "HEAD").stdout == head
+    assert git(repo, "write-tree").stdout == index
+    assert git(repo, "status", "--porcelain").stdout.strip().endswith("project/")
+    assert git(repo, "worktree", "list").stdout.count("\n") == 1
+    assert git(
+        tmp_path / "remote", "log", "-1", "--format=%s", "wip/tasks-project"
+    ).stdout.strip() == ("brief(x): captured")
+
+
+def test_a_nested_queue_sets_the_wip_branch_upstream(tmp_path):
+    repo, queue = _nested_queue(tmp_path)
+    (queue / "ready" / "x.md").write_text("x")
+
+    git_sync.sync_commit("x", root=queue, paths=["."])
+
+    merge = git(repo, "config", "branch.wip/tasks-project.merge").stdout.strip()
+    assert merge == "refs/heads/wip/tasks-project"
+
+
+def test_a_nested_queue_deletion_is_mirrored_on_the_wip_branch(tmp_path):
+    repo, queue = _nested_queue(tmp_path)
+    (queue / "ready" / "gone.md").write_text("gone")
+    (queue / "ready" / "kept.md").write_text("kept")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed queue")
+    git(repo, "push", "-q", "origin", "main")
+    (queue / "ready" / "gone.md").unlink()
+
+    assert git_sync.sync_commit("x", root=queue, paths=["."]) is git_sync.SyncResult.HOSTED
+
+    assert "project/.tasks/ready/gone.md" not in _wip_files(tmp_path)
+    assert "project/.tasks/ready/kept.md" in _wip_files(tmp_path)
+    assert "project/.tasks/ready/gone.md" in committed_files(tmp_path / "remote", "main")
+    assert (git(repo, "status", "--porcelain").stdout.split() or [""])[0] == "D"
+
+
+def test_a_nested_queue_with_nothing_pending_pushes_nothing(tmp_path):
+    _, queue = _nested_queue(tmp_path)
+
+    assert git_sync.sync_commit("x", root=queue, paths=["."]) is git_sync.SyncResult.HOSTED
+    assert _wip_files(tmp_path) == set()
+
+
+def test_a_credential_bearing_nested_file_is_not_landed(tmp_path, capsys):
+    _, queue = _nested_queue(tmp_path)
+    (queue / "ready" / "leak.md").write_text("see https://b.example.test/x?token=abc123")
+
+    git_sync.sync_commit("x", root=queue, paths=["."])
+
+    assert "1 held back" in capsys.readouterr().out
+    assert _wip_files(tmp_path) == set()
+
+
+def test_a_nested_queue_in_a_repo_with_no_origin_defers(tmp_path, capsys):
+    _, queue = _nested_queue(tmp_path)
+    (queue / "ready" / "x.md").write_text("x")
+    git(tmp_path / "clone", "remote", "remove", "origin")
+
+    assert git_sync.sync_commit("x", root=queue, paths=["."]) is git_sync.SyncResult.DEFERRED
+    assert "host land deferred" in capsys.readouterr().out
 
 
 def test_cli_sweep_flag_syncs_the_named_root(tmp_path):
@@ -566,7 +677,10 @@ def test_a_write_during_an_in_flight_push_is_still_pushed(tmp_path, monkeypatch)
     log, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
     slow.touch()
     (repo / "inbox" / "first.md").write_text("1")
-    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    assert (
+        git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"])
+        is git_sync.SyncResult.COMMITTED
+    )
     deadline = time.monotonic() + 10
     while not started.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -574,7 +688,10 @@ def test_a_write_during_an_in_flight_push_is_still_pushed(tmp_path, monkeypatch)
     slow.unlink()
     (repo / "inbox" / "second.md").write_text("2")
 
-    assert git_sync.sync_commit("brief(second): captured", root=repo, ids=["second"]) is True
+    assert (
+        git_sync.sync_commit("brief(second): captured", root=repo, ids=["second"])
+        is git_sync.SyncResult.COMMITTED
+    )
     assert wait_for_pusher_idle(repo)
 
     assert _remote_head(repo) == git(repo, "rev-parse", "HEAD").stdout
@@ -590,7 +707,10 @@ def test_a_running_pusher_means_a_write_spawns_no_process(tmp_path, monkeypatch)
     )
     (repo / "inbox" / "mine.md").write_text("x")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+    assert (
+        git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"])
+        is git_sync.SyncResult.COMMITTED
+    )
 
     assert PushState(repo).is_dirty()
     assert wait_for_pusher_idle(repo, timeout=0.2) is False
@@ -683,7 +803,10 @@ def test_detached_pusher_output_goes_to_the_push_log(tmp_path):
     _push_from_other(_clone_other(tmp_path), "ready/shared.md", "remote edit")
     (repo / "ready" / "shared.md").write_text("local edit")
 
-    assert git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"]) is True
+    assert (
+        git_sync.sync_commit("brief(shared): edited", root=repo, ids=["shared"])
+        is git_sync.SyncResult.COMMITTED
+    )
     assert wait_for_pusher_idle(repo)
 
     assert "rebase conflict in ready/shared.md" in PushState(repo).log_path.read_text()
@@ -721,7 +844,10 @@ def test_a_write_fetches_nothing_and_a_sweep_fetches_once_a_minute(tmp_path, mon
     fetches = log.with_name("pushes.log.fetch")
     (repo / "inbox" / "quiet.md").write_text("q")
 
-    assert git_sync.sync_commit("brief(quiet): captured", root=repo, ids=["quiet"]) is True
+    assert (
+        git_sync.sync_commit("brief(quiet): captured", root=repo, ids=["quiet"])
+        is git_sync.SyncResult.COMMITTED
+    )
     assert wait_for_pusher_idle(repo)
     assert _push_count(fetches) == 0
 
@@ -735,7 +861,7 @@ def test_a_sweep_of_a_project_queue_fetches_nothing(tmp_path, monkeypatch):
     log, _, _ = _fake_git_on_path(tmp_path, monkeypatch)
     (repo / "project").mkdir()
 
-    assert git_sync.sweep(repo / "project") is False
+    assert git_sync.sweep(repo / "project") is True  # nothing pending: nothing to land or fetch
     assert _push_count(log.with_name("pushes.log.fetch")) == 0
 
 
@@ -745,7 +871,10 @@ def test_a_write_from_a_worktree_commits_no_pusher_state(tmp_path):
     git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
     (wt / "inbox" / "mine.md").write_text("x")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=wt, ids=["mine"]) is True
+    assert (
+        git_sync.sync_commit("brief(mine): captured", root=wt, ids=["mine"])
+        is git_sync.SyncResult.COMMITTED
+    )
     assert wait_for_pusher_idle(wt)
     assert git_sync.sweep(wt) is True
     assert wait_for_pusher_idle(wt)
@@ -772,7 +901,10 @@ def test_a_pusher_that_cannot_start_leaves_the_commit_for_the_sweep(tmp_path, mo
     monkeypatch.setattr(git_sync.sys, "executable", str(tmp_path / "no-such-python"))
     (repo / "inbox" / "mine.md").write_text("x")
 
-    assert git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"]) is True
+    assert (
+        git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"])
+        is git_sync.SyncResult.COMMITTED
+    )
 
     assert "inbox/mine.md" in committed_files(repo, "HEAD")
     assert PushState(repo).is_dirty()
@@ -826,7 +958,10 @@ def test_a_sweep_waits_for_a_running_pusher_then_returns_with_origin_current(tmp
     _, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
     slow.touch()
     (repo / "inbox" / "first.md").write_text("1")
-    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    assert (
+        git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"])
+        is git_sync.SyncResult.COMMITTED
+    )
     deadline = time.monotonic() + 10
     while not started.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -865,7 +1000,10 @@ def test_a_sweep_waits_for_a_push_that_took_its_dirty_mark(tmp_path, monkeypatch
     _, slow, started = _fake_git_on_path(tmp_path, monkeypatch)
     slow.touch()
     (repo / "inbox" / "first.md").write_text("1")
-    assert git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"]) is True
+    assert (
+        git_sync.sync_commit("brief(first): captured", root=repo, ids=["first"])
+        is git_sync.SyncResult.COMMITTED
+    )
     deadline = time.monotonic() + 10
     while not started.exists() and time.monotonic() < deadline:
         time.sleep(0.02)

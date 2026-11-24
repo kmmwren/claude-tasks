@@ -30,6 +30,7 @@ def brief_text(
     importance: str = "3",
     autonomy: str = "full",
     probed: bool = True,
+    body: str = "## Goal\n\ng\n",
 ) -> str:
     items = [i.strip() for i in blocked_by.strip("[]").split(",") if i.strip()]
     probes = "".join(
@@ -51,10 +52,7 @@ blocked_by: {blocked_by}
 milestone: {milestone}
 {probes}---
 
-## Goal
-
-g
-
+{body}
 ## Execution log
 
 2026-06-01: captured.
@@ -62,14 +60,17 @@ g
 
 
 def make_queue(
-    tmp_path: pathlib.Path, briefs: dict[str, dict[str, str]], milestones: str | None = None
+    tmp_path: pathlib.Path,
+    briefs: dict[str, dict[str, str]],
+    milestones: str | None = None,
+    project_name: str = "proj",
 ) -> pathlib.Path:
     """briefs maps id -> brief_text kwargs (status selects the folder).
 
     `milestones`, when given, is the body of a project-owned milestones.toml that sits beside
-    the queue directory, and tasks.toml is pointed at it.
+    the queue directory, and tasks.toml is pointed at it. `project_name` is the queue's short name.
     """
-    project = tmp_path / "proj"
+    project = tmp_path / project_name
     root = init_queue.init_queue(project / ".tasks", name="demo")
     for bid, kwargs in briefs.items():
         status = kwargs.get("status", "ready")
@@ -101,9 +102,11 @@ def inbox_text(
     tags: str = "[]",
     parent: str = "",
     importance: str = "3",
+    blocked_by: str | None = None,
 ) -> str:
-    """An inbox brief as add_task files it: stub fields unless given."""
+    """An inbox brief as add_task files it: stub fields unless given, no dependency line unless `blocked_by`."""
     title = title or f"Title of {bid}"
+    declaration = "" if blocked_by is None else f"blocked_by: {blocked_by}\n"
     checks = "\n".join(f"- [ ] {c}" for c in criteria) or f"- [ ] {title} is done."
     return f"""---
 id: {bid}
@@ -116,7 +119,7 @@ domain: work
 tags: {tags}
 parent: {parent}
 source: claude
----
+{declaration}---
 
 ## Goal
 

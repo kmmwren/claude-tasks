@@ -24,6 +24,7 @@ def _brief(
     blockers="[]",
     body_extra="",
     enrichment="",
+    declared="",
 ):
     return f"""---
 id: {bid}
@@ -41,7 +42,7 @@ tags: {tags}
 parent:
 source: claude
 blockers: {blockers}
-related: []
+{declared}related: []
 ---
 
 ## Goal
@@ -53,6 +54,8 @@ Some goal mentioning {title}.
 2026-06-01: captured.
 {body_extra}"""
 
+
+DECLARED_NONE = "blocked_by: []\n"
 
 ENRICHMENT = """
 ## Context
@@ -104,7 +107,11 @@ def root(tmp_path):
     )
     (tmp_path / "inbox" / "enriched-staging-thought.md").write_text(
         _brief(
-            "inbox", "enriched-staging-thought", "Enriched staging thought", enrichment=ENRICHMENT
+            "inbox",
+            "enriched-staging-thought",
+            "Enriched staging thought",
+            enrichment=ENRICHMENT,
+            declared=DECLARED_NONE,
         )
     )
     return tmp_path
@@ -137,6 +144,26 @@ def test_update_probes_leaves_text_without_frontmatter_unchanged():
 def test_find_brief_locates_across_folders(root):
     p = transition.find_brief("build-the-billing-checkout-app", root)
     assert p == root / "in-progress" / "build-the-billing-checkout-app.md"
+
+
+def test_find_brief_locates_a_brief_by_its_frontmatter_id(root):
+    path = root / "ready" / "2026-11-04-product-ingest-3809-refresh-table.md"
+    path.write_text(_brief("ready", "refresh-table", "Refresh"))
+    assert transition.find_brief("refresh-table", root) == path
+
+
+def test_find_brief_prefers_brief_folder_over_inbox_for_a_frontmatter_id(root):
+    (root / "inbox" / "2026-11-04-early.md").write_text(_brief("inbox", "shared-id", "early"))
+    ready = root / "ready" / "2026-11-05-later.md"
+    ready.write_text(_brief("ready", "shared-id", "later"))
+    assert transition.find_brief("shared-id", root) == ready
+
+
+def test_move_by_frontmatter_id_keeps_the_filename(root):
+    (root / "ready" / "2026-11-04-dated-stem.md").write_text(_brief("ready", "fm-id", "T"))
+    new_path = transition.move_brief("fm-id", "in-progress", root, today="2026-11-23")
+    assert new_path == root / "in-progress" / "2026-11-04-dated-stem.md"
+    assert not (root / "ready" / "2026-11-04-dated-stem.md").exists()
 
 
 def test_find_brief_returns_none_when_absent(root):
@@ -232,7 +259,9 @@ def test_move_blocks_an_enriched_inbox_brief(root):
 def parked(root):
     """An un-enriched and an enriched brief, both already sitting in parked/."""
     for bid, extra in (("parked-raw", ""), ("parked-enriched", ENRICHMENT)):
-        (root / "parked" / f"{bid}.md").write_text(_brief("parked", bid, bid, enrichment=extra))
+        (root / "parked" / f"{bid}.md").write_text(
+            _brief("parked", bid, bid, enrichment=extra, declared=DECLARED_NONE)
+        )
     return root
 
 
@@ -353,8 +382,9 @@ def test_update_frontmatter_sets_status_and_updated():
     assert fm["updated"] == "2026-06-02"
 
 
-def test_update_frontmatter_no_frontmatter_returns_text():
-    assert transition._update_frontmatter("no fm here", "done", "2026-06-02") == "no fm here"
+def test_update_frontmatter_refuses_text_without_frontmatter():
+    with pytest.raises(ValueError, match="no frontmatter"):
+        transition._update_frontmatter("no fm here", "done", "2026-06-02")
 
 
 def test_update_frontmatter_leaves_body_untouched():
@@ -1253,3 +1283,58 @@ def test_resolve_skips_a_brief_that_is_not_utf8(root):
     (root / "ready" / "staging-bad.md").write_bytes(b"\xff\xfe\x00staging")
     hits = transition.resolve_brief("staging", root)
     assert all(hit["path"].name != "staging-bad.md" for hit in hits)
+
+
+def _blocked_by_line(path):
+    lines = [ln for ln in path.read_text().splitlines() if ln.startswith("blocked_by:")]
+    assert len(lines) <= 1
+    return lines[0] if lines else None
+
+
+def test_a_move_that_is_not_a_judgement_leaves_an_absent_blocked_by_absent(root):
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
+    assert _blocked_by_line(newp) is None
+
+
+def test_a_move_that_is_not_a_judgement_leaves_a_declared_blocked_by_untouched(root):
+    path = root / "ready" / "rotate-the-api-key.md"
+    path.write_text(
+        path.read_text().replace("related: []", "blocked_by: [other-brief]\nrelated: []")
+    )
+    newp = transition.move_brief("rotate-the-api-key", "in-progress", root, today="2026-06-02")
+    assert _blocked_by_line(newp) == "blocked_by: [other-brief]"
+
+
+def test_leaving_blocked_writes_an_empty_blocked_by(root):
+    transition.move_brief("rotate-the-api-key", "blocked", root, **BLOCK_ARGS)
+    newp = transition.move_brief("rotate-the-api-key", "ready", root, today="2026-06-02")
+    assert _blocked_by_line(newp) == "blocked_by: []"
+
+
+def test_no_deps_writes_an_empty_blocked_by(root):
+    newp = transition.move_brief(
+        "rotate-the-api-key", "in-progress", root, today="2026-06-02", no_deps=True
+    )
+    assert _blocked_by_line(newp) == "blocked_by: []"
+
+
+def test_moving_to_blocked_writes_the_given_blockers(root):
+    newp = transition.move_brief("rotate-the-api-key", "blocked", root, **BLOCK_ARGS)
+    assert _blocked_by_line(newp) == "blocked_by: [external:vendor]"
+
+
+def test_promoting_an_undeclared_brief_from_inbox_is_refused(root):
+    path = root / "inbox" / "enriched-staging-thought.md"
+    path.write_text(path.read_text().replace(DECLARED_NONE, ""))
+    with pytest.raises(ValueError, match="declares no dependencies"):
+        transition.move_brief("enriched-staging-thought", "ready", root, today="2026-06-02")
+    assert path.exists()
+
+
+def test_promoting_an_undeclared_brief_is_allowed_with_no_deps_and_declares_it(root):
+    path = root / "inbox" / "enriched-staging-thought.md"
+    path.write_text(path.read_text().replace(DECLARED_NONE, ""))
+    newp = transition.move_brief(
+        "enriched-staging-thought", "ready", root, today="2026-06-02", no_deps=True
+    )
+    assert _blocked_by_line(newp) == "blocked_by: []"

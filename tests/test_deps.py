@@ -78,3 +78,50 @@ def test_evidence_is_required_only_when_the_brief_says_required():
     assert deps.Brief("x", "ready", {"evidence": "required"}).evidence_required
     assert not deps.Brief("x", "ready", {"evidence": "optional"}).evidence_required
     assert not deps.Brief("x", "ready", {}).evidence_required
+
+
+def test_a_qualified_id_parses_into_queue_and_brief_and_plain_items_do_not():
+    assert deps.QueueRef.parse("work-tasks:abc") == deps.QueueRef("work-tasks", "abc")
+    assert deps.QueueRef.parse("/q/tasks:abc") == deps.QueueRef("/q/tasks", "abc")
+    assert str(deps.QueueRef("work-tasks", "abc")) == "work-tasks:abc"
+    for plain in ("abc", "external:vendor reply", "owner/repo#12", "split", ":abc", "queue:"):
+        assert deps.QueueRef.parse(plain) is None
+
+
+def test_a_queue_resolves_by_path_or_by_the_short_name_of_exactly_one_known_root(tmp_path):
+    alpha = make_queue(tmp_path, {}, project_name="alpha")
+    beta = make_queue(tmp_path, {}, project_name="beta")
+    assert deps.queue_name(alpha) == "alpha"
+    assert deps.resolve_queue("beta", [alpha, beta]) == beta
+    assert deps.resolve_queue(str(alpha), []) == alpha
+    assert deps.resolve_queue("gamma", [alpha, beta]) is None
+    assert deps.resolve_queue(str(tmp_path / "nowhere"), [alpha]) is None
+    twin = make_queue(tmp_path / "again", {}, project_name="alpha")
+    assert deps.resolve_queue("alpha", [alpha, twin]) is None
+
+
+def test_a_remote_blocker_counts_as_done_only_when_its_brief_is_done(tmp_path):
+    alpha = make_queue(tmp_path, {"dep": {"status": "done"}, "open": {}}, project_name="alpha")
+    beta = make_queue(
+        tmp_path,
+        {
+            "w1": {"status": "blocked", "blocked_by": "[alpha:dep]"},
+            "w2": {"blocked_by": "[alpha:open]"},
+        },
+        project_name="beta",
+    )
+    assert deps.done_ids(QueueBriefs.read(beta), [alpha, beta]) == {"alpha:dep"}
+    assert deps.done_ids(QueueBriefs.read(beta), []) == set()
+
+
+def test_remote_refs_and_local_ids_split_the_declared_blockers():
+    brief = _b(blocked_by="[local, alpha:far, external:vendor]")
+    assert brief.remote_refs == [deps.QueueRef("alpha", "far")]
+    assert brief.local_ids == {"local"}
+
+
+def test_a_ref_problem_names_an_unknown_queue_and_a_missing_brief(tmp_path):
+    alpha = make_queue(tmp_path, {"dep": {"status": "done"}}, project_name="alpha")
+    assert deps.ref_problem(deps.QueueRef("alpha", "dep"), [alpha]) is None
+    assert "no single known queue" in deps.ref_problem(deps.QueueRef("zeta", "dep"), [alpha])
+    assert "no brief 'gone'" in deps.ref_problem(deps.QueueRef("alpha", "gone"), [alpha])

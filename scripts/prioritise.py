@@ -50,9 +50,9 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from _paths import BriefFile, QueueBriefs, require_queue, resolve_root
+from _paths import BriefFile, QueueBriefs, known_roots, require_queue, resolve_root
 from config import load_config_or_defaults
-from deps import Brief, brief_id, dependency_edges, fm, load_queue, unmet
+from deps import Brief, brief_id, dependency_edges, done_ids, fm, load_queue, unmet
 from fleet_blockers import FleetBlockers
 from scope import SCOPE_HELP, AllScope, Scope, parse_scope
 from signals import Signal, SignalWeights, Subject
@@ -515,7 +515,7 @@ class _RankContext:
             index_queue(briefs)[1],
             depth,
             scored,
-            {b.id for b in queue if b.status == "done"},
+            done_ids(briefs, known_roots(briefs.root)),
             graph.inherited({bid: f.total for bid, f in scored.items()}),
             fleet,
         )
@@ -668,6 +668,11 @@ def rank(
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]
     return _orders(items, weights)[chosen]
+
+
+def next_runnable(root: pathlib.Path) -> dict[str, Any] | None:
+    """The brief the picker would start now: the top-ranked actionable one in ready/, None when none is."""
+    return next((b for b in rank(QueueBriefs.read(root)) if b["_actionable"]), None)
 
 
 def _flags(b: dict[str, Any]) -> str:

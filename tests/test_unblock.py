@@ -171,8 +171,8 @@ def test_release_rechecks_state_under_the_lock(tmp_path, monkeypatch):
     )
     real = unblock.releasable
 
-    def stale_then_change(r, today=None):
-        found = real(r, today)
+    def stale_then_change(r, today=None, roots=()):
+        found = real(r, today, roots)
         text = _read(r, "blocked", "w").replace("[dep]", "[dep, external:new wait]")
         (r / "blocked" / "w.md").write_text(text)
         return found

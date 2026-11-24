@@ -73,6 +73,17 @@ Execute against the success criteria using the right approach (TDD for code, etc
   `transition.py` prints a warning naming it. Record the screenshot or video with
   `project_facts.py add-evidence` (README, "Recording a fact"); the warning clears on the next move.
 
+  The move also does the follow-through itself. Every brief whose `blocked_by` names this one,
+  in this queue or in another queue as `<queue>:<id>`, gets an execution-log line saying what
+  landed (and one flagging any "after <id> merges" prose as stale), and is released to ready/ when
+  nothing else holds it. Other queues are found through `CLAUDE_TASKS_ROOTS`, a PATH-style list
+  of queue roots. The command ends with a `next: <id> ...` line naming the picker's top runnable
+  brief, or `next: nothing runnable in ready/`.
+
+  Then re-pick. Interactive session: name that brief to the user and offer to continue into it.
+  Headless session: continue straight into it with `action-task <id>`; stop only when the line
+  says nothing is runnable.
+
   Then record what shipped, so the roll-up's shipped list says it in the project's own words:
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/project_facts.py" --root <queue> set-shipped \

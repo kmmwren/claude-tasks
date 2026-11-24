@@ -29,6 +29,10 @@ This writes `inbox/YYYY-MM-DD-HHMM-<slug>.md` with minimal frontmatter (`raw: tr
 ## Rules
 
 - **No enrichment at capture time.** Don't ask about domain, importance, autonomy, effort.
+- **No dependency declaration at capture time.** A raw capture has no `blocked_by:` line, so
+  it stays in inbox/: promotion to ready/ refuses it until `enrich` (or the inbox triage)
+  sets `blocked_by`. Keep any wait the user mentions ("after #942 merges") in the raw text;
+  enrich turns it into a `blocked_by` entry.
 - **Title only required.** Body is optional if the title says enough.
 - **Preserve the raw text exactly** — it's the input for enrichment; don't clean it up.
 - **Check for near-duplicates** with a quick grep before writing — don't capture what's

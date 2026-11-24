@@ -40,15 +40,29 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   --autonomy full|needs-input|blocked \
   --effort xs|s|m|l|xl --due YYYY-MM-DD \
   --domain "<one of the domains in tasks.toml>" \
+  --no-deps | --blocked-by <id|external:reason> [--probe "N: <command|human>"] \
   --source claude --commit
 ```
 
+- **Dependencies (required):** every brief declares what it waits on, in fields and never
+  only in prose; `check_deps.py` reports a prose-only wait as `prose-dependency`.
+  - `--no-deps` when it waits on nothing (writes `blocked_by: []`).
+  - `--blocked-by <brief-id>` (repeatable) for each brief that must finish first.
+  - `--blocked-by external:<reason without commas>` for a PR merge, approval or login, with
+    `--probe "N: <command>"` that exits 0 once it clears, or `--probe "N: human"` plus
+    `--confirmed "N: <date> <who>"`. N is the blocker's position in the `--blocked-by` list.
+
+  `--blocked-by` files the brief to blocked/ (it returns to ready/ when the blocker clears)
+  unless `--status` says otherwise, and `--ready` with `--blocked-by` is refused.
+
 - **`--ready`**: add it if you can ALSO fill out goal + criteria + context well enough to
   execute. The script refuses `--ready` (and `--status ready`) unless `--goal`, `--criteria`
-  (alias `--success`) and `--context` are all given, so the brief never carries placeholder stubs. Then it lands in `ready/`. Otherwise (default) it lands in `inbox/` for later
+  (alias `--success`) and `--context` are all given, plus `--no-deps`, so the brief never carries placeholder stubs or an unstated dependency. Then it lands in `ready/`. Otherwise (default) it lands in `inbox/` for later
   enrichment (the `enrich` skill turns inbox items into ready briefs).
 - **`--autonomy full`** ONLY if a future agent could complete it end-to-end with zero
-  user input. Be honest — over-tagging `full` makes the queue lie about what's delegable.
+  user input. Be honest: over-tagging `full` makes the queue lie about what's delegable.
+  Work the user asked for or approved is `full`; `needs-input` needs a real undecided
+  question in the context (`check_deps.py` reports an approved one as `approved-needs-input`).
 - **`--blocks <brief-id>`** (repeatable): name each open brief this new work is blocking, so the
   prioritiser ranks it higher. Use the same ids as `blockers:`/`blocked_by:`. Omit it when the work blocks nothing.
 - **`--commit`** writes, commits, and pushes. Use it unless you have a reason to batch.

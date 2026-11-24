@@ -79,3 +79,20 @@ def test_sent_back_names_the_briefs_whose_promotion_was_undone(tmp_path):
     log.record_correction(correction(ready, BriefClass.NEEDS_INFO))
     log.record_correction(correction(held))
     assert log.sent_back() == {"x"}
+
+
+def test_a_verdict_is_logged_again_when_the_brief_changed_under_the_same_class(tmp_path):
+    log = ClassLog(tmp_path)
+    assert log.record_verdict(Verdict("a", BriefClass.NEEDS_INFO, "r", "T", "t1", digest="d1"))
+    assert not log.record_verdict(Verdict("a", BriefClass.NEEDS_INFO, "r2", "T", "t2", digest="d1"))
+    assert log.record_verdict(Verdict("a", BriefClass.NEEDS_INFO, "r3", "T", "t3", digest="d2"))
+    assert [v.digest for v in log.verdicts()] == ["d1", "d2"]
+
+
+def test_a_verdict_logged_before_digests_existed_reads_back_with_none(tmp_path):
+    log = ClassLog(tmp_path)
+    log.path.parent.mkdir(parents=True, exist_ok=True)
+    log.path.write_text(
+        '{"at": "t0", "brief_id": "a", "cls": "drop", "event": "verdict", "reason": "r", "title": "T"}\n'
+    )
+    assert log.latest()["a"].digest == ""

@@ -42,10 +42,18 @@ class Verdict:
     title: str
     at: str = dataclasses.field(default_factory=_now)
     event: str = "verdict"
+    digest: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Verdict":
-        return cls(d["brief_id"], BriefClass(d["cls"]), d["reason"], d["title"], d["at"])
+        return cls(
+            d["brief_id"],
+            BriefClass(d["cls"]),
+            d["reason"],
+            d["title"],
+            d["at"],
+            digest=d.get("digest", ""),
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -108,9 +116,9 @@ class ClassLog:
         return {v.brief_id: v for v in self.verdicts()}
 
     def record_verdict(self, verdict: Verdict) -> bool:
-        """Log the verdict unless it repeats the brief's current class; history is change-only."""
+        """Log the verdict unless it repeats the brief's current class and content; history is change-only."""
         current = self.latest().get(verdict.brief_id)
-        if current is not None and current.cls is verdict.cls:
+        if current is not None and (current.cls, current.digest) == (verdict.cls, verdict.digest):
             return False
         self.append(verdict)
         return True

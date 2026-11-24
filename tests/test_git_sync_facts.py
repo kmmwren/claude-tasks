@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 
 import git_sync
+import host_land
 import pytest
 from _default_branch import default_branch
 
@@ -159,7 +160,8 @@ def test_a_caller_holding_the_lock_commits_without_taking_it_again(tmp_path, mon
 
     monkeypatch.setattr(git_sync, "repo_lock", never)
 
-    assert git_sync.sync_commit("test: docs", root=repo, paths=["docs"], lock_held=True) is True
+    result = git_sync.sync_commit("test: docs", root=repo, paths=["docs"], lock_held=True)
+    assert result is git_sync.SyncResult.COMMITTED
 
     assert "docs/note.md" in committed_files(repo)
     assert wait_for_pusher_idle(repo)
@@ -176,13 +178,21 @@ def test_a_caller_holding_the_lock_still_never_commits_a_credential(tmp_path, ca
     assert "1 held back for looking like a credential" in capsys.readouterr().out
 
 
-def test_a_queue_that_is_not_its_own_repo_is_not_committed_even_when_the_lock_is_held(tmp_path):
+def test_a_nested_queue_lands_on_the_wip_branch_of_a_trunk_origin_without_retaking_the_lock(
+    tmp_path, monkeypatch
+):
     repo = trunk_repo(tmp_path)
     queue = repo / "project" / ".tasks"
     queue.mkdir(parents=True)
     (queue / "x.md").write_text("x")
+    monkeypatch.setattr(host_land, "repo_lock", lambda *a, **k: pytest.fail("lock retaken"))
 
-    assert git_sync.sync_commit("x", root=queue, paths=["."], lock_held=True) is False
+    result = git_sync.sync_commit("x", root=queue, paths=["."], lock_held=True)
+
+    assert result is git_sync.SyncResult.HOSTED
+    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project")
+    assert "project/.tasks/x.md" in wip.stdout.split()
+    assert "project/.tasks/x.md" not in committed_files(repo)
 
 
 # --- which repo holds a queue ------------------------------------------------------------

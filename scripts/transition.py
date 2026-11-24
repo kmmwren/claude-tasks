@@ -23,6 +23,10 @@ Usage:
   python scripts/transition.py move <brief-id> in-progress
   python scripts/transition.py move <brief-id> done   --log "shipped; tests green"
   python scripts/transition.py move <brief-id> parked --log "ESCALATED — needs a login"
+
+  # declare what a ready, in-progress or parked brief waits on, in place (declaration.py)
+  python scripts/transition.py declare <brief-id> --no-deps
+  python scripts/transition.py declare <brief-id> --blocked-by other-brief,external:vendor-reply
 """
 
 import argparse
@@ -32,21 +36,30 @@ import pathlib
 import re
 import sys
 from collections.abc import Callable
+from itertools import chain
 from typing import Any
 
 from _concurrency import atomic_write, repo_lock
-from _paths import QueueBriefs, resolve_root, warn
+from _paths import QueueBriefs, known_roots, resolve_root, warn
 from deps import (
     CONFIRMED_KEY,
     PROBE_KEY,
     Brief,
+    QueueRef,
     blocker_number,
+    declares_dependencies,
     fm,
     fm_repeated,
     is_external,
     load_queue,
     parse_list,
     probe_gaps,
+    queue_name,
+    ref_problem,
+    same_queue,
+)
+from deps import (
+    brief_id as identity_of,
 )
 from facts import lacks_evidence
 from git_sync import sync_commit
@@ -74,12 +87,18 @@ DEFAULT_LOG = {
 
 
 def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
-    """Locate `<brief_id>.md` across the brief folders by exact id; brief folders win over inbox. None if absent."""
-    for d in (*BRIEF_DIRS, "inbox"):
-        p = root / d / f"{brief_id}.md"
-        if p.exists():
-            return p
-    return None
+    """Locate a brief across the folders by file stem, else by frontmatter `id:` (what check_deps reports).
+
+    A stem match wins, and brief folders win over inbox. None if absent.
+    """
+    folders = [root / d for d in (*BRIEF_DIRS, "inbox")]
+    by_stem = (d / f"{brief_id}.md" for d in folders)
+    by_id = (
+        brief.path
+        for _, brief in QueueBriefs.read(root).within((*BRIEF_DIRS, "inbox"))
+        if identity_of(fm(brief.text), brief.path.stem) == brief_id
+    )
+    return next((p for p in chain(by_stem, by_id) if p.exists()), None)
 
 
 def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
@@ -97,6 +116,21 @@ def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> Non
             f"{brief_id!r} is still in {source}/ and cannot move to {new_status} without "
             f"{', '.join(missing)}; enrich it first"
         )
+
+
+def _require_declared(brief_id: str, new_status: str, path: pathlib.Path, no_deps: bool) -> None:
+    """Refuse to promote a brief into work that never said what it waits on; --no-deps says "nothing"."""
+    source = path.parent.name
+    if no_deps or source in ENRICHED_STATUSES or new_status not in ("ready", "in-progress"):
+        return
+    if not declares_dependencies(fm(path.read_text(encoding="utf-8"))):
+        raise ValueError(
+            f"{brief_id!r} declares no dependencies; move it to blocked with --blocked-by <id|external:reason>, "
+            f"or pass --no-deps when it depends on nothing"
+        )
+
+
+_FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
 
 
 def _tokens(query: str) -> list[str]:
@@ -166,6 +200,14 @@ def set_field(block: str, key: str, value: str) -> str:
     return block if n else block + "\n" + line
 
 
+def ensure_frontmatter(text: str, brief_id: str, status: str, today: str) -> str:
+    """Prefix a brief that has no frontmatter block with the minimal one, dated as add_task dates it."""
+    if _FRONTMATTER.match(text):
+        return text
+    block = f"id: {brief_id}\ncreated: {today}\nupdated: {today}\nstatus: {status}"
+    return f"---\n{block}\n---\n\n{text.lstrip(chr(10))}"
+
+
 def _update_frontmatter(
     text: str,
     new_status: str,
@@ -177,11 +219,12 @@ def _update_frontmatter(
 
     `assignee=None` leaves any existing claim untouched, so briefs written before the field
     existed keep transitioning unchanged; pass "" to release a claim. `blocked_by=None`
-    leaves the list alone; a list replaces it.
+    leaves the list alone; a list replaces it. Text with no frontmatter block raises, because
+    there is nowhere to write the change; `ensure_frontmatter` gives such a brief one first.
     """
-    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    m = _FRONTMATTER.match(text)
     if not m:
-        return text
+        raise ValueError("the brief has no frontmatter block, so nothing can be written to it")
     block = m.group(2)
     block = re.sub(r"(?m)^status:.*$", f"status: {new_status}", block, count=1)
     block = re.sub(r"(?m)^updated:.*$", f"updated: {today}", block, count=1)
@@ -250,7 +293,7 @@ def _update_probes(
     blocked_by: list[str],
 ) -> str:
     """Blocked briefs carry their `blocked_probe:` lines; leaving blocked/ drops them with the blocker."""
-    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    m = _FRONTMATTER.match(text)
     if not m:
         return text
     block = carry_blocker_lines(m.group(2), old_blocked_by, blocked_by)
@@ -283,13 +326,22 @@ def _append_log(text: str, today: str, message: str) -> str:
 
 
 def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
-    """Refuse a self-block or a blocker id that is not a brief (externals are free text)."""
+    """Refuse a self-block, an unknown blocker id, or a `<queue>:<id>` that names no known brief (externals are free text)."""
     if brief_id in blocked_by:
         raise ValueError(f"{brief_id!r} cannot be blocked by itself")
     known = {b.id for b in load_queue(QueueBriefs.read(root))}
-    unknown = [b for b in blocked_by if not is_external(b) and b not in known]
+    refs = [ref for item in blocked_by if (ref := QueueRef.parse(item))]
+    unknown = [
+        b for b in blocked_by if not is_external(b) and b not in known and QueueRef.parse(b) is None
+    ]
     if unknown:
-        raise ValueError(f"unknown blocker id(s) {unknown}; use a brief id or external:<reason>")
+        raise ValueError(
+            f"unknown blocker id(s) {unknown}; use a brief id, <queue>:<id> or external:<reason>"
+        )
+    roots = known_roots(root)
+    problems = [p for ref in refs if (p := ref_problem(ref, roots))]
+    if problems:
+        raise ValueError(f"unresolved blocker(s): {'; '.join(problems)}")
 
 
 def _warn_missing_evidence(brief_id: str, text: str, root: pathlib.Path) -> None:
@@ -309,6 +361,7 @@ def move_brief(
     only_if: Callable[[], bool] | None = None,
     probes: list[str] | None = None,
     confirmed: list[str] | None = None,
+    no_deps: bool = False,
 ) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
@@ -323,8 +376,9 @@ def move_brief(
     A non-empty `assignee` is also checked against the current one under the lock and
     raises ValueError rather than stealing another actor's claim; `assignee=""` releases
     whoever holds it. Moving to `blocked` needs a non-empty `blocked_by` (ids, or
-    `external:<reason>`) so a blocked brief always says what it waits for; any other target
-    clears the list. `only_if` is re-evaluated under the lock; when it is false the brief is
+    `external:<reason>`) so a blocked brief always says what it waits for. Leaving blocked/ or
+    passing `no_deps` writes `[]`; any other move leaves the field exactly as it was, absent
+    included, because the key's presence is the declaration. `only_if` is re-evaluated under the lock; when it is false the brief is
     left alone and ValueError is raised. Callers commit separately via sync_commit.
     Returns the new path.
     """
@@ -339,7 +393,16 @@ def move_brief(
     path = find_brief(brief_id, root)
     if path is None:
         raise ValueError(f"no brief with id {brief_id!r}")
+    # Only a judgement may write `[]`: the blockers resolved, or the caller said "nothing".
+    written = (
+        blocked_by
+        if new_status == "blocked"
+        else []
+        if no_deps or path.parent.name == "blocked"
+        else None
+    )
     _require_enriched(brief_id, new_status, path)
+    _require_declared(brief_id, new_status, path, no_deps)
     today = today or datetime.date.today().isoformat()
     message = log or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
@@ -361,16 +424,14 @@ def move_brief(
                     f'--assignee "".'
                 )
         old_blocked_by = parse_list(fm(text).get("blocked_by", ""))
-        text = _update_frontmatter(
-            text, new_status, today, assignee=assignee, blocked_by=blocked_by
-        )
+        text = _update_frontmatter(text, new_status, today, assignee=assignee, blocked_by=written)
         text = _update_probes(
             text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by
         )
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
         text = _append_log(text, today, message)
-        new_path = root / new_status / f"{brief_id}.md"
+        new_path = root / new_status / path.name
         atomic_write(new_path, text)
         if new_path != path:
             path.unlink()
@@ -407,7 +468,7 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument(
         "--blocked-by",
         default=None,
-        help="comma-separated brief ids or external:<reason> (required for blocked)",
+        help="comma-separated brief ids, <queue>:<id> or external:<reason> (required for blocked)",
     )
     m.add_argument(
         "--probe",
@@ -421,11 +482,35 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="`N: <YYYY-MM-DD> <who>` confirming a `human` probe for blocker N is still blocked (repeatable)",
     )
+    m.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="declare that a brief promoted out of inbox/ or parked/ depends on nothing",
+    )
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
+    d = sub.add_parser("declare", help="write a brief's blocked_by in place, without moving it")
+    d.add_argument("brief_id")
+    what = d.add_mutually_exclusive_group(required=True)
+    what.add_argument(
+        "--blocked-by", help="comma-separated brief ids, <queue>:<id> or external:<reason>"
+    )
+    what.add_argument("--no-deps", action="store_true", help="the brief depends on nothing")
+    d.add_argument("--root", default=None)
+    d.add_argument("--log", default=None, help="execution-log line")
+    d.add_argument("--today", default=None, help="override date (testing)")
+    d.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
+
     a = ap.parse_args(argv)
     root = pathlib.Path(a.root) if a.root else resolve_root()
+    if a.cmd == "declare":
+        from declaration import (
+            run_declare,
+        )  # declaration imports this module; defer to break the cycle
+
+        run_declare(a, root)
+        return
 
     if a.cmd == "resolve":
         hits = resolve_brief(a.query, root)
@@ -468,24 +553,52 @@ def main(argv: list[str] | None = None) -> None:
             blocked_by=parse_list(a.blocked_by or ""),
             probes=a.probe,
             confirmed=a.confirmed,
+            no_deps=a.no_deps,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
-    released: list[str] = []
-    if a.status == "done":
-        from unblock import (
-            release_unblocked,  # unblock imports this module; defer to break the cycle
-        )
-
-        released = list(release_unblocked(root, today=a.today))
-        for released_id in released:
-            print(f"unblocked {released_id} → ready")
+    touched = _cascade(a.brief_id, root, a.today) if a.status == "done" else []
+    local = next((t for t in touched if same_queue(t.root, root)), None)
     if not a.no_sync:
-        sync_commit(f"brief({a.brief_id}): → {a.status}", root, ids=[a.brief_id, *released])
+        sync_commit(
+            f"brief({a.brief_id}): → {a.status}",
+            root,
+            ids=[new_path.stem, *(local.ids if local else [])],
+        )
+        for other in (t for t in touched if t is not local):
+            sync_commit(
+                f"brief({a.brief_id}): done in {queue_name(root)}, dependents updated",
+                other.root,
+                ids=other.ids,
+            )
     if a.status == "in-progress":
         note_choice(root, "pick", a.brief_id)
     print(f"{a.brief_id} → {a.status}: {new_path}")
+    if a.status == "done":
+        print(_next_line(root))
+
+
+def _cascade(brief_id: str, root: pathlib.Path, today: str | None) -> list[Any]:
+    """Tell dependents what landed and release what is free, in this queue and every known one."""
+    from cascade import cascade_done  # cascade imports this module; defer to break the cycle
+
+    touched = cascade_done(root, brief_id, known_roots(root), today=today)
+    for t in touched:
+        prefix = "" if same_queue(t.root, root) else f"{queue_name(t.root)}:"
+        for released_id in t.released:
+            print(f"unblocked {prefix}{released_id} → ready")
+    return touched
+
+
+def _next_line(root: pathlib.Path) -> str:
+    """What the picker would start next, so the session names it or continues into it."""
+    from prioritise import next_runnable  # prioritise imports this module's neighbours; defer
+
+    top = next_runnable(root)
+    if top is None:
+        return "next: nothing runnable in ready/"
+    return f"next: {top['id']}  —  {top.get('title', '')}  (score {top['_score']:g})"
 
 
 if __name__ == "__main__":

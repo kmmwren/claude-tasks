@@ -4,17 +4,24 @@ check_deps.py — lint a queue's dependency graph. Exit 1 when anything is wrong
 
 Finds, in one pass:
   cycle              briefs that wait on each other, directly or through a chain
-  dangling           a `blocked_by` / `depends:` id that names no brief
+  dangling           a `blocked_by` / `depends:` id that names no brief, or a `<queue>:<id>` naming an unknown queue or brief
   in-progress-unmet  a brief being worked whose dependencies are not all done
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
   blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
   releasable         a blocked brief whose blockers are all done (run unblock.py)
+  undeclared         a ready, in-progress or parked brief with no `blocked_by:` line (`[]` declares "depends on nothing")
+  prose-dependency   a ready or in-progress brief that says in prose it waits on a PR, brief or approval
+                     while blocked_by is empty
+  approved-needs-input  an autonomy: needs-input brief whose cited decision or prose already approves
+                     the work
   unknown-milestone  a `milestone:` not in the project's milestones file (only checked when
                      tasks.toml sets `milestones`)
   milestones-file    tasks.toml names a milestones file that cannot be read
   facts-orphan       a facts/<id>.toml with no brief of that id
   facts-brief-mismatch  a facts file whose `brief` field is not its file stem
   facts-unreadable   a facts file that is not valid TOML
+  unshipped          a brief in a queue inside another repo that has sat untracked or modified there for
+                     over 6 hours: nothing landed it on the host's wip branch (scripts/host_land.py <queue>)
 
   python scripts/check_deps.py [--json]
 """
@@ -24,12 +31,18 @@ import dataclasses
 import json
 import pathlib
 import sys
+import time
 import tomllib
+from collections.abc import Sequence
 
-from _paths import QueueBriefs, require_queue, resolve_root
-from deps import Brief, awaits_release, dependency_edges, load_queue
+from _paths import QueueBriefs, is_brief, known_roots, require_queue, resolve_root
+from deps import Brief, awaits_release, dependency_edges, done_ids, load_queue, ref_problem
 from facts import declared_brief, facts_files
+from host_land import HostQueue, LandError
 from milestones import MilestonesError, milestone_titles
+from prose_dependency import decisions_dir, prose_problems
+
+UNSHIPPED_AFTER = 6 * 3600.0  # seconds a brief may wait in a host checkout before it is a finding
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,20 +78,53 @@ def find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return list(cycles.values())
 
 
-def check(root: pathlib.Path) -> list[Problem]:
-    queue = load_queue(QueueBriefs.read(root))
+def check(root: pathlib.Path, roots: Sequence[pathlib.Path] | None = None) -> list[Problem]:
+    """Every defect in `root`'s graph; `roots` are the queues a `<queue>:<id>` blocker may name."""
+    roots = known_roots(root) if roots is None else roots
+    briefs = QueueBriefs.read(root)
+    queue = load_queue(briefs)
     known = {b.id for b in queue}
-    done = {b.id for b in queue if b.status == "done"}
+    done = done_ids(briefs, roots)
     problems: list[Problem] = []
     graph = {b.id: dependency_edges(b, known) & known for b in queue}
     for cycle in find_cycles(graph):
         problems.append(Problem("cycle", cycle[0], " -> ".join([*cycle, cycle[0]])))
+    directory = decisions_dir()
     for b in queue:
-        problems += _brief_problems(b, known, done)
+        problems += _brief_problems(b, known, done, roots)
+        problems += [Problem(f.kind, b.id, f.detail) for f in prose_problems(b, known, directory)]
     problems += _milestone_problems(root, queue)
+    problems += _unshipped_problems(root)
     for path in facts_files(root):
         problems += _facts_problems(path, known)
     return problems
+
+
+def _unshipped_problems(root: pathlib.Path) -> list[Problem]:
+    """One finding per brief of a nested queue left in the host checkout past UNSHIPPED_AFTER.
+
+    The detail never carries the age or the state, so the daily alert keeps one stable key per brief.
+    """
+    host = HostQueue.of(root)
+    if host is None:
+        return []
+    try:
+        waiting = host.pending()
+    except LandError:
+        return []
+    cutoff = time.time() - UNSHIPPED_AFTER
+    return [
+        Problem("unshipped", pathlib.Path(rel).stem, f"not landed from {host.top.name}")
+        for rel in waiting
+        if is_brief(rel) and _modified_before(host.top / rel, cutoff)
+    ]
+
+
+def _modified_before(path: pathlib.Path, cutoff: float) -> bool:
+    try:
+        return path.stat().st_mtime < cutoff
+    except OSError:
+        return False  # deleted: a mirrored deletion, not a brief waiting
 
 
 def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:
@@ -98,8 +144,19 @@ def _facts_problems(path: pathlib.Path, known: set[str]) -> list[Problem]:
     return out
 
 
-def _brief_problems(b: Brief, known: set[str], done: set[str]) -> list[Problem]:
-    out = [Problem("dangling", b.id, d) for d in sorted(b.declared_ids - known)]
+def _brief_problems(
+    b: Brief, known: set[str], done: set[str], roots: Sequence[pathlib.Path]
+) -> list[Problem]:
+    out = [Problem("dangling", b.id, d) for d in sorted(b.local_ids - known)]
+    out += [Problem("dangling", b.id, p) for ref in b.remote_refs if (p := ref_problem(ref, roots))]
+    if b.status in ("ready", "in-progress", "parked") and not b.declares_dependencies:
+        out.append(
+            Problem(
+                "undeclared",
+                b.id,
+                f"no blocked_by; run transition.py declare {b.id} --no-deps, or --blocked-by <ids> (a waiting ready brief: move it to blocked)",
+            )
+        )
     if b.status == "in-progress":
         waiting = sorted(
             d for d in dependency_edges(b, known) | set(b.external_blockers) if d not in done

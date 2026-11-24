@@ -43,6 +43,7 @@ def test_add_task_writes_ready_brief(queue, capsys):
             "--root",
             str(queue),
             "--ready",
+            "--no-deps",
             "--goal",
             "It exists.",
             "--context",
@@ -96,6 +97,7 @@ def test_add_task_status_ready_matches_ready_flag(queue):
             "Via status",
             "--status",
             "ready",
+            "--no-deps",
             "--root",
             str(queue),
             "--goal",
@@ -182,7 +184,7 @@ def test_raw_capture_refuses_uninitialised_dir(tmp_path):
 
 def test_add_task_ready_without_goal_criteria_context_is_refused(queue, capsys):
     with pytest.raises(SystemExit) as exit_info:
-        add_task.main(["--title", "Bare ready", "--root", str(queue), "--ready"])
+        add_task.main(["--title", "Bare ready", "--root", str(queue), "--ready", "--no-deps"])
     assert exit_info.value.code == 2
     assert "--goal, --criteria/--success, --context" in capsys.readouterr().err
     assert not (queue / "ready").exists() or not list((queue / "ready").glob("bare-ready*"))
@@ -194,5 +196,7 @@ def test_add_task_ready_rejects_blank_criteria_and_context(queue, blank):
     flag = blank[0]
     argv = [a for i, a in enumerate(full) if not (full[i - (i % 2)] == flag)]
     with pytest.raises(SystemExit) as exit_info:
-        add_task.main(["--title", "Blank", "--root", str(queue), "--ready", *argv, *blank])
+        add_task.main(
+            ["--title", "Blank", "--root", str(queue), "--ready", "--no-deps", *argv, *blank]
+        )
     assert exit_info.value.code == 2

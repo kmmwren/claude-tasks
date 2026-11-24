@@ -36,6 +36,7 @@ TASK_DIRS = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
 ENV_VAR = "CLAUDE_TASKS_DIR"
 SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 SESSIONS_ENV = "CLAUDE_TASKS_SESSIONS"
+ROOTS_ENV = "CLAUDE_TASKS_ROOTS"
 PROJECT_MARKER = ".tasks"
 CONFIG_FILE = "tasks.toml"
 DEFAULT_ROOT = "~/tasks"
@@ -50,6 +51,22 @@ COMMENT_START = re.compile(r"(?:^|\s)#")
 _COMMENT = re.compile(COMMENT_START.pattern + ".*")
 # As in YAML, a quoted value runs to its closing quote, so a spaced `#` inside it is text.
 _QUOTED = re.compile(r"""\s*(["'])(.*?)\1(?=\s|$)""")
+
+
+def known_roots(current: pathlib.Path) -> list[pathlib.Path]:
+    """Every queue root this run may name: `current`, then each existing directory in $CLAUDE_TASKS_ROOTS.
+
+    The list is separated like PATH and supplied by the caller, so the plugin never reads its host's config.
+    """
+    raw = os.environ.get(ROOTS_ENV)
+    listed = (
+        () if raw is None else (pathlib.Path(p).expanduser() for p in raw.split(os.pathsep) if p)
+    )
+    roots: dict[pathlib.Path, pathlib.Path] = {}
+    for root in (current, *listed):
+        if root.is_dir():
+            roots.setdefault(root.resolve(), root)
+    return list(roots.values())
 
 
 def warn(message: str, prefix: str = "warning") -> None:

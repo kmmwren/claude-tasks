@@ -15,6 +15,7 @@ import dataclasses
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,12 +32,46 @@ LEGACY_REASON_PREFIX = "read-only-research:"
 # Launcher exits meaning no account will run any call (no quota, route refused, no usable login,
 # kill switch), so every later call in this run would fail the same way.
 NO_CAPACITY = frozenset({2, 3, 4, 10})
+# launchd and cron start jobs with a PATH that lacks the user's shell additions, so a scheduled
+# triage found no `claude` on PATH and failed every call; look where the installer puts it too.
+CLAUDE_FALLBACKS = ("~/.claude/bin/claude", "~/.local/bin/claude")
 _no_capacity = threading.Event()
 
 
+@dataclasses.dataclass
+class Tally:
+    """How many headless calls this run made and how many came back with nothing, across threads."""
+
+    calls: int = 0
+    failed: int = 0
+    skipped: int = 0
+    _lock: threading.Lock = dataclasses.field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+
+    def record(self, answered: bool, skipped: bool = False) -> None:
+        """Count one call; `skipped` is one never spawned because no account had capacity."""
+        with self._lock:
+            self.calls += 1
+            self.failed += not answered
+            self.skipped += skipped
+
+    def reset(self) -> None:
+        with self._lock:
+            self.calls = self.failed = self.skipped = 0
+
+    @property
+    def all_failed(self) -> bool:
+        return self.calls > 0 and self.failed == self.calls
+
+
+TALLY = Tally()
+
+
 def reset_capacity() -> None:
-    """Start a fresh run: calls spawn again until the next no-capacity exit."""
+    """Start a fresh run: calls spawn again until the next no-capacity exit, and the tally restarts."""
     _no_capacity.clear()
+    TALLY.reset()
 
 
 def notice(message: str) -> None:
@@ -89,12 +124,20 @@ class Launch(Protocol):
     def env(self, reason: str) -> dict[str, str] | None: ...
 
 
+def claude_program() -> str:
+    """`claude` on PATH, else the first installed fallback, else the bare name so the failure names it."""
+    found = shutil.which("claude") or next(filter(None, map(_executable, CLAUDE_FALLBACKS)), None)
+    return str(found or "claude")
+
+
 @dataclasses.dataclass(frozen=True)
 class DirectLaunch:
     """Plain `claude -p`, for a machine without a launcher script."""
 
+    program: str = dataclasses.field(default_factory=claude_program)
+
     def argv(self, args: Sequence[str]) -> list[str]:
-        return ["claude", "-p", *args]
+        return [self.program, "-p", *args]
 
     def env(self, reason: str) -> dict[str, str] | None:
         return None
@@ -179,8 +222,20 @@ def ask_json(
     launch: Launch = DirectLaunch(),
 ) -> Any:
     """The structured output of one call, or None when it fails, answers off-schema or capacity is spent."""
-    if _no_capacity.is_set():
-        return None
+    spent = _no_capacity.is_set()
+    answer = None if spent else _ask(prompt, schema, model, reason, timeout, launch)
+    TALLY.record(answer is not None, skipped=spent)
+    return answer
+
+
+def no_capacity() -> bool:
+    """True once a call has shown that no account can run any more this run."""
+    return _no_capacity.is_set()
+
+
+def _ask(
+    prompt: str, schema: dict[str, Any], model: str, reason: str, timeout: int, launch: Launch
+) -> Any:
     argv = command(model, schema, launch)
     try:
         with tempfile.TemporaryDirectory() as scratch:

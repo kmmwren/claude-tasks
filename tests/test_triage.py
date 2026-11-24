@@ -7,13 +7,14 @@ import subprocess
 import pytest
 import triage
 from class_log import Correction
+from git_sync import SyncResult
 from headless import ScriptLaunch
 from triage_enrich import Fill
 
 from tests.queue_helpers import inbox_text, installed_launcher, make_inbox
 
 BC = triage.BriefClass
-READY = dict(goal="Ship it.", criteria=("It ships.",))
+READY = dict(goal="Ship it.", criteria=("It ships.",), blocked_by="[]")
 LIVE = {"o/r#1", "o/r#2"}.__contains__
 GATE = triage.Gate(LIVE)
 PEERS = {
@@ -30,14 +31,16 @@ QUEUE = {
 
 
 def _fill(briefs):
-    return {b.id: Fill("Ship.", ("Done.",), "Start at o/r#1.") for b in briefs}
+    return {b.id: Fill("Ship.", ("Done.",), "Start at o/r#1.", ()) for b in briefs}
 
 
 @pytest.fixture
 def synced(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True
+        triage,
+        "sync_commit",
+        lambda msg, root, ids: calls.append(sorted(ids)) or SyncResult.COMMITTED,
     )
     return calls
 
@@ -60,7 +63,9 @@ def test_apply_collapses_promotes_and_commits_once(tmp_path, synced):
     root = make_inbox(tmp_path, QUEUE)
     report = triage.run(_opts(root, apply=True))
     assert (report.ready_after - report.ready_before, report.inbox_after) == (2, 3)
-    assert synced == [["filed", "peer-a-0a0a0a0a", "peer-a-1b1b1b1b", "peer-a-batch", "thin"]]
+    assert synced == [
+        ["bare", "filed", "peer-a-0a0a0a0a", "peer-a-1b1b1b1b", "peer-a-batch", "thin"]
+    ]
     assert sorted(p.stem for p in (root / "inbox").glob("*.md")) == ["bare", "peer-a-batch", "raw"]
 
 
@@ -218,8 +223,10 @@ def test_briefs_a_refusing_model_left_unanswered_get_no_verdict_and_are_counted(
     assert {p.stem for p in (root / "inbox").glob("*.md")} >= {"thin", "bare"}
 
 
-def test_a_second_run_in_one_process_is_not_latched_by_the_first(tmp_path, synced, monkeypatch):
+def test_a_second_run_in_one_process_shares_the_first_runs_no_quota_latch(
+    tmp_path, synced, monkeypatch
+):
     calls = _refusing_model(monkeypatch)
     for name in ("one", "two"):
         triage.run(_with_model(make_inbox(tmp_path / name, QUEUE), apply=False))
-    assert len(calls) == 2
+    assert len(calls) == 1

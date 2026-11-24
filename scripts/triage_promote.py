@@ -2,9 +2,10 @@
 """
 triage_promote.py — move inbox briefs that pass the readiness gate to ready/.
 
-A brief is promoted only when goal, criteria and context are real (not stubs) and its context
-cites a source that appears in the brief as it was filed and exists right now. Briefs missing
-fields are enriched first; a fill that fails the gate leaves the brief in the inbox untouched.
+A brief is promoted only when goal, criteria and context are real (not stubs), it declares
+`blocked_by: []`, and its context cites a source that appears in the brief as it was filed and
+exists right now. Briefs missing fields or a declaration are enriched first; a fill that fails
+the gate, or names a blocker, leaves the brief in the inbox untouched.
 
 Stdlib only.
 """
@@ -15,12 +16,21 @@ from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from _concurrency import atomic_write, require_lock
+from deps import declares_dependencies, parse_list
 from transition import move_brief
 from triage_brief import InboxBrief
 from triage_enrich import Fill, PredictFn, apply_fill
 from triage_sources import SourceCheck, cited_sources, grounded
 
 SOURCE_LIST_MAX = 5
+
+
+def depends_on_nothing(brief: InboxBrief) -> bool:
+    """Declared, with nothing to wait for: a brief with blockers belongs in blocked/, not ready/."""
+    fields = brief.fields
+    return declares_dependencies(fields) and not (
+        parse_list(fields.get("blocked_by", "")) or parse_list(fields.get("blockers", ""))
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,7 +64,11 @@ class Gate:
         )
 
     def passes(self, candidate: InboxBrief, original: InboxBrief) -> bool:
-        return not candidate.missing and grounded(candidate.context, original.text, self.exists)
+        return (
+            not candidate.missing
+            and depends_on_nothing(candidate)
+            and grounded(candidate.context, original.text, self.exists)
+        )
 
     def _promotion(
         self, original: InboxBrief, candidate: InboxBrief, reason: str
@@ -69,8 +83,9 @@ class Gate:
         return self._promotion(brief, candidate, "missing fields filled from the brief")
 
     def needs_fill(self, brief: InboxBrief) -> bool:
-        """Missing fields, but cites a live source a fill could ground its context in."""
-        return bool(brief.missing) and bool(self.live_sources(brief))
+        """Missing fields or no dependency declaration, but cites a live source a fill could ground its context in."""
+        incomplete = bool(brief.missing) or not declares_dependencies(brief.fields)
+        return incomplete and bool(self.live_sources(brief))
 
     def enrich_all(
         self, briefs: Sequence[InboxBrief], predict: PredictFn, size: int, jobs: int

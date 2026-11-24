@@ -154,6 +154,15 @@ def _unready(brief: InboxBrief) -> Call:
     return Call(BriefClass.NEEDS_INFO, why)
 
 
+def _unchanged(inbox: Sequence[InboxBrief], known: Mapping[str, Verdict]) -> dict[str, Call]:
+    """The model's earlier call for each brief whose text is as it was when the call was made."""
+    return {
+        b.id: Call(v.cls, v.reason)
+        for b in inbox
+        if (v := known.get(b.id)) and v.digest == b.digest and v.cls in MODEL_CLASSES
+    }
+
+
 def classify(
     inbox: Sequence[InboxBrief],
     fixed: Mapping[str, Call],
@@ -162,19 +171,23 @@ def classify(
     examples: Sequence[Example],
     batch: int,
     jobs: int,
+    known: Mapping[str, Verdict] | None = None,
 ) -> list[Verdict]:
     """A verdict per brief: fixed calls first, then ready, then the model's call or, with no model, the gate's.
 
     A brief the model was asked about and left unanswered gets none, so an outage is never logged as a call.
+    A brief unchanged since its model verdict in `known` keeps that call and is not asked about again.
     """
-    residue = [b for b in inbox if b.id not in fixed and b.id not in promoted]
+    kept = _unchanged(inbox, known or {})
+    residue = [b for b in inbox if b.id not in fixed and b.id not in promoted and b.id not in kept]
     called = calls_for(residue, call, examples, batch, jobs) if call and residue else {}
 
     def verdict(b: InboxBrief) -> Verdict | None:
         if b.id in promoted and b.id not in fixed:
-            return Verdict(b.id, BriefClass.READY, promoted[b.id], b.title)
-        c = fixed.get(b.id) or called.get(b.id) or (_unready(b) if call is None else None)
-        return Verdict(b.id, c.cls, c.reason, b.title) if c else None
+            return Verdict(b.id, BriefClass.READY, promoted[b.id], b.title, digest=b.digest)
+        c = fixed.get(b.id) or kept.get(b.id) or called.get(b.id)
+        c = c or (_unready(b) if call is None else None)
+        return Verdict(b.id, c.cls, c.reason, b.title, digest=b.digest) if c else None
 
     return [v for v in map(verdict, inbox) if v]
 

@@ -59,7 +59,9 @@ beside it is what they are thinking about it:
   `message_ts`. Read that thread only; never browse the channel around it.
 - **Items:** one brief per link. The user's note is the intent: it sets the title and goal and
   outranks your reading of the thread. With no note, the task is what the message asks of
-  the user; if that is unclear, file with `--autonomy needs-input`.
+  the user. When the user asked for it or approved it, file with `--autonomy full`; use
+  `--autonomy needs-input` only when a real undecided question remains, and write that
+  question in the brief's context.
 - **Name:** the channel name is the session name, with the user's note and the message text
   as the item text.
 - **No ledger, no judgement layer:** Step 1 files the links without closing anything and
@@ -71,7 +73,8 @@ beside it is what they are thinking about it:
   `From Slack <url> (#<channel>, <message date>); re-check the thread before acting.`, then
   `User note: <note verbatim>`, then a summary of the thread.
 - **Unreadable link** (private channel, deleted message): file the brief from the user's note alone
-  with `--autonomy needs-input` and say the thread could not be read.
+  and say the thread could not be read. It is `--autonomy needs-input` only when the note
+  leaves the task itself undecided; a note that states the task is `--autonomy full`.
 - **Sensitive data:** a thread may carry pasted sensitive data (log extracts,
   records); the brief carries conclusions, never those records.
 - **Report:** `Filed N Slack handoffs (<count> <state>/ for each state used; M unreadable).`
@@ -93,8 +96,27 @@ or `cancelled`). For each, file an inbox brief:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   --title "<lead with the noun>" \
   --context "<what + why + where; note it came from this session's open work>" \
-  --source claude --commit
+  --no-deps | --blocked-by <id|external:reason> [--probe "N: <command|human>"] \
+  --status inbox --source claude --commit
 ```
+
+Every brief declares its dependencies; silence is refused at promotion and reported by
+`check_deps.py`. Take them from the ledger item's `blockedBy` and `metadata.deps`, and from
+any PR, approval or login the item waits on:
+
+- **Waits on another brief:** `--blocked-by <brief-id>`, one flag per blocker.
+- **Waits on something no brief completes** (a PR to merge, an approval, a login):
+  `--blocked-by external:<reason without commas>` with `--probe "N: <command>"` that exits 0
+  once it clears (`gh pr view <n> --repo <o/r> --json state -q .state | grep -qx MERGED`), or
+  `--probe "N: human"`. N is the blocker's position in the `--blocked-by` list.
+- **Waits on nothing:** `--no-deps`.
+
+`--status inbox` keeps the brief in inbox/ for `enrich`; without it, `--blocked-by` files to
+blocked/ and then also needs `--goal` and `--criteria`.
+
+Set autonomy from what the user said, not from caution: an item the user asked for or
+approved is `--autonomy full`. Use `--autonomy needs-input` only for a real undecided
+question, stated in the context.
 
 Then close that ledger item (`TaskUpdate` status `completed`, `metadata.evidence` = the brief's path).
 A handoff ends this session's ownership; an item left open makes the session keep
@@ -125,7 +147,8 @@ long-running, see `resume_prompt.py`).
 
 Now re-read the conversation and capture the **follow-ups that never made it into a todo**,
 the things the user would wish had been captured: a fix flagged in passing, a "we
-should also…", a decision deferred, a bug noticed out of scope. File each the same way.
+should also…", a decision deferred, a bug noticed out of scope. File each the same way,
+with its dependency declaration.
 Be generous (over-capture); leave them all in `inbox/` (no `--ready`) for `enrich` to weigh.
 
 ## Step 3: Dedup as you go
@@ -141,6 +164,16 @@ thread however the link was written, so sharpen that brief and file nothing.
 Sharpen the file the grep found, in the folder it is in now. Never append to a remembered
 `inbox/<id>.md` path: if the brief moved meanwhile, the append re-creates it. `git_sync.py`
 refuses to commit such a re-created id.
+
+## Before filing: dependencies in fields, never only in prose
+
+- A wait written only in the context ("after #942 merges", "once the design is approved")
+  is a defect: `check_deps.py` reports it as `prose-dependency`. Put each wait in
+  `--blocked-by`, and keep the prose as explanation only.
+- An item the user approved and left at `needs-input` is a defect too: `check_deps.py`
+  reports it as `approved-needs-input`.
+- After filing, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_deps.py" --root <queue>`
+  and fix every finding on the briefs you filed before ending the handoff.
 
 ## Directed handoff (steer where the items go)
 
@@ -161,8 +194,12 @@ note via `--context`. The target state is one of `inbox` (default), `ready`, or 
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/add_task.py" \
   --title "<lead with the noun>" \
   --context "<what + why + the handoff direction>" \
+  --no-deps | --blocked-by <id|external:reason> [--probe "N: <command|human>"] \
   --status parked --source claude --commit
 ```
+
+A ready brief that waits on something is refused: file it with `--blocked-by` and no
+`--status`, which lands it in blocked/ until the blocker clears.
 
 If no direction is given, behave as the default sections above (everything to `inbox/`).
 

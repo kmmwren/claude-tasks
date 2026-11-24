@@ -1,11 +1,14 @@
 """check_deps.py — each defect class is injected into an otherwise clean queue and must fire."""
 
 import json
+import os
+import time
 
 import check_deps
 import pytest
 
-from tests.queue_helpers import MILESTONES, NOT_UTF8, make_queue
+from tests.queue_helpers import MILESTONES, NOT_UTF8, brief_text, make_queue
+from tests.test_git_sync import make_repo
 
 
 def _kinds(root):
@@ -202,3 +205,115 @@ def test_a_brief_that_is_not_utf8_is_left_out_with_one_warning_and_the_rest_are_
     assert _kinds(root) == [("dangling", "b")]
     err = capsys.readouterr().err
     assert err.count("not valid UTF-8") == 1 and "bad.md" in err
+
+
+def test_a_parked_brief_with_no_blocked_by_is_undeclared(tmp_path):
+    root = make_queue(tmp_path, {"p": {"status": "parked"}})
+    path = root / "parked" / "p.md"
+    path.write_text(
+        "".join(ln for ln in path.read_text().splitlines(True) if not ln.startswith("blocked_by:"))
+    )
+    assert _kinds(root) == [("undeclared", "p")]
+
+
+def _without_declaration(root, status, bid):
+    path = root / status / f"{bid}.md"
+    path.write_text(
+        "".join(ln for ln in path.read_text().splitlines(True) if not ln.startswith("blocked_by:"))
+    )
+
+
+@pytest.mark.parametrize("status", ["ready", "in-progress"])
+def test_a_live_brief_with_no_blocked_by_is_undeclared(tmp_path, status):
+    root = make_queue(tmp_path, {"a": {"status": status}})
+    _without_declaration(root, status, "a")
+    assert _kinds(root) == [("undeclared", "a")]
+
+
+@pytest.mark.parametrize("status", ["ready", "in-progress"])
+def test_an_empty_blocked_by_declares_depending_on_nothing(tmp_path, status):
+    root = make_queue(tmp_path, {"a": {"status": status, "blocked_by": "[]"}})
+    assert check_deps.check(root) == []
+
+
+def test_a_legacy_blockers_entry_counts_as_a_declaration(tmp_path):
+    root = make_queue(tmp_path, {"b": {}, "a": {"blockers": "[b]"}})
+    _without_declaration(root, "ready", "a")
+    assert ("undeclared", "a") not in _kinds(root)
+
+
+# --- unshipped: a brief left in a host checkout ---------------------------------------------
+
+
+def _nested_brief(tmp_path, age_hours):
+    repo = make_repo(tmp_path)
+    queue = repo / "project" / ".tasks"
+    (queue / "ready").mkdir(parents=True)
+    brief = queue / "ready" / "waiting.md"
+    brief.write_text(brief_text("waiting"))
+    aged = time.time() - age_hours * 3600
+    os.utime(brief, (aged, aged))
+    return queue
+
+
+def _unshipped(root):
+    return [(p.brief, p.detail) for p in check_deps.check(root) if p.kind == "unshipped"]
+
+
+def test_an_untracked_brief_in_a_host_checkout_past_six_hours_is_unshipped(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=7)
+
+    assert _unshipped(queue) == [("waiting", "not landed from clone")]
+
+
+def test_a_fresh_brief_in_a_host_checkout_is_not_yet_unshipped(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=1)
+
+    assert _unshipped(queue) == []
+
+
+def test_the_unshipped_key_does_not_change_as_the_brief_ages(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=7)
+    first = _unshipped(queue)
+    aged = time.time() - 30 * 3600
+    os.utime(queue / "ready" / "waiting.md", (aged, aged))
+
+    assert _unshipped(queue) == first
+
+
+def test_a_queue_that_owns_its_repo_has_no_unshipped_findings(tmp_path):
+    repo = make_repo(tmp_path)
+    brief = repo / "ready" / "waiting.md"
+    brief.write_text(brief_text("waiting"))
+    aged = time.time() - 30 * 3600
+    os.utime(brief, (aged, aged))
+
+    assert _unshipped(repo) == []
+
+
+def _two_queues(tmp_path, waiter):
+    alpha = make_queue(tmp_path, {"dep": {"status": "done"}}, project_name="alpha")
+    beta = make_queue(tmp_path, {"w": waiter}, project_name="beta")
+    return alpha, beta
+
+
+def test_a_qualified_blocker_that_resolves_is_not_dangling(tmp_path):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": "[alpha:dep]"})
+    kinds = {(p.kind, p.brief) for p in check_deps.check(beta, roots=[alpha, beta])}
+    assert ("dangling", "w") not in kinds
+    assert ("releasable", "w") in kinds
+
+
+@pytest.mark.parametrize("ref", ["zeta:dep", "alpha:gone"])
+def test_a_qualified_blocker_naming_nothing_is_dangling(tmp_path, ref):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": f"[{ref}]"})
+    dangling = [p for p in check_deps.check(beta, roots=[alpha, beta]) if p.kind == "dangling"]
+    assert len(dangling) == 1 and dangling[0].detail.startswith(ref)
+
+
+def test_check_reads_the_known_queues_from_the_environment(tmp_path, monkeypatch):
+    alpha, beta = _two_queues(tmp_path, {"status": "blocked", "blocked_by": "[alpha:dep]"})
+    monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(alpha))
+    assert ("dangling", "w") not in _kinds(beta)
+    monkeypatch.delenv("CLAUDE_TASKS_ROOTS")
+    assert ("dangling", "w") in _kinds(beta)

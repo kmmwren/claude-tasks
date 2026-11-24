@@ -25,22 +25,25 @@ import json
 import pathlib
 import re
 import sys
+from collections.abc import Sequence
 from functools import partial
 
 from _concurrency import atomic_write, repo_lock
-from _paths import QueueBriefs, require_queue, resolve_root
-from deps import EXTERNAL_PREFIX, Brief, awaits_release, fm, load_queue, unmet
+from _paths import QueueBriefs, known_roots, require_queue, resolve_root
+from deps import EXTERNAL_PREFIX, Brief, awaits_release, done_ids, fm, load_queue, unmet
 from git_sync import sync_commit
 from prioritise import index_queue, score
 from transition import _append_log, drop_blocker_lines, find_brief, move_brief, set_field
 
 
-def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[Brief]:
+def releasable(
+    root: pathlib.Path, today: datetime.date | None = None, roots: Sequence[pathlib.Path] = ()
+) -> list[Brief]:
     """Blocked briefs whose every blocker is satisfied, highest priority first."""
     today = today or datetime.date.today()
     briefs = QueueBriefs.read(root)
     queue = load_queue(briefs)
-    done = {b.id for b in queue if b.status == "done"}
+    done = done_ids(briefs, roots)
     _, unlocks = index_queue(briefs)
     ready = [b for b in queue if b.status == "blocked" and awaits_release(b, done)]
     ready.sort(key=lambda b: (-score(b.fields, today, unlocks=unlocks.get(b.id, 0)), b.id))
@@ -48,12 +51,18 @@ def releasable(root: pathlib.Path, today: datetime.date | None = None) -> list[B
 
 
 def release_unblocked(
-    root: pathlib.Path, today: str | None = None, dry_run: bool = False
+    root: pathlib.Path,
+    today: str | None = None,
+    dry_run: bool = False,
+    roots: Sequence[pathlib.Path] = (),
 ) -> list[str]:
-    """Move every releasable brief to ready/; return their ids in release (priority) order."""
+    """Move every releasable brief to ready/; return their ids in release (priority) order.
+
+    `roots` are the queues a `<queue>:<id>` blocker may name.
+    """
     day = datetime.date.fromisoformat(today) if today else None
     released: list[str] = []
-    for brief in releasable(root, day):
+    for brief in releasable(root, day, roots):
         if not dry_run:
             try:
                 move_brief(
@@ -62,7 +71,7 @@ def release_unblocked(
                     root,
                     today=today,
                     log=f"unblocked: {', '.join(brief.blocked_by) or 'dependencies'} done",
-                    only_if=partial(_still_releasable, root, brief.id),
+                    only_if=partial(_still_releasable, root, brief.id, roots),
                 )
             except ValueError:
                 continue  # another actor released or moved it first
@@ -70,10 +79,11 @@ def release_unblocked(
     return released
 
 
-def _still_releasable(root: pathlib.Path, brief_id: str) -> bool:
+def _still_releasable(root: pathlib.Path, brief_id: str, roots: Sequence[pathlib.Path]) -> bool:
     """Fresh read, meant to run under the queue lock: still blocked, every wait satisfied."""
-    queue = load_queue(QueueBriefs.read(root))
-    done = {b.id for b in queue if b.status == "done"}
+    briefs = QueueBriefs.read(root)
+    queue = load_queue(briefs)
+    done = done_ids(briefs, roots)
     return any(
         b.id == brief_id and b.status == "blocked" and awaits_release(b, done) for b in queue
     )
@@ -103,7 +113,7 @@ def resolve_external(
             raise ValueError(f"{brief_id!r} has no blocker {item!r} (has {current})")
         kept = [b for b in current if b != item]
         remaining = "[" + ", ".join(kept) + "]"
-        done = {b.id for b in load_queue(QueueBriefs.read(root)) if b.status == "done"}
+        done = done_ids(QueueBriefs.read(root), known_roots(root))
         frees = not kept and not unmet(
             Brief(brief_id, "blocked", {**fields, "blocked_by": remaining}), done
         )
@@ -149,7 +159,7 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
-    released += release_unblocked(root, dry_run=a.dry_run)
+    released += release_unblocked(root, dry_run=a.dry_run, roots=known_roots(root))
     changed = bool(released) or a.cmd == "resolve"
     if changed and not a.dry_run and not a.no_sync:
         sync_commit(

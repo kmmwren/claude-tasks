@@ -139,6 +139,37 @@ hand once true: `python scripts/unblock.py resolve <id> "vendor reply"` (`--dry-
 A brief whose last external blocker is cleared while ids or `depends:` tags are still open stays in
 `blocked/` and is released automatically once they are done.
 
+#### How a dependency travels
+
+Every brief declares its dependencies when filed: `add_task.py --blocked-by <id|external:reason>`,
+or `--no-deps` for `blocked_by: []`. A brief in another queue is named `<queue>:<id>`, where
+`<queue>` is a queue's folder name (or the project folder holding a `.tasks`) among the roots
+listed in `$CLAUDE_TASKS_ROOTS`, separated like `PATH`.
+
+```
+  tasks/blocked/B.md                           web/.tasks/ready/C.md
+  blocked_by: [A, web:C, external:vendor]      blocked_by: []
+        │          │         │
+        │          │         └── cleared by hand: unblock.py resolve B "vendor"
+        │          └── C done in web ──┐
+        └── A done here ───────────────┤
+                                       ▼
+            transition.py move <id> done
+              1. cascade: each dependent's log gets
+                   landed: A done: <shipped line> [<sha or PR links>]
+                   landed: web:C done: ...            (other queue: prefixed)
+                 and, if its prose still says "after A merges":
+                   stale prose: says "after A merges" but A is done; update the plan
+              2. unblock: B moves to ready/ once A and web:C are done and no external: entry remains
+                   unblocked B → ready
+              3. picker: prints next: with the top runnable brief in ready/
+```
+
+Worked example: `B` waits on `A`, `web:C` and a vendor reply. `A` goes done first, so `B` logs
+`landed: A done: …` and stays blocked. The vendor replies (`unblock.py resolve`). `C` goes done in
+the `web` queue, so `B` logs `landed: web:C done: …`, moves to `ready/`, and the picker names the
+next brief.
+
 Raise a brief's importance from any session with `bump.py`; it only raises, and records the
 reason and time in a `## Bump` section of the brief:
 

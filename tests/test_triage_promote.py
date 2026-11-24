@@ -2,11 +2,11 @@
 
 from triage_brief import InboxBrief, load_inbox
 from triage_enrich import Fill
-from triage_promote import Gate, promote
+from triage_promote import Gate, depends_on_nothing, promote
 
 from tests.queue_helpers import inbox_text, make_inbox
 
-READY = dict(goal="Ship it.", criteria=("It ships.",))
+READY = dict(goal="Ship it.", criteria=("It ships.",), blocked_by="[]")
 GATE = Gate({"o/r#1", "o/r#2"}.__contains__)
 
 
@@ -47,8 +47,8 @@ def test_the_execution_log_s_tool_name_is_not_a_source(tmp_path):
 
 def test_a_grounded_fill_promotes_and_a_fabricated_one_does_not(tmp_path):
     b = _brief(tmp_path, title="Fix o/r#1")
-    assert GATE.enriched(b, Fill("Ship.", ("Done.",), "Start at o/r#1.")) is not None
-    assert GATE.enriched(b, Fill("Ship.", ("Done.",), "Start at o/r#9.")) is None
+    assert GATE.enriched(b, Fill("Ship.", ("Done.",), "Start at o/r#1.", ())) is not None
+    assert GATE.enriched(b, Fill("Ship.", ("Done.",), "Start at o/r#9.", ())) is None
 
 
 def test_only_briefs_missing_fields_with_a_live_source_need_a_fill(tmp_path):
@@ -64,7 +64,7 @@ def test_enrich_all_batches_and_keeps_passing_fills(tmp_path):
     def predict(batch):
         calls.append(len(batch))
         return {
-            b.id: Fill("Ship.", ("Done.",), f"Start at o/r#{1 if b.id == 'a' else 9}.")
+            b.id: Fill("Ship.", ("Done.",), f"Start at o/r#{1 if b.id == 'a' else 9}.", ())
             for b in batch
         }
 
@@ -90,3 +90,29 @@ def test_promote_skips_a_brief_changed_or_gone_since_it_was_read(tmp_path):
     assert not promote(p, root, "2026-11-11")
     b.path.unlink()
     assert not promote(p, root, "2026-11-11")
+
+
+def test_a_fill_naming_a_blocker_is_not_promoted(tmp_path):
+    b = _brief(tmp_path, title="Fix o/r#1")
+    assert GATE.enriched(b, Fill("Ship.", ("Done.",), "Start at o/r#1.", ("external:PR",))) is None
+
+
+def test_a_complete_brief_declaring_a_blocker_stays_in_the_inbox(tmp_path):
+    kw = READY | {"blocked_by": "[a-1]"}
+    assert GATE.as_filed(_brief(tmp_path, context="Per o/r#2.", **kw)) is None
+
+
+def test_a_complete_brief_with_no_declaration_stays_and_needs_a_fill(tmp_path):
+    undeclared = _brief(tmp_path, context="Per o/r#2.", goal="Ship it.", criteria=("It ships.",))
+    assert GATE.as_filed(undeclared) is None
+    assert GATE.needs_fill(undeclared)
+
+
+def test_a_declared_complete_brief_needs_no_fill(tmp_path):
+    assert not GATE.needs_fill(_brief(tmp_path, context="Per o/r#2.", **READY))
+
+
+def test_depends_on_nothing_needs_a_declaration_and_no_blockers(tmp_path):
+    assert depends_on_nothing(_brief(tmp_path, blocked_by="[]"))
+    assert not depends_on_nothing(_brief(tmp_path))
+    assert not depends_on_nothing(_brief(tmp_path, blocked_by="[a-1]"))
