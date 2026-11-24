@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Project roll-ups for an engineer, a PM or a CTO, built from each queue as its repository's
-default branch holds it, never from a local clone."""
+"""Project roll-ups at work, project and portfolio level, built from each queue as its
+repository's default branch holds it, never from a local clone."""
 
 import argparse
 import dataclasses
@@ -28,7 +28,7 @@ CONFIG_ENV = "CLAUDE_TASKS_ROLLUP_CONFIG"
 DEFAULT_CONFIG = "~/.config/claude-tasks/rollup.toml"
 DEFAULT_LABEL = "this repository"
 DEFAULT_QUEUE = PROJECT_MARKER
-DEFAULT_VIEW = rv.VIEWS["pm"]
+DEFAULT_VIEW = rv.VIEWS["project"]
 NOT_READ = "its queue cannot be read from its repository and there is no cached copy"
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
 GENERATED = re.compile(r'(?m)^\*Generated \S+|^\s*"generated": "[^"]*"')
@@ -291,9 +291,13 @@ def _files(report: rv.Report) -> dict[str, str]:
 
 
 def _holds_rollup(out: pathlib.Path) -> bool:
-    """True when `out` already carries a roll-up of ours: a pm.json with our schema."""
+    """True when `out` already carries a roll-up of ours: a view's JSON file with our schema."""
+    return any(_is_ours(out / rv.JSON.filename(view)) for view in rv.VIEWS.values())
+
+
+def _is_ours(path: pathlib.Path) -> bool:
     try:
-        data = json.loads((out / rv.JSON.filename(DEFAULT_VIEW)).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and data.get("schema") == rv.SCHEMA
@@ -303,7 +307,7 @@ def _check_destination(out: pathlib.Path) -> None:
     empty = out.is_dir() and not any(out.iterdir())
     if out.exists() and not (empty or _holds_rollup(out)):
         raise RollupError(
-            f"{out} is not an empty folder and holds no roll-up (no pm.json with "
+            f"{out} is not an empty folder and holds no roll-up (no view JSON with "
             f"schema {rv.SCHEMA}); name a new or empty folder so nothing else is overwritten"
         )
 
@@ -591,7 +595,7 @@ def usage() -> str:
 
 def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
     ap = argparse.ArgumentParser(
-        description="Project roll-ups for an engineer, a PM or a CTO.",
+        description="Project roll-ups at work, project or portfolio level.",
         epilog=usage(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

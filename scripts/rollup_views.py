@@ -1,4 +1,4 @@
-"""Roll-up views: engineer, product and CTO readings of the same projects, as JSON, Markdown or HTML.
+"""Roll-up views: work, project and portfolio readings of the same projects, as JSON, Markdown or HTML.
 
 A View turns `Entry` objects (a model Project plus the queue facts the model leaves out) into a small
 document tree. A Markup format renders that tree, so no view knows a format and no format knows a
@@ -172,7 +172,7 @@ def _backlog(
 
 @dataclasses.dataclass(frozen=True)
 class QueueBoard:
-    """The engineer's facts about one queue: what is ready, what is uncovered, what waits."""
+    """The work-level facts about one queue: what is ready, what is uncovered, what waits."""
 
     as_at: rm.AsAt
     ready: tuple[RankedBrief, ...]
@@ -1074,8 +1074,8 @@ class View(ABC):
         return Document(self.title, r.stamp, r.sources, (*body, *self.footnotes(r)))
 
 
-class Engineer(View):
-    name, title = "engineer", "Engineering roll-up"
+class WorkView(View):
+    name, title = "work", "Work roll-up"
 
     def project_table(self, e: Entry) -> dict[str, Any]:
         b = e.board
@@ -1262,8 +1262,8 @@ def detail_of(e: Entry) -> Section:
     return Section(e.title, (Details(DETAIL_SUMMARY, detail_blocks(e)),))
 
 
-class Pm(View):
-    name, title = "pm", "Product roll-up"
+class ProjectView(View):
+    name, title = "project", "Project roll-up"
 
     def project_table(self, e: Entry) -> dict[str, Any]:
         p, b = e.project, e.board
@@ -1352,8 +1352,8 @@ def milestone_item(m: rm.MilestoneSummary) -> Item:
     return Item(row(m.title, *status_parts(m)), milestone_details(m))
 
 
-class Cto(View):
-    name, title = "cto", "Portfolio roll-up"
+class PortfolioView(View):
+    name, title = "portfolio", "Portfolio roll-up"
 
     def project_table(self, e: Entry) -> dict[str, Any]:
         p = e.project
@@ -1410,7 +1410,7 @@ class Cto(View):
         )
 
 
-VIEWS: dict[str, View] = {v.name: v for v in (Engineer(), Pm(), Cto())}
+VIEWS: dict[str, View] = {v.name: v for v in (WorkView(), ProjectView(), PortfolioView())}
 
 
 # --- the front page: what the files are and where each view is ---------------------------------
@@ -1419,17 +1419,17 @@ GUIDE = (
     (
         "What these files are",
         (
-            "`engineer.md`, `pm.md` and `cto.md` are read-only summaries of project status, written "
-            "by `rollup.py` from project queues. `engineer.md` ranks the ready work, the bugs and the "
-            "requirements no brief covers; `pm.md` shows each project as a tile with its milestones "
-            "and the detail behind them; `cto.md` groups projects by initiative. `engineer.json`, "
-            "`pm.json` and `cto.json` hold the same data for tools.",
+            "`work.md`, `project.md` and `portfolio.md` are read-only summaries of project status, "
+            "written by `rollup.py` from project queues. `work.md` ranks the ready work, the bugs and "
+            "the requirements no brief covers; `project.md` shows each project as a tile with its "
+            "milestones and the detail behind them; `portfolio.md` groups projects by initiative. "
+            "`work.json`, `project.json` and `portfolio.json` hold the same data for tools.",
         ),
     ),
     (
         "Read them on GitHub",
         (
-            "Open `engineer.md`, `pm.md` or `cto.md` in this folder; GitHub shows them as "
+            "Open `work.md`, `project.md` or `portfolio.md` in this folder; GitHub shows them as "
             "formatted pages.",
         ),
     ),
@@ -1437,7 +1437,7 @@ GUIDE = (
         "Ask Claude",
         (
             'Install the claude-tasks plugin, then ask "how are my projects going?". In Claude '
-            "Desktop or claude.ai chat, attach `pm.md` with `+ > Add from GitHub` first, then ask "
+            "Desktop or claude.ai chat, attach `project.md` with `+ > Add from GitHub` first, then ask "
             "the same question.",
         ),
     ),

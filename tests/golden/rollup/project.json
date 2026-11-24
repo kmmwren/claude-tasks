@@ -1,6 +1,6 @@
 {
   "schema": "claude-tasks.rollup/v1",
-  "level": "pm",
+  "level": "project",
   "generated": "2026-11-19T12:00:00+00:00",
   "sources": [
     "alpha-source",

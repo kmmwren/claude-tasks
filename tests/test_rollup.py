@@ -354,9 +354,9 @@ def test_a_source_that_cannot_be_reached_and_was_never_read_is_listed_under_not_
     r = rollup.build([rollup.Source("Gone", NOWHERE)], NOW)
     assert r.entries == () and r.notes == ()
     assert r.omitted == (rv.Omission("Gone", ".tasks", rollup.NOT_READ),)
-    assert "- Gone / .tasks: its queue cannot be read" in rv.MARKDOWN.render(rv.VIEWS["pm"], r)
+    assert "- Gone / .tasks: its queue cannot be read" in rv.MARKDOWN.render(rv.VIEWS["project"], r)
     assert NOWHERE in capsys.readouterr().err
-    assert NOWHERE not in rv.JSON.render(rv.VIEWS["pm"], r)
+    assert NOWHERE not in rv.JSON.render(rv.VIEWS["project"], r)
 
 
 def test_an_unusable_cache_folder_skips_the_source_instead_of_stopping_the_run(
@@ -390,7 +390,7 @@ def test_offline_with_a_cache_shows_the_cached_queue_and_says_when_it_is_as_at(t
 
 def test_a_stale_source_warns_in_json_markdown_and_html(tmp_path):
     r = stale_rollup(tmp_path)
-    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["project"], r))
     assert data["warnings"] == [{"source": "Work", "behind": {}, "message": STALE}]
     assert data["projects"][0]["as_at"]["stale"] is True
     shown = (
@@ -442,7 +442,7 @@ def test_a_queue_without_a_project_file_is_omitted_without_naming_where_it_was_c
 
     r = rollup_of(tmp_path, build)
     assert [o.reason for o in r.omitted] == ["project.toml does not exist"]
-    assert str(qs.cache_root()) not in "".join(rv.MARKDOWN.render(rv.VIEWS["pm"], r))
+    assert str(qs.cache_root()) not in "".join(rv.MARKDOWN.render(rv.VIEWS["project"], r))
 
 
 def test_a_broken_project_does_not_stop_the_sources_after_it(tmp_path, work):
@@ -455,9 +455,9 @@ def test_a_broken_project_does_not_stop_the_sources_after_it(tmp_path, work):
 def test_two_sources_that_both_hold_projects_show_both_under_their_labels(work):
     r = built(work)
     assert [(p.source, p.slug) for p in projects(r)] == [("Alpha", "demo"), ("Beta", "Beta")]
-    pm = rv.MARKDOWN.render(rv.VIEWS["pm"], r)
-    assert "**Source:** Alpha @ " in pm and "**Source:** Beta @ " in pm
-    data = json.loads(rv.JSON.render(rv.VIEWS["cto"], r))
+    project = rv.MARKDOWN.render(rv.VIEWS["project"], r)
+    assert "**Source:** Alpha @ " in project and "**Source:** Beta @ " in project
+    data = json.loads(rv.JSON.render(rv.VIEWS["portfolio"], r))
     assert data["sources"] == ["Alpha", "Beta"]
     assert data["source_projects"] == [
         {"source": "Alpha", "projects": 1},
@@ -503,10 +503,10 @@ def test_each_project_carries_the_commit_it_was_read_at(work):
 # --- views -----------------------------------------------------------------------------------
 
 
-def test_pm_json_is_the_api(work):
+def test_project_json_is_the_api(work):
     r = built(work)
-    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
-    assert data["schema"] == rv.SCHEMA and data["level"] == "pm"
+    data = json.loads(rv.JSON.render(rv.VIEWS["project"], r))
+    assert data["schema"] == rv.SCHEMA and data["level"] == "project"
     assert data["sources"] == ["Alpha", "Beta"]
     assert data["warnings"] == [] and data["skipped"] == []
     a, b = data["projects"]
@@ -522,8 +522,8 @@ def test_pm_json_is_the_api(work):
 
 
 def test_pm_markdown_reads_as_a_page(work):
-    md = rv.MARKDOWN.render(rv.VIEWS["pm"], built(work))
-    assert "# Product roll-up" in md
+    md = rv.MARKDOWN.render(rv.VIEWS["project"], built(work))
+    assert "# Project roll-up" in md
     assert "`Red` The owner has not set a health in project.toml." in md
     assert "**Ask:** Ship it? (by 2026-11-01)" in md
     assert "`missed`" in md and "`2 waiting`" in md
@@ -531,25 +531,25 @@ def test_pm_markdown_reads_as_a_page(work):
 
 def test_ask_without_deadline(tmp_path):
     text = '[project]\ntitle = "T"\noutcome = "O"\n[ask]\nquestion = "Q?"\n'
-    md = rv.MARKDOWN.render(rv.VIEWS["pm"], rollup_of(tmp_path, with_project_toml(text)))
+    md = rv.MARKDOWN.render(rv.VIEWS["project"], rollup_of(tmp_path, with_project_toml(text)))
     assert "**Ask:** Q?\n" in md
 
 
-def test_cto_gives_each_project_a_sentence_and_its_reasons(work):
+def test_portfolio_gives_each_project_a_sentence_and_its_reasons(work):
     r = built(work)
-    data = json.loads(rv.JSON.render(rv.VIEWS["cto"], r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["portfolio"], r))
     a, b = data["projects"]
     assert a["milestones"] == {"done": 1, "total": 2} and a["missed"] == []
     assert a["as_at"]["committed"] == AS_AT
     assert b["next_due"] == {"id": "M0", "title": "Zero", "due": "2026-10-01"}
     assert b["missed"] == [{"id": "M0", "title": "Zero", "due": "2026-10-01"}]
-    md = rv.MARKDOWN.render(rv.VIEWS["cto"], r)
+    md = rv.MARKDOWN.render(rv.VIEWS["portfolio"], r)
     assert "Beta \\| Two is red; 1 of 3 milestones done; 1 past their date" in md
 
 
 def test_empty_and_skipped_are_said_plainly(tmp_path):
     r = rollup_of(tmp_path, with_project_toml("[project]\n"), "S")
-    md = rv.MARKDOWN.render(rv.VIEWS["pm"], r)
+    md = rv.MARKDOWN.render(rv.VIEWS["project"], r)
     assert "No projects found" in md and "## Not shown" in md and "S / .tasks" in md
 
 
@@ -557,8 +557,8 @@ def test_empty_and_skipped_are_said_plainly(tmp_path):
 
 
 def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
-    page = rv.HTML.render(rv.VIEWS["pm"], built(work))
-    assert "<title>Product roll-up</title>" in page and "<h1>Product roll-up</h1>" in page
+    page = rv.HTML.render(rv.VIEWS["project"], built(work))
+    assert "<title>Project roll-up</title>" in page and "<h1>Project roll-up</h1>" in page
     assert page.index("<h2>Projects</h2>") < page.index("<h2>Milestones</h2>")
     assert page.index("<h2>Milestones</h2>") < page.index("<h2>Detail</h2>")
     assert '<span class="chip chip-good">Green</span>' in page and "<table>" in page
@@ -568,26 +568,28 @@ def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
 
 
 def test_cto_html_groups_projects_by_initiative_with_a_sentence_each(work):
-    page = rv.HTML.render(rv.VIEWS["cto"], built(work))
+    page = rv.HTML.render(rv.VIEWS["portfolio"], built(work))
     assert "<h2>No initiative</h2>" in page and "<h3>Beta | Two</h3>" in page
     assert "<p>Beta | Two is red; 1 of 3 milestones done;" in page
     assert '<span class="chip chip-bad">Red</span>' in page and "<table>" not in page
 
 
 def test_html_says_plainly_when_there_is_nothing_to_show(tmp_path):
-    page = rv.HTML.render(rv.VIEWS["pm"], rollup_of(tmp_path, with_project_toml("[project]\n")))
+    page = rv.HTML.render(
+        rv.VIEWS["project"], rollup_of(tmp_path, with_project_toml("[project]\n"))
+    )
     assert "<p>No projects found." in page and "<h2>Not shown</h2>" in page
     assert '<div class="head">S / .tasks:' in page
 
 
 WRITTEN_FILES = [
     "README.md",
-    "cto.json",
-    "cto.md",
-    "engineer.json",
-    "engineer.md",
-    "pm.json",
-    "pm.md",
+    "portfolio.json",
+    "portfolio.md",
+    "project.json",
+    "project.md",
+    "work.json",
+    "work.md",
 ]
 
 
@@ -595,7 +597,7 @@ def test_write_produces_a_folder_github_renders(work, tmp_path):
     out = tmp_path / "out" / "rollups"
     paths = rollup.write(out, built(work))
     assert sorted(p.name for p in paths) == WRITTEN_FILES
-    assert "(pm.md)" in (out / "README.md").read_text()
+    assert "(project.md)" in (out / "README.md").read_text()
     for view in rv.VIEWS:
         assert json.loads((out / f"{view}.json").read_text())["level"] == view
         assert (out / f"{view}.md").read_text().startswith("# ")
@@ -604,12 +606,12 @@ def test_write_produces_a_folder_github_renders(work, tmp_path):
 def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work):
     text = " ".join(rv.Readme().render(rv.MARKDOWN, built(work)).split())
     for line in (
-        "[Engineering roll-up](engineer.md) [JSON](engineer.json)",
-        "[Product roll-up](pm.md) [JSON](pm.json)",
-        "[Portfolio roll-up](cto.md) [JSON](cto.json)",
-        "Open `engineer.md`, `pm.md` or `cto.md` in this folder; GitHub shows them as formatted pages.",
+        "[Work roll-up](work.md) [JSON](work.json)",
+        "[Project roll-up](project.md) [JSON](project.json)",
+        "[Portfolio roll-up](portfolio.md) [JSON](portfolio.json)",
+        "Open `work.md`, `project.md` or `portfolio.md` in this folder; GitHub shows them as formatted pages.",
         'Install the claude-tasks plugin, then ask "how are my projects going?".',
-        "attach `pm.md` with `+ > Add from GitHub`",
+        "attach `project.md` with `+ > Add from GitHub`",
         "rollup.py write --out <dir> --source Label=repo",
         "use the schema `claude-tasks.rollup/v1`",
     ):
@@ -619,13 +621,13 @@ def test_the_generated_readme_tells_someone_else_how_to_get_their_own_view(work)
 @pytest.mark.parametrize(
     "path,ctype,needle",
     [
-        ("/", "text/html", '<a href="pm"'),
-        ("/engineer", "text/html", "Engineering roll-up"),
-        ("/pm", "text/html", "Product roll-up"),
-        ("/cto", "text/html", "Portfolio roll-up"),
-        ("/engineer.json", "application/json", '"engineer"'),
-        ("/pm.json", "application/json", '"pm"'),
-        ("/cto.json", "application/json", '"cto"'),
+        ("/", "text/html", '<a href="project"'),
+        ("/work", "text/html", "Work roll-up"),
+        ("/project", "text/html", "Project roll-up"),
+        ("/portfolio", "text/html", "Portfolio roll-up"),
+        ("/work.json", "application/json", '"work"'),
+        ("/project.json", "application/json", '"project"'),
+        ("/portfolio.json", "application/json", '"portfolio"'),
     ],
 )
 def test_routes(work, path, ctype, needle):
@@ -633,7 +635,9 @@ def test_routes(work, path, ctype, needle):
     assert got is not None and got[0].startswith(ctype) and needle in got[1]
 
 
-@pytest.mark.parametrize("path", ["/nope", "/pm.txt", "/pm.md", "/pm.json.x", "/pm.", "/.json"])
+@pytest.mark.parametrize(
+    "path", ["/nope", "/project.txt", "/project.md", "/project.json.x", "/project.", "/.json"]
+)
 def test_unknown_routes(work, path):
     assert rollup.route(path, built(work)) is None
 
@@ -646,8 +650,8 @@ def test_server_answers_on_localhost(work, capsys):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
-        with urllib.request.urlopen(f"{base}/pm.json?x=1") as resp:
-            assert json.loads(resp.read())["level"] == "pm"
+        with urllib.request.urlopen(f"{base}/project.json?x=1") as resp:
+            assert json.loads(resp.read())["level"] == "project"
         with pytest.raises(urllib.error.HTTPError) as err:
             urllib.request.urlopen(f"{base}/nope")
         assert err.value.code == 404
@@ -666,12 +670,12 @@ def sources_args(work):
 
 def test_cli_prints_each_format(work, capsys):
     src = sources_args(work)
-    assert rollup.main(["json", "--level", "cto", *src], env={}) == 0
-    assert json.loads(capsys.readouterr().out)["level"] == "cto"
+    assert rollup.main(["json", "--level", "portfolio", *src], env={}) == 0
+    assert json.loads(capsys.readouterr().out)["level"] == "portfolio"
     assert rollup.main(["markdown", *src], env={}) == 0
-    assert "# Product roll-up" in capsys.readouterr().out
-    assert rollup.main(["markdown", "--level", "engineer", *src], env={}) == 0
-    assert "# Engineering roll-up" in capsys.readouterr().out
+    assert "# Project roll-up" in capsys.readouterr().out
+    assert rollup.main(["markdown", "--level", "work", *src], env={}) == 0
+    assert "# Work roll-up" in capsys.readouterr().out
     assert rollup.main(["html", *src], env={}) == 0
     assert "<html" in capsys.readouterr().out.lower()
     assert rollup.main(["sources", *src, "--source", f"Empty={NOWHERE}"], env={}) == 0
@@ -706,7 +710,7 @@ def test_only_write_takes_an_output_option(argv, capsys):
 @pytest.mark.parametrize(
     "argv,command",
     [
-        (["json", "--level", "engineer"], rollup.ShowJson),
+        (["json", "--level", "work"], rollup.ShowJson),
         (["markdown"], rollup.ShowMarkdown),
         (["html"], rollup.ShowHtml),
         (["sources"], rollup.ListSources),
@@ -721,7 +725,7 @@ def test_each_subcommand_parses_to_its_own_command(argv, command):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["sources", "--level", "cto"],
+        ["sources", "--level", "portfolio"],
         ["write", "--out", "o", "--port", "1"],
         ["json", "--port", "1"],
     ],
@@ -784,7 +788,7 @@ def test_story_dates_are_dates_and_undated_briefs_are_not_shipped(tmp_path):
 
     r = rollup.build(only_source(tmp_path, build), NOW)
     assert [s.id for s in projects(r)[0].shipped] == ["b1", "b9"]
-    data = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))
+    data = json.loads(rv.JSON.render(rv.VIEWS["project"], r))
     assert data["projects"][0]["shipped"][1] == {
         "id": "b9",
         "title": "B9",
@@ -797,12 +801,30 @@ def test_story_dates_are_dates_and_undated_briefs_are_not_shipped(tmp_path):
 def test_write_refuses_a_folder_that_holds_something_else(work, tmp_path, held):
     out = tmp_path / "docs"
     out.mkdir()
-    (out / "pm.json").write_text(held)
+    (out / "project.json").write_text(held)
     (out / "notes.md").write_text("mine")
     with pytest.raises(rollup.RollupError, match="not an empty folder"):
         rollup.write(out, built(work))
     assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 2
-    assert (out / "notes.md").read_text() == "mine" and (out / "pm.json").read_text() == held
+    assert (out / "notes.md").read_text() == "mine" and (out / "project.json").read_text() == held
+
+
+@pytest.mark.parametrize("view", list(rv.VIEWS))
+def test_write_refreshes_a_folder_holding_any_one_views_json(work, tmp_path, view):
+    out = tmp_path / "docs"
+    out.mkdir()
+    (out / rv.JSON.filename(rv.VIEWS[view])).write_text(rv.JSON.render(rv.VIEWS[view], built(work)))
+    (out / "notes.md").write_text("mine")
+    assert rollup.write(out, built(work))
+    assert (out / "notes.md").read_text() == "mine"
+
+
+def test_write_refuses_our_schema_under_a_name_it_does_not_write(work, tmp_path):
+    out = tmp_path / "docs"
+    out.mkdir()
+    (out / "snapshot.json").write_text(rv.JSON.render(rv.VIEWS["project"], built(work)))
+    with pytest.raises(rollup.RollupError, match="not an empty folder"):
+        rollup.write(out, built(work))
 
 
 def test_write_reports_a_destination_it_cannot_create(work, tmp_path, capsys):
@@ -821,7 +843,7 @@ def test_write_rewrites_only_what_changed_apart_from_the_timestamp(work, tmp_pat
     assert len(rollup.write(out, built(work))) == len(WRITTEN_FILES)
     later = NOW.replace(hour=13)
     assert rollup.write(out, rollup.build(work, later)) == []
-    assert "Generated 2026-10-23T12:00:00" in (out / "pm.md").read_text()
+    assert "Generated 2026-10-23T12:00:00" in (out / "project.md").read_text()
 
     def renamed(clone):
         alpha(clone)
@@ -830,7 +852,14 @@ def test_write_rewrites_only_what_changed_apart_from_the_timestamp(work, tmp_pat
 
     changed = [source_of(tmp_path / "changed", renamed, "Alpha"), work[1]]
     names = {p.name for p in rollup.write(out, rollup.build(changed, later))}
-    assert names == {"pm.md", "pm.json", "cto.md", "cto.json", "engineer.md", "engineer.json"}
+    assert names == {
+        "project.md",
+        "project.json",
+        "portfolio.md",
+        "portfolio.json",
+        "work.md",
+        "work.json",
+    }
     assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 0
 
 
@@ -847,9 +876,11 @@ def test_a_port_in_use_or_out_of_range_is_a_one_line_error(work, capsys):
 
 def test_the_index_links_pages_by_file_in_a_folder_and_by_route_on_the_server(work):
     r = built(work)
-    assert "[Product roll-up](pm.md)" in rv.Readme().render(rv.MARKDOWN, r)
+    assert "[Project roll-up](project.md)" in rv.Readme().render(rv.MARKDOWN, r)
     got = rollup.route("/", r)
-    assert got is not None and '<a href="pm"' in got[1] and '<a href="cto.json"' in got[1]
+    assert (
+        got is not None and '<a href="project"' in got[1] and '<a href="portfolio.json"' in got[1]
+    )
 
 
 def zoned(tmp_path, zone):
@@ -897,8 +928,8 @@ HEAD = '[project]\ntitle = "T"\noutcome = "O"\n'
 def test_a_milestone_percent_is_the_one_the_project_view_computes(tmp_path):
     r = rollup.build(only_source(tmp_path), NOW)
     assert [m.percent_done for m in projects(r)[0].milestones] == [100, 50]
-    pm = json.loads(rv.JSON.render(rv.VIEWS["pm"], r))["projects"][0]
-    assert [m["percent_done"] for m in pm["now"]] == [50]
+    project = json.loads(rv.JSON.render(rv.VIEWS["project"], r))["projects"][0]
+    assert [m["percent_done"] for m in project["now"]] == [50]
 
 
 @pytest.mark.parametrize(
@@ -948,9 +979,9 @@ def test_an_existing_file_that_is_not_utf8_is_replaced_not_fatal(work, tmp_path)
     out = tmp_path / "o"
     out.mkdir()
     rollup.write(out, built(work))
-    (out / "pm.md").write_bytes(b"\xff\xfe")
-    assert [p.name for p in rollup.write(out, built(work))] == ["pm.md"]
-    assert "Product roll-up" in (out / "pm.md").read_text()
+    (out / "project.md").write_bytes(b"\xff\xfe")
+    assert [p.name for p in rollup.write(out, built(work))] == ["project.md"]
+    assert "Project roll-up" in (out / "project.md").read_text()
     assert rollup.main(["write", "--out", str(out), *sources_args(work)], env={}) == 0
 
 

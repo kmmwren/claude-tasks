@@ -1,26 +1,26 @@
 ---
 name: rollup
-description: "Use when someone above the engineer wants a roll-up of project progress: a product manager or CTO asks how projects are going, what shipped, what is next, what is at risk, or says \"roll-up\", \"portfolio status\", \"project health across everything\". Works in Claude Code (runs the generator over local queues) and in Claude Desktop or claude.ai chat (reads a published roll-up from GitHub)."
+description: "Use when someone wants a roll-up of project progress at work, project or portfolio level: how projects are going, what shipped, what is next, what is at risk, what to work on, or says \"roll-up\", \"portfolio status\", \"project health across everything\". Works in Claude Code (runs the generator over local queues) and in Claude Desktop or claude.ai chat (reads a published roll-up from GitHub)."
 ---
 
 # rollup
 
-A roll-up answers "how are my projects going?" for a reader who does not work in the queues.
+A roll-up answers "how are my projects going?" at work, project or portfolio level.
 It is generated from project queues (a queue with a `project.toml`) as they stand on each
-repository's GitHub default branch, and has one view per reader. Every view opens each project
+repository's GitHub default branch, and has one view per level of detail. Every view opens each project
 with one "Source: <label> @ <commit>, <date>" line, and a gap is written out ("No open bugs.",
 "Nothing shipped in the last 14 days.", "No date") rather than left blank:
 
-- **engineer**: per project, three lists. Ready briefs, most urgent first (numbered), each with its
+- **work**: per project, three lists. Ready briefs, most urgent first (numbered), each with its
   id, title, due date, estimate and the blockers it waits on; open bugs (numbered from 1); and the
   requirements no brief covers.
-- **pm**: three layers. Projects: one tile per project, red first, then amber, then stale or unset,
+- **project**: three layers. Projects: one tile per project, red first, then amber, then stale or unset,
   then green, with slip breaking ties; a tile carries the health and who set it, the outcome, the
   milestone counts, the next due date, the ask, the latest shipped brief and the latest build.
   Milestones: a table per project of milestone, status, due, slip, briefs, evidence and flags.
   Detail: collapsed per project, with the automatic checks, milestones by stage, what shipped by
   release, and the backlog by milestone.
-- **cto**: projects grouped by initiative, each with one sentence of status (health, milestones
+- **portfolio**: projects grouped by initiative, each with one sentence of status (health, milestones
   done, how many are past their date, what is next), its health and one line per milestone.
 
 Only these fields appear: each project's slug, title, initiative, source label, commit and `outcome`;
@@ -42,21 +42,21 @@ requirement words are safe for the audience before sharing a roll-up.
   **+ > Add from GitHub**. Chat cannot run the plugin's scripts on the user's machine, so never try
   `rollup.py` in chat. This split is current as of 2026-11-19; recheck it after 2026-11-30.
 
-Ask the user which view they want only if they have not said; "how are my projects" is pm,
-"across everything" or "portfolio" is cto, and "what should we work on" or "what is broken" is
-engineer.
+Ask the user which view they want only if they have not said; "how are my projects" is project,
+"across everything" or "portfolio" is portfolio, and "what should we work on" or "what is broken"
+is work.
 
 ## Claude Code: generate
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" markdown --level pm
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" markdown --level engineer
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" json --level cto
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" html --level pm
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" markdown --level project
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" markdown --level work
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" json --level portfolio
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" html --level project
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/rollup.py" sources
 ```
 
-`--level` takes `engineer`, `pm` or `cto` and defaults to `pm`.
+`--level` takes `work`, `project` or `portfolio` and defaults to `project`.
 
 Show the Markdown as it comes out; do not summarise it into a different shape. If a project is
 listed under "Not shown", or a source is reported there as having no projects, say why in one line (the reason is printed) so the owner can fix it.
@@ -104,16 +104,16 @@ warning. Run `rollup.py sources` to check what each source gives.
 ## Desktop or chat: read a published copy
 
 `rollup.py write --out <dir>` writes `README.md` (what the files are and how someone else gets their own
-view), then `engineer.md`, `pm.md`, `cto.md` and a `.json` beside each. `--out` belongs to `write` alone. It only
-writes into a new or empty folder or one that already holds a roll-up (a `pm.json` with this
+view), then `work.md`, `project.md`, `portfolio.md` and a `.json` beside each. `--out` belongs to `write` alone. It only
+writes into a new or empty folder or one that already holds a roll-up (a view's `.json` with this
 schema), and leaves a file alone when only its generated-on line would change. Teams commit that
 folder to a GitHub repository so anyone can read it.
 
 1. Ask once for the repository, branch and folder holding the roll-up, unless the user has
    already said.
 2. Read `<folder>/<view>.md` and show it. Use `<view>.json` when the user wants to compute
-   something (counts, filters, comparisons); a pm milestone carries `waiting`, the number of its
-   briefs still waiting on an unmet blocker, and the engineer view carries `ready`, `bugs` and
+   something (counts, filters, comparisons); a project milestone carries `waiting`, the number of its
+   briefs still waiting on an unmet blocker, and the work view carries `ready`, `bugs` and
    `uncovered_requirements`. If the file is not already in the conversation, ask
    the user to attach it with **+ > Add from GitHub** (a private repository needs the Claude GitHub
    App). A file kept in a Project is a snapshot: ask them to press **Sync now** first.
@@ -125,12 +125,12 @@ Never invent project status. If the files cannot be read, say what failed and st
 
 Three ways, simplest first:
 
-1. **GitHub**: commit the `write` folder; GitHub renders `engineer.md`, `pm.md` and `cto.md` as
+1. **GitHub**: commit the `write` folder; GitHub renders `work.md`, `project.md` and `portfolio.md` as
    pages, and the JSON is a stable API (`schema: claude-tasks.rollup/v1`) for anyone's own tool or
    page. Keys keep their names and meaning within the version; new keys may be added.
 2. **Ask Claude**: anyone who adds this plugin uses this skill, in Claude Code, Desktop or claude.ai
    chat; in chat they attach the published files from GitHub.
-3. **Local browser**: `rollup.py serve [--port N]` serves `/engineer`, `/pm`, `/cto` and their `.json` on
+3. **Local browser**: `rollup.py serve [--port N]` serves `/work`, `/project`, `/portfolio` and their `.json` on
    `http://localhost:8788/` (default port 8788), rebuilt on every request from each source's default
    branch. It answers only to the host names `localhost` and `127.0.0.1`. `rollup.py html` prints the
    same page once, as HTML.

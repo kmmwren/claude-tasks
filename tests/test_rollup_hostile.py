@@ -57,7 +57,7 @@ def hostile_everywhere(tmp_path):
     return rollup_of(tmp_path, text_in_every_field(HOSTILE_TITLE), HOSTILE_TITLE)
 
 
-ESCAPED_AT_LEAST = {"engineer": 2, "pm": 6, "cto": 3}
+ESCAPED_AT_LEAST = {"work": 2, "project": 6, "portfolio": 3}
 
 
 @pytest.mark.parametrize("view", rv.VIEWS)
@@ -119,7 +119,7 @@ def listening(tmp_path):
 
 
 def test_server_sends_a_content_security_policy_on_every_answer(listening):
-    for path in ("/", "/engineer", "/pm", "/cto.json", "/nope"):
+    for path in ("/", "/work", "/project", "/portfolio.json", "/nope"):
         headers = get(listening, path)[1]
         assert headers["Content-Security-Policy"] == CSP
         assert headers["X-Content-Type-Options"] == "nosniff"
@@ -127,7 +127,7 @@ def test_server_sends_a_content_security_policy_on_every_answer(listening):
 
 def test_the_policy_forbids_framing_and_every_remote_load_but_https_media():
     assert rv.HTML_CSP == CSP and "frame-ancestors 'none'" in CSP
-    page = rv.HTML.render(rv.VIEWS["pm"], hostile_notes())
+    page = rv.HTML.render(rv.VIEWS["project"], hostile_notes())
     assert f'content="{CSP.replace(chr(39), "&#x27;")}"' in page
 
 
@@ -135,7 +135,7 @@ def test_the_policy_forbids_framing_and_every_remote_load_but_https_media():
     "host", ["localhost", "localhost:8788", "127.0.0.1", "127.0.0.1:1", "LocalHost"]
 )
 def test_server_answers_its_own_names(listening, host):
-    assert get(listening, "/pm", host)[0] == 200
+    assert get(listening, "/project", host)[0] == 200
 
 
 @pytest.mark.parametrize(
@@ -150,14 +150,14 @@ def test_server_answers_its_own_names(listening, host):
     ],
 )
 def test_server_refuses_other_host_headers_against_dns_rebinding(listening, host):
-    status, headers, body = get(listening, "/pm", host)
-    assert status == 403 and b"Product roll-up" not in body
+    status, headers, body = get(listening, "/project", host)
+    assert status == 403 and b"Project roll-up" not in body
     assert headers["Content-Security-Policy"] == CSP
 
 
 def test_server_refuses_a_request_with_no_host_header(listening):
     conn = http.client.HTTPConnection(*listening)
-    conn.putrequest("GET", "/pm", skip_host=True)
+    conn.putrequest("GET", "/project", skip_host=True)
     conn.endheaders()
     assert conn.getresponse().status == 403
 
@@ -187,7 +187,7 @@ def test_a_title_with_newlines_cannot_add_headings_rows_or_bullets(tmp_path, vie
     assert len({len(re.findall(r"(?<!\\)\|", x)) for x in lines if x.startswith("|")}) <= 1
 
 
-ESCAPED_AT_LEAST_MD = {"engineer": 2, "pm": 8, "cto": 4}
+ESCAPED_AT_LEAST_MD = {"work": 2, "project": 8, "portfolio": 4}
 
 
 def test_every_user_sourced_string_is_escaped_in_markdown(tmp_path):
@@ -203,7 +203,7 @@ def test_every_user_sourced_string_is_escaped_in_markdown(tmp_path):
     everything = "".join(pages.values())
     assert "Z*Z" not in everything and "Y*Y" not in everything
     assert all(pages[view].count("Z\\*Z") >= n for view, n in ESCAPED_AT_LEAST_MD.items())
-    assert "Y\\*Y" in pages["pm"]
+    assert "Y\\*Y" in pages["project"]
 
 
 @pytest.mark.parametrize("view", rv.VIEWS)
@@ -250,7 +250,7 @@ def test_a_milestone_title_that_is_not_text_skips_only_that_milestone(tmp_path, 
     warning = capsys.readouterr().err
     assert "m1" in warning and "that milestone is left out" in warning
     assert "milestone m1 plain or title must be text, not int" in warning
-    page = rv.HTML.render(rv.VIEWS["pm"], r)
+    page = rv.HTML.render(rv.VIEWS["project"], r)
     assert "The second thing works" in page and "The first thing works" not in page
 
 
@@ -290,7 +290,7 @@ def test_skip_reasons_never_carry_an_absolute_path(tmp_path):
     assert [o.source for o in r.omitted] == ["S"]
     reason = r.omitted[0].reason
     assert "PermissionError" in reason and str(Path("in-progress") / "b2.md") in reason
-    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["pm"], r) for fmt in rv.FORMATS)
+    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["project"], r) for fmt in rv.FORMATS)
     assert str(tmp_path) not in shared
 
 
@@ -308,7 +308,7 @@ def test_os_reason_hides_paths_outside_the_queue(tmp_path, error, expected):
 def test_an_unreachable_source_never_puts_its_address_in_a_shared_line(tmp_path):
     secret = str(tmp_path / "secret-host" / "repo")
     r = rollup.build([rollup.Source("S", secret)], NOW)
-    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["cto"], r) for fmt in rv.FORMATS)
+    shared = "".join(rv.FORMATS[fmt].render(rv.VIEWS["portfolio"], r) for fmt in rv.FORMATS)
     assert "secret-host" not in shared and "- S / .tasks: its queue cannot be read" in shared
 
 
