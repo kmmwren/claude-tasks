@@ -5,7 +5,7 @@ description: "Use when someone wants a roll-up of project progress at work, proj
 
 # rollup
 
-A roll-up answers "how are my projects going?" for a reader who does not work in the queues.
+A roll-up answers "how are my projects going?" at work, project or portfolio level.
 It is generated from project queues (a queue with a `project.toml`) as they stand on each
 repository's GitHub default branch, and has one view per level of detail. Every view opens each project
 with one "Source: <label> @ <commit>, <date>" line, and a gap is written out ("No open bugs.",

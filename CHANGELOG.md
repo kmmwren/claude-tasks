@@ -127,7 +127,7 @@
   row or a malformed default config warns and the run carries on; only a config you named is an
   error. A source that could not be reached shows its cached copy with a warning in `sources`,
   the Markdown and HTML footers and the JSON `warnings`. `write` also
-  generates a `README.md` saying how someone else gets their own view. A pm milestone's `waiting` key counts
+  generates a `README.md` saying how someone else gets their own view. A project milestone's `waiting` key counts
   its briefs waiting on an unmet blocker. A destination `write` cannot create is a one-line error.
   A milestone's percent is the one the project page shows (from ticked criteria). An absent default
   config falls back to the current repository without a warning; a repeated source label, a `[[milestones]]`

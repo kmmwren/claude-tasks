@@ -805,6 +805,24 @@ def test_write_refuses_a_folder_that_holds_something_else(work, tmp_path, held):
     assert (out / "notes.md").read_text() == "mine" and (out / "project.json").read_text() == held
 
 
+@pytest.mark.parametrize("view", list(rv.VIEWS))
+def test_write_refreshes_a_folder_holding_any_one_views_json(work, tmp_path, view):
+    out = tmp_path / "docs"
+    out.mkdir()
+    (out / rollup.target(view, "json")).write_text(rv.render(view, "json", built(work)))
+    (out / "notes.md").write_text("mine")
+    assert rollup.write(out, built(work))
+    assert (out / "notes.md").read_text() == "mine"
+
+
+def test_write_refuses_our_schema_under_a_name_it_does_not_write(work, tmp_path):
+    out = tmp_path / "docs"
+    out.mkdir()
+    (out / "snapshot.json").write_text(rv.render("project", "json", built(work)))
+    with pytest.raises(rollup.RollupError, match="not an empty folder"):
+        rollup.write(out, built(work))
+
+
 def test_write_reports_a_destination_it_cannot_create(work, tmp_path, capsys):
     blocker = tmp_path / "file"
     blocker.write_text("not a folder")

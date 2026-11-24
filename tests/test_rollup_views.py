@@ -738,10 +738,10 @@ def test_prose_keeps_the_spaces_around_a_code_span_and_drops_none_inside_words()
 
 
 def test_a_page_link_is_a_link_to_a_sibling_file_in_each_markup() -> None:
-    page = rv.Page("Product", "project.md")
-    assert page.render(rv.MarkdownFormat()) == "[Product](project.md)"
+    page = rv.Page("Project", "project.md")
+    assert page.render(rv.MarkdownFormat()) == "[Project](project.md)"
     assert (
-        page.render(rv.HtmlFormat()) == '<a href="project.md" rel="noopener noreferrer">Product</a>'
+        page.render(rv.HtmlFormat()) == '<a href="project.md" rel="noopener noreferrer">Project</a>'
     )
 
 

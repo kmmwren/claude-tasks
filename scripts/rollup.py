@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-rollup.py - project roll-ups at three levels (work, project, portfolio) over any number of queues. Each project is read from its claude-tasks queue as the repository's default branch holds
-it on GitHub, never from a local clone. Only titles, states, dates, the owner's own health, ask and
+rollup.py - project roll-ups at three levels (work, project, portfolio) over any number of queues.
+Each project is read from its claude-tasks queue as the repository's default branch holds it on
+GitHub, never from a local clone. Only titles, states, dates, the owner's own health, ask and
 outcome, and the text of the automatic checks leave a queue; see skills/rollup.
 
   python scripts/rollup.py json|markdown|html [--level work|project|portfolio] [--source LABEL=REPO[#QUEUE] ...]
@@ -299,8 +300,8 @@ def _files(report: rv.Report) -> dict[str, str]:
 
 
 def _holds_rollup(out: pathlib.Path) -> bool:
-    """True when `out` already carries a roll-up of ours: any view's JSON with our schema."""
-    return any(_is_ours(path) for path in out.glob("*.json"))
+    """True when `out` already carries a roll-up of ours: a view's JSON file with our schema."""
+    return any(_is_ours(out / target(view, "json")) for view in rv.VIEWS)
 
 
 def _is_ours(path: pathlib.Path) -> bool:
