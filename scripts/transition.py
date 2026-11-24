@@ -37,7 +37,7 @@ import json
 import pathlib
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from itertools import chain
 from typing import Any
 
@@ -66,10 +66,12 @@ from deps import (
 from deps import (
     brief_id as identity_of,
 )
+from done_guard import UntickedCriteriaError, settle_criteria, unticked_criteria
 from facts import lacks_evidence
 from git_sync import sync_commit
 from picks import note_choice
 from readiness import brief_missing_fields
+from supersession import SUPERSEDED_NOTE, Successors
 
 # Every lifecycle state == a folder of the same name.
 VALID_STATUSES = ("inbox", "ready", "in-progress", "blocked", "done", "parked")
@@ -205,6 +207,17 @@ def set_field(block: str, key: str, value: str) -> str:
     return block if n else block + "\n" + line
 
 
+def set_frontmatter_fields(text: str, fields: Mapping[str, str]) -> str:
+    """`text` with each `key: value` of `fields` set in its frontmatter block; a brief with no block raises."""
+    m = _FRONTMATTER.match(text)
+    if not m:
+        raise ValueError("the brief has no frontmatter block, so nothing can be written to it")
+    block = m.group(2)
+    for key, value in fields.items():
+        block = set_field(block, key, value)
+    return text[: m.start(2)] + block + text[m.end(2) :]
+
+
 def ensure_frontmatter(text: str, brief_id: str, status: str, today: str) -> str:
     """Prefix a brief that has no frontmatter block with the minimal one, dated as add_task dates it."""
     if _FRONTMATTER.match(text):
@@ -335,6 +348,31 @@ def _append_log(text: str, today: str, message: str) -> str:
     return text.rstrip("\n") + "\n\n## Execution log\n\n" + line + "\n"
 
 
+def _carry_criteria(brief_id: str, text: str, successor_ids: list[str], root: pathlib.Path) -> str:
+    """Tick the open criteria as carried by the successors, or raise naming those they lack."""
+    successors = Successors.resolve(brief_id, successor_ids, lambda sid: find_brief(sid, root))
+    successors.require_carried(brief_id, unticked_criteria(text))
+    return settle_criteria(text, f"superseded: carried to {', '.join(successors.ids)}")
+
+
+def _closed_text(
+    brief_id: str,
+    text: str,
+    settle_with: str | None,
+    superseded_by: list[str] | None,
+    root: pathlib.Path,
+) -> str:
+    """The brief's text ready for done/: open criteria ticked on evidence or by supersession, else refused."""
+    if superseded_by and unticked_criteria(text):
+        text = _carry_criteria(brief_id, text, superseded_by, root)
+    if settle_with:
+        text = settle_criteria(text, settle_with)
+    open_lines = unticked_criteria(text)
+    if open_lines:
+        raise UntickedCriteriaError(brief_id, open_lines)
+    return text
+
+
 def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
     """Refuse a self-block, an unknown blocker id, a malformed `date:`, or a `<queue>:<id>` naming no known brief."""
     if brief_id in blocked_by:
@@ -377,6 +415,8 @@ def move_brief(
     probes: list[str] | None = None,
     confirmed: list[str] | None = None,
     no_deps: bool = False,
+    settle_with: str | None = None,
+    superseded_by: list[str] | None = None,
 ) -> pathlib.Path:
     """Transition a brief to `new_status`: update frontmatter, log it, move the file.
 
@@ -394,11 +434,20 @@ def move_brief(
     `external:<reason>`) so a blocked brief always says what it waits for. Leaving blocked/ or
     passing `no_deps` writes `[]`; any other move leaves the field exactly as it was, absent
     included, because the key's presence is the declaration. `only_if` is re-evaluated under the lock; when it is false the brief is
-    left alone and ValueError is raised. Callers commit separately via sync_commit.
+    left alone and ValueError is raised. Moving to done refuses while a Success criteria line is
+    unticked: `settle_with` ticks each with that note (the evidence the caller already holds), and
+    `superseded_by` ticks them once a successor brief carries each. Callers commit separately via sync_commit.
     Returns the new path.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")
+    if settle_with and SUPERSEDED_NOTE.search(settle_with):
+        raise ValueError(
+            f"settle_with cannot record a supersession ({settle_with!r}): it ticks criteria "
+            "without checking they were carried. Use superseded_by (--superseded-by) instead."
+        )
+    if superseded_by and new_status != "done":
+        raise ValueError("superseded_by only applies when moving a brief to done")
     if assignee is not None:
         assignee = assignee.strip()  # a whitespace-only claim is a release, not a claimant
     if new_status == "blocked" and not blocked_by:
@@ -419,7 +468,8 @@ def move_brief(
     _require_enriched(brief_id, new_status, path)
     _require_declared(brief_id, new_status, path, no_deps)
     today = today or datetime.date.today().isoformat()
-    message = log or DEFAULT_LOG.get(new_status, "moved")
+    default = f"superseded by {', '.join(dict.fromkeys(superseded_by))}" if superseded_by else None
+    message = log or default or DEFAULT_LOG.get(new_status, "moved")
     with repo_lock(root) as acquired:
         if not acquired:
             raise RuntimeError(f"timed out waiting for the queue lock; {brief_id!r} was NOT moved")
@@ -430,6 +480,10 @@ def move_brief(
         if only_if is not None and not only_if():
             raise ValueError(f"{brief_id!r} changed while waiting for the lock; not moved")
         text = path.read_text(encoding="utf-8")
+        # Checked under the lock on the text about to be moved, so a caller that ignored a failed
+        # tick step still cannot land an open brief in done/.
+        if new_status == "done":
+            text = _closed_text(brief_id, text, settle_with, superseded_by, root)
         if assignee:
             held = fm(text).get("assignee", "")
             if held and held != assignee:
@@ -504,6 +558,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="declare that a brief promoted out of inbox/ or parked/ depends on nothing",
     )
+    m.add_argument(
+        "--settle-with",
+        default=None,
+        metavar="EVIDENCE",
+        help="close with open criteria ticked, each annotated with this evidence (a merged PR, a commit)",
+    )
+    m.add_argument(
+        "--superseded-by",
+        action="append",
+        metavar="SUCCESSOR_ID",
+        help="close as superseded (repeatable); open criteria must already be in a successor",
+    )
     m.add_argument("--today", default=None, help="override date (testing)")
     m.add_argument("--no-sync", action="store_true", help="skip the git commit/push")
 
@@ -572,6 +638,8 @@ def main(argv: list[str] | None = None) -> None:
             probes=a.probe,
             confirmed=a.confirmed,
             no_deps=a.no_deps,
+            settle_with=a.settle_with,
+            superseded_by=a.superseded_by,
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)

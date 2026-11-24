@@ -45,7 +45,16 @@ importance: # 1 (critical) | 2 (high) | 3 (medium) | 4 (low)
 autonomy: # full | needs-input | blocked
 estimated-effort: # xs (<30min) | s (<2h) | m (<1day) | l (<1week) | xl (>1week)
 due: # OPTIONAL YYYY-MM-DD hard deadline. Empty = no deadline.
-not_before: # OPTIONAL ISO date; the brief is not offered before it. Empty = startable now.
+not_before: # OPTIONAL ISO date or datetime (bare date = 00:00 UTC, naive time = UTC); the brief is not offered before it, and `maintain.py` wakes it once it has passed. Empty = startable now.
+wake_probe: # OPTIONAL shell command `maintain.py` runs from the queue root: exit 0 = due, 10 = not yet, anything else = error (logged, not due).
+wake_generation: # OPTIONAL whole number; bump it to let a wake that already ran fire again.
+valid_until: # OPTIONAL ISO date or datetime; a wake due after it is reported `overdue`, not run.
+needs: [] # OPTIONAL capabilities the run needs, e.g. [aws, slack]; a tier that lacks one skips the brief.
+escalate_after: # OPTIONAL ISO date or datetime; once past, a brief no tier can serve is reported `overdue-needs-<cap>`.
+lease_holder: # SET BY maintain.py when it claims the brief (tier@host:pid); do not edit.
+lease_expires: # SET BY maintain.py: when the claim lapses and another runner may reclaim it.
+lease_attempts: # SET BY maintain.py: how many times the wake has been claimed.
+wake_key: # SET BY maintain.py: the wake this claim was made for.
 domain: # OPTIONAL category. Define the allowed set in tasks.toml [domains].
 tags: [] # OPTIONAL free-form labels, e.g. [security, depends:other-brief-id].
 parent: # OPTIONAL brief id this is a sub-task of (epic/project). Empty for top-level.

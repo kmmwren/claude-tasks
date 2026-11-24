@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
+  trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
+  is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a
+  detached headless run through the configured launcher. A brief is due when `not_before` has passed
+  or its `wake_probe` exits 0; `valid_until`, `needs:` and `escalate_after` produce `overdue` and
+  `overdue-needs-<cap>` report lines. A run record per wake stops a second tick or the other tier
+  running it twice. `launchd/` holds a LaunchAgent template and an install script that renders it
+  without loading it. A due brief still waits for its unmet `blocked_by` entries, including `date:` days.
+
 ### Changed
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or
   `$CLAUDE_TASKS_LAUNCHER` to run the judge and the triage calls through a launcher script; with

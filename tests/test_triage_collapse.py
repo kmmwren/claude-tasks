@@ -86,3 +86,14 @@ def test_apply_retires_children_to_done_with_a_pointer(tmp_path):
     assert [p.name for p in (root / "inbox").glob("*.md")] == ["peer-memory-batch.md"]
     child = (root / "done" / "peer-memory-0a0a0a0a.md").read_text()
     assert "parent: peer-memory-batch" in child and "collapsed into peer-memory-batch" in child
+
+
+def test_apply_leaves_no_open_criterion_in_done_and_records_who_carries_it(tmp_path):
+    root = make_inbox(tmp_path, PEERS)
+    [plan] = plan_collapses(load_inbox(root), root)
+    apply_collapse(plan, root, "2026-11-11")
+    children = [(root / "done" / f"{bid}.md").read_text() for bid in PEERS]
+    assert all(
+        "- [ ]" not in text and "superseded: carried to peer-memory-batch" in text
+        for text in children
+    )

@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from _paths import warn_once
@@ -226,6 +226,33 @@ def ask_json(
     answer = None if spent else _ask(prompt, schema, model, reason, timeout, launch)
     TALLY.record(answer is not None, skipped=spent)
     return answer
+
+
+def spawn_detached(
+    launch: Launch,
+    args: Sequence[str],
+    reason: str,
+    log_path: pathlib.Path,
+    cwd: pathlib.Path,
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Start the launcher on `args` in its own session, its output appended to `log_path`; returns the pid.
+
+    Nothing waits on the child, so a scheduled caller can exit while the run goes on; unlike `ask_json`
+    the run keeps its tools, because it executes a brief rather than reading data.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("ab") as log:
+        child = subprocess.Popen(
+            launch.argv(args),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            cwd=cwd,
+            env={**(launch.env(reason) or os.environ), **(env or {})},
+            start_new_session=True,
+        )
+    return child.pid
 
 
 def no_capacity() -> bool:

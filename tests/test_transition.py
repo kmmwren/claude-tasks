@@ -1351,3 +1351,14 @@ def test_move_to_blocked_rejects_a_malformed_date(root):
     with pytest.raises(ValueError, match="date:YYYY-MM-DD"):
         transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["date:next week"])
     assert (root / "ready" / "rotate-the-api-key.md").exists()
+
+
+def test_set_frontmatter_fields_sets_new_and_existing_keys_and_keeps_the_body():
+    text = "---\nid: b1\nstatus: ready\n---\n\nBody line\n"
+    out = transition.set_frontmatter_fields(text, {"status": "ready", "lease_holder": "laptop@h:1"})
+    assert out == "---\nid: b1\nstatus: ready\nlease_holder: laptop@h:1\n---\n\nBody line\n"
+
+
+def test_set_frontmatter_fields_refuses_a_brief_with_no_block():
+    with pytest.raises(ValueError, match="no frontmatter block"):
+        transition.set_frontmatter_fields("just prose\n", {"a": "b"})

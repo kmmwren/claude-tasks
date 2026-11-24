@@ -30,6 +30,7 @@ from _default_branch import default_branch  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
 from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
+from done_guard import DoneBackstop, scope_of  # noqa: E402
 from host_land import land_host_queue  # noqa: E402
 
 
@@ -280,7 +281,8 @@ def _fetch_origin(root: pathlib.Path, deadline: Deadline) -> None:
 
 
 @contextlib.contextmanager
-def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
+def scratch_worktree(root: pathlib.Path, ref: str = "HEAD") -> Iterator[pathlib.Path]:
+    """A throwaway detached worktree of `ref`, removed on exit, so a write is built and pushed off the checkout."""
     with tempfile.TemporaryDirectory(prefix="git-sync-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         _git(
@@ -290,7 +292,7 @@ def _scratch_worktree(root: pathlib.Path) -> Iterator[pathlib.Path]:
             "-q",
             "--detach",
             str(wt),
-            "HEAD",
+            ref,
             capture_output=True,
             encoding="utf-8",
         )
@@ -394,7 +396,7 @@ def _integrate_remote(root: pathlib.Path, deadline: Deadline) -> bool:
         )
         _report_divergence(root, why, _park_local_commits(root, deadline))
         return False
-    with _scratch_worktree(root) as wt:
+    with scratch_worktree(root) as wt:
         if not _rebase_and_push(root, wt, deadline):
             return False
     _advance_checkout(root, deadline)
@@ -576,6 +578,7 @@ def _commit_locked(
             f"  (refused: {len(leaks)} held back for looking like a credential. "
             "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
         )
+    DoneBackstop(root).run(scope_of(ids, paths))
     refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
     _stage_named_briefs(root, ids, refused)
     if paths:
