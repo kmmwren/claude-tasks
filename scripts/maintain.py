@@ -23,6 +23,7 @@ import argparse
 import dataclasses
 import datetime as dt
 import enum
+import functools
 import os
 import pathlib
 import socket
@@ -31,7 +32,7 @@ from collections.abc import Callable, Iterator
 
 from _paths import require_queue, resolve_root, warn
 from claim import IN_PROGRESS, Claim, Claimer, Lease, Target
-from deps import brief_id, fm
+from deps import Brief, brief_id, done_ids, fm, unmet
 from headless import Launch, ScriptLaunch, launcher_script, rank_table, spawn_detached
 from maintain_config import MaintainSettings, Tier
 from maintain_state import LastRun, RunLedger
@@ -116,12 +117,24 @@ class Scanner:
             text = path.read_text()
             ident = brief_id(fm(text), path.stem)
             wake = Wake.parse(ident, text)
-            if wake is not None and self._claimable(folder, text, wake, now):
+            if wake is not None and self._claimable(
+                Brief(ident, folder, fm(text)), text, wake, now
+            ):
                 yield Candidate(Target(ident, folder, wake.key), wake)
         except (OSError, MalformedWake) as e:
             warn(f"skipping {path.name}: {e}", "maintain")
 
-    def _claimable(self, folder: str, text: str, wake: Wake, now: dt.datetime) -> bool:
+    @functools.cached_property
+    def _done(self) -> set[str]:
+        try:
+            return done_ids(self.root)
+        except OSError as e:
+            warn(
+                f"cannot read the queue ({e}); id dependencies count as unmet this tick", "maintain"
+            )
+            return set()
+
+    def _claimable(self, brief: Brief, text: str, wake: Wake, now: dt.datetime) -> bool:
         if wake.lapsed(now):
             self.reports.append(
                 Report(ReportKind.OVERDUE, wake.brief_id, "past valid_until; not run")
@@ -129,10 +142,11 @@ class Scanner:
             return False
         if not self._served(wake, now):
             return False
-        if folder == IN_PROGRESS:
+        if brief.status == IN_PROGRESS:
             return self._reclaimable(text, wake, now)
         return (
             wake.unattended
+            and not unmet(brief, self._done, now.date())
             and not RunLedger(self.root).has(wake.key)
             and wake.due(now, self.probe) is Due.DUE
         )

@@ -10,7 +10,7 @@
   or its `wake_probe` exits 0; `valid_until`, `needs:` and `escalate_after` produce `overdue` and
   `overdue-needs-<cap>` report lines. A run record per wake stops a second tick or the other tier
   running it twice. `launchd/` holds a LaunchAgent template and an install script that renders it
-  without loading it.
+  without loading it. A due brief still waits for its unmet `blocked_by` entries, including `date:` days.
 
 ### Changed
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or

@@ -83,7 +83,8 @@ a last-run record in the queue (`maintain/last-run/<tier>.json`); a tick younger
 interval exits at once without touching git.
 
 A `ready/` or `inbox/` brief is due when `not_before` has passed or `wake_probe` exits 0
-(10 = not yet, anything else is logged and not due). A brief past `valid_until` is reported
+(10 = not yet, anything else is logged and not due). A due brief still waits for its unmet
+`blocked_by` entries, including `date:` days. A brief past `valid_until` is reported
 `overdue` and not run. A brief whose `needs:` the tier lacks is skipped, and reported
 `overdue-needs-<cap>` once `escalate_after` has passed.
 

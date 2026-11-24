@@ -93,6 +93,16 @@ def test_a_past_not_before_is_claimed_and_run_and_a_future_one_is_left(tmp_path)
     assert "in-progress/due.md" in files and "ready/later.md" in files
 
 
+def test_a_due_wake_waits_for_its_unmet_dependencies(tmp_path):
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "first", folder="done")
+    add_brief(clone, "after-done", not_before=PAST, blocked_by="[first]")
+    add_brief(clone, "after-open", not_before=PAST, blocked_by="[second]")
+    add_brief(clone, "after-today", not_before=PAST, blocked_by="[date:2026-11-26]")
+    add_brief(clone, "after-later", not_before=PAST, blocked_by="[date:2026-11-27]")
+    assert maintainer(clone, []).tick().claimed == ("after-done", "after-today")
+
+
 def test_a_datetime_with_an_offset_is_due_at_its_utc_instant(tmp_path):
     clone = queue_repo(tmp_path)
     add_brief(clone, "soon", not_before="2026-11-26T10:30:00+02:00")  # 08:30Z
