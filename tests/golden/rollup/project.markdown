@@ -1,4 +1,4 @@
-# Product roll-up
+# Project roll-up
 
 *Generated 2026-11-19T12:00:00+00:00 from alpha-source, beta-source, idle-source.*
 

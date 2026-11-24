@@ -56,22 +56,23 @@
 - **Roll-ups render through one document model, `rollup_views.py`, in three views and three formats.**
   `rollup.py` builds a `Report` from its sources and `rollup_views.render(view, fmt, report)` writes
   every output (written files, served routes, `html`, `markdown` and `json`), so a view is defined once.
-  The new `engineer` view lists ready briefs most urgent first, open bugs and the requirements no
-  brief covers; `pm` is project tiles (red, amber, stale or unset, then green, slip breaking ties), a
-  milestone table and a collapsed detail section; `cto` groups projects by initiative with one sentence
+  The views are levels of detail, not readers: `work` lists ready briefs most urgent first, open bugs
+  and the requirements no brief covers; `project` is project tiles (red, amber, stale or unset, then
+  green, slip breaking ties), a milestone table and a collapsed detail section; `portfolio` groups
+  projects by initiative with one sentence
   and a line per milestone. Each project shows its "Source: <label> @ <commit>, <date>" line once,
   a gap reads as a sentence ("No open bugs.") and counts use correct singular and plural.
-  `--level` takes `engineer|pm|cto`; `write --out` writes `engineer`, `pm` and `cto` as `.md` and
-  `.json`, and `serve` answers `/engineer`, `/pm` and `/cto`. Pages carry
+  `--level` takes `work|project|portfolio`; `write --out` writes `work`, `project` and `portfolio` as
+  `.md` and `.json`, and `serve` answers `/work`, `/project` and `/portfolio`. Pages carry
   `default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; frame-ancestors 'none'`
   (served as a header and written into the page), and links, images and video are shown only for
   `https` addresses.
 - **The roll-up JSON stays `claude-tasks.rollup/v1` and only gains keys.** No key is removed or
   renamed, `behind: {}` stays on each warning and `as_at` and the slug fallback are unchanged. Added:
   per project `initiative`, `tile`, `board`, `backlog`, `shipped_by_release`, per milestone `stage`, `release`, `baseline`, `slip_days`, `late_days`, `effort_days`,
-  `unestimated`, `counts`, `blockers`, `flags` and `evidence`, the cto `initiatives`
-  and `milestone_lines`, and the engineer view's `ready`, `bugs` and `uncovered_requirements`.
-  The pm JSON and Markdown now name what each brief waits on (`blockers[].waiting_on`), so check
+  `unestimated`, `counts`, `blockers`, `flags` and `evidence`, the portfolio view's `initiatives`
+  and `milestone_lines`, and the work view's `ready`, `bugs` and `uncovered_requirements`.
+  The project JSON and Markdown now name what each brief waits on (`blockers[].waiting_on`), so check
   blocker names are safe for the audience before sharing a roll-up; brief bodies still never appear.
 - **The README that `write` generates describes the three views** and how someone else gets their own.
 - **Project facts are recorded as add-only files, written by `project_facts.py`.** Health, due-date
@@ -114,8 +115,8 @@
   background `Agent` and `run_in_background` work with no completion yet, writes each one's brief
   (what it was asked, its output file, how to collect or re-run it) into the item it serves, and
   records them in the ledger item's `metadata.agents`; `resume_prompt.py` prints them under the item.
-- **`rollup.py` projects one or more queues' projects for readers above the engineer.** `pm` gives
-  each project's health, ask, now/next/done and what shipped in the last 14 days; `cto` gives a table
+- **`rollup.py` rolls one or more queues' projects up to project and portfolio level.** `project` gives
+  each project's health, ask, now/next/done and what shipped in the last 14 days; `portfolio` gives a table
   of health, milestones done of total, next due and missed. Output is JSON (schema
   `claude-tasks.rollup/v1`) plus Markdown, written to a folder for GitHub (`write --out <dir>`) or served on a
   loopback port (`serve`). Sources come from `~/.config/claude-tasks/rollup.toml` (or `--config`,

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-rollup.py - project roll-ups for an engineer, a product manager (pm) or a CTO, over any number of
-queues. Each project is read from its claude-tasks queue as the repository's default branch holds
+rollup.py - project roll-ups at three levels (work, project, portfolio) over any number of queues. Each project is read from its claude-tasks queue as the repository's default branch holds
 it on GitHub, never from a local clone. Only titles, states, dates, the owner's own health, ask and
 outcome, and the text of the automatic checks leave a queue; see skills/rollup.
 
-  python scripts/rollup.py json|markdown|html [--level engineer|pm|cto] [--source LABEL=REPO[#QUEUE] ...]
+  python scripts/rollup.py json|markdown|html [--level work|project|portfolio] [--source LABEL=REPO[#QUEUE] ...]
   python scripts/rollup.py sources [--source LABEL=REPO[#QUEUE] ...]
   python scripts/rollup.py write --out OUT_DIR [--source LABEL=REPO[#QUEUE] ...]
   python scripts/rollup.py serve [--port 8788] [--source LABEL=REPO[#QUEUE] ...]
@@ -36,7 +35,7 @@ CONFIG_ENV = "CLAUDE_TASKS_ROLLUP_CONFIG"
 DEFAULT_CONFIG = "~/.config/claude-tasks/rollup.toml"
 DEFAULT_LABEL = "this repository"
 DEFAULT_QUEUE = PROJECT_MARKER
-DEFAULT_VIEW = "pm"
+DEFAULT_VIEW = "project"
 NOT_READ = "its queue cannot be read from its repository and there is no cached copy"
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?", re.IGNORECASE)
 GENERATED = re.compile(r'(?m)^\*Generated \S+|^\s*"generated": "[^"]*"')
@@ -300,9 +299,13 @@ def _files(report: rv.Report) -> dict[str, str]:
 
 
 def _holds_rollup(out: pathlib.Path) -> bool:
-    """True when `out` already carries a roll-up of ours: a pm.json with our schema."""
+    """True when `out` already carries a roll-up of ours: any view's JSON with our schema."""
+    return any(_is_ours(path) for path in out.glob("*.json"))
+
+
+def _is_ours(path: pathlib.Path) -> bool:
     try:
-        data = json.loads((out / target(DEFAULT_VIEW, "json")).read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return False
     return isinstance(data, dict) and data.get("schema") == rv.SCHEMA
@@ -312,7 +315,7 @@ def _check_destination(out: pathlib.Path) -> None:
     empty = out.is_dir() and not any(out.iterdir())
     if out.exists() and not (empty or _holds_rollup(out)):
         raise RollupError(
-            f"{out} is not an empty folder and holds no roll-up (no pm.json with "
+            f"{out} is not an empty folder and holds no roll-up (no view JSON with "
             f"schema {rv.SCHEMA}); name a new or empty folder so nothing else is overwritten"
         )
 
@@ -575,7 +578,9 @@ COMMANDS: tuple[type[Command], ...] = (ShowJson, ShowMarkdown, ShowHtml, ListSou
 
 
 def parse(argv: list[str], env: Mapping[str, str], now: Now = _now) -> Command:
-    ap = argparse.ArgumentParser(description="Project roll-ups for an engineer, a PM or a CTO.")
+    ap = argparse.ArgumentParser(
+        description="Project roll-ups at work, project or portfolio level."
+    )
     subparsers = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
     for command in COMMANDS:
         sub = subparsers.add_parser(command.name, help=command.summary, description=command.summary)
