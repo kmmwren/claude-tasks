@@ -156,3 +156,13 @@ def test_first_wait_names_the_phrase_that_makes_a_brief_wait():
 def test_first_wait_is_none_for_a_brief_that_waits_on_nothing_or_already_declares():
     assert _wait("## Goal\n\nTidy the docs.\n") is None
     assert _wait("## Goal\n\nwaits for other\n", blocked_by="[other]") is None
+
+
+def test_a_reviewed_declaration_silences_a_prose_wait(tmp_path):
+    body = "## Goal\n\nacme-api#5464 after #5449 merges\n"
+    assert _kinds(tmp_path, body, status="ready", blocked_by="[]", deps_declared="2026-11-24") == []
+
+
+def test_an_unreviewed_empty_blocked_by_still_reports_a_prose_wait(tmp_path):
+    body = "## Goal\n\nacme-api#5464 after #5449 merges\n"
+    assert _kinds(tmp_path, body, status="ready", blocked_by="[]") == [PROSE]

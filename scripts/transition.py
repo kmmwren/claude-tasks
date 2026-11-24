@@ -45,6 +45,7 @@ from _concurrency import atomic_write, repo_lock
 from _paths import known_roots, resolve_root, warn
 from deps import (
     CONFIRMED_KEY,
+    DECLARED_FIELD,
     PROBE_KEY,
     Brief,
     QueueRef,
@@ -220,8 +221,11 @@ def _update_frontmatter(
     today: str,
     assignee: str | None = None,
     blocked_by: list[str] | None = None,
+    declared: bool = False,
 ) -> str:
     """Set `status:`/`updated:` (plus `assignee:` and `blocked_by:` when given) in the block.
+
+    `declared` stamps `deps_declared: <today>`: the waits were judged, not backfilled.
 
     `assignee=None` leaves any existing claim untouched, so briefs written before the field
     existed keep transitioning unchanged; pass "" to release a claim. `blocked_by=None`
@@ -238,6 +242,8 @@ def _update_frontmatter(
         block = set_field(block, "assignee", assignee)
     if blocked_by is not None:
         block = set_field(block, "blocked_by", "[" + ", ".join(blocked_by) + "]")
+    if declared:
+        block = set_field(block, DECLARED_FIELD, today)
     return text[: m.start(2)] + block + text[m.end(2) :]
 
 
@@ -435,7 +441,9 @@ def move_brief(
                     f'--assignee "".'
                 )
         old_blocked_by = parse_list(fm(text).get("blocked_by", ""))
-        text = _update_frontmatter(text, new_status, today, assignee=assignee, blocked_by=written)
+        text = _update_frontmatter(
+            text, new_status, today, assignee=assignee, blocked_by=written, declared=no_deps
+        )
         text = _update_probes(
             text, new_status, probes or [], confirmed or [], old_blocked_by, blocked_by
         )
@@ -479,7 +487,7 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument(
         "--blocked-by",
         default=None,
-        help="comma-separated brief ids, <queue>:<id> or external:<reason> (required for blocked)",
+        help="comma-separated brief ids, <queue>:<id>, external:<reason> or date:YYYY-MM-DD (required for blocked)",
     )
     m.add_argument(
         "--probe",
@@ -505,7 +513,8 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("brief_id")
     what = d.add_mutually_exclusive_group(required=True)
     what.add_argument(
-        "--blocked-by", help="comma-separated brief ids, <queue>:<id> or external:<reason>"
+        "--blocked-by",
+        help="comma-separated brief ids, <queue>:<id>, external:<reason> or date:YYYY-MM-DD",
     )
     what.add_argument("--no-deps", action="store_true", help="the brief depends on nothing")
     d.add_argument("--root", default=None)

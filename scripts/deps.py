@@ -97,6 +97,8 @@ def is_external(item: str) -> bool:
 
 
 DATE_PREFIX = "date:"
+# Written by a deliberate declaration (`declare`, `--no-deps`), unlike a bulk `blocked_by: []`.
+DECLARED_FIELD = "deps_declared"
 
 
 def is_date(item: str) -> bool:
@@ -222,6 +224,11 @@ class Brief:
     @property
     def external_blockers(self) -> list[str]:
         return [b for b in self.blocked_by if is_external(b)]
+
+    @property
+    def reviewed_declaration(self) -> bool:
+        """True once someone judged the brief's waits and declared them, so its prose is history."""
+        return bool(self.fields.get(DECLARED_FIELD))
 
     @property
     def date_blockers(self) -> list[str]:

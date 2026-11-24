@@ -39,6 +39,7 @@ def test_no_deps_declares_nothing_in_place(root, status, bid):
     _declare(root, bid, "--no-deps")
     front = _front(root, status, bid)
     assert front["blocked_by"] == "[]" and declares_dependencies(front)
+    assert front["deps_declared"] == "2026-11-23"
     assert "2026-11-23: declared blocked_by: []" in (root / status / f"{bid}.md").read_text()
 
 
