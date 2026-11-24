@@ -345,10 +345,14 @@ def test_a_work_page_names_each_gap_instead_of_leaving_it_blank(report: rv.Repor
 def test_work_ranked_lists_are_numbered_and_bugs_count_from_one(atlas: rv.Entry) -> None:
     one = rv.Report(NOW, (ALPHA,), (atlas,))
     text = rv.MARKDOWN.render(rv.VIEWS["work"], one)
-    assert "1. B4 title (b4)" in text and "3. B10 title (b10)" in text
+    assert "| 1.1 | ↳ **B4 title** b4 |" in text and "| 1.3 | ↳ **B10 title** b10 |" in text
     assert "### Bugs\n\n1. B9 title (b9)" in text
     html = rv.HTML.render(rv.VIEWS["work"], one)
-    assert html.count("<ol") == 2 and "<ul" in html
+    kids = html[html.index('<div class="sg-kids">') :]
+    assert [kids.index(f'<span class="sg-num">{n}</span>') for n in "123"] == sorted(
+        kids.index(f'<span class="sg-num">{n}</span>') for n in "123"
+    )
+    assert html.count("<ol") == 1 and "<ul" in html
 
 
 def test_health_that_is_stale_and_capped_says_so_in_words(atlas: rv.Entry) -> None:
@@ -376,20 +380,25 @@ def test_shipped_lines_group_by_release_with_those_without_one_last(atlas: rv.En
     )
 
 
-def test_the_project_page_is_tiles_then_a_milestone_table_then_collapsed_detail(
+def test_the_project_page_is_a_cover_then_a_status_grid_then_tiles_then_collapsed_detail(
     report: rv.Report,
 ) -> None:
     text = rv.MARKDOWN.render(rv.VIEWS["project"], report)
-    assert text.index("## Projects") < text.index("## Milestones") < text.index("## Detail")
-    assert "| Milestone | Status | Due | Slip | Briefs | Evidence | Flags |" in text
+    assert text.index("## Status") < text.index("## Projects") < text.index("## Detail")
+    assert "| # | Project | Due | Progress | Status | Note |" in text
     assert text.count("<details>") == 3 and text.count("</details>") == 3
     html = rv.HTML.render(rv.VIEWS["project"], report)
-    assert html.count("<table>") == 3 and html.count("<details>") == 3
+    order = ['<header class="cover">', '<div class="sg">', "<h2>Projects</h2>", "<h2>Detail</h2>"]
+    assert [html.index(o) for o in order] == sorted(html.index(o) for o in order)
+    assert "<table>" not in html and html.count("<details>") == 3
+    assert html.count('<details class="sg-item">') == 3
 
 
 def test_tiles_sort_red_then_unset_then_green_and_say_what_they_hold(report: rv.Report) -> None:
     text = rv.MARKDOWN.render(rv.VIEWS["project"], report)
-    tiles = text[text.index("## Projects") : text.index("## Milestones")]
+    grid = text[text.index("## Status") : text.index("## Projects")]
+    assert grid.index("| **Atlas**") < grid.index("| **Gamma**") < grid.index("| **Beta**")
+    tiles = text[text.index("## Projects") : text.index("## Detail")]
     assert tiles.index("### Atlas") < tiles.index("### Gamma") < tiles.index("### Beta")
     assert "**Next:** The active thing due 2026-11-30 (slipped 20 days from 2026-11-10)" in tiles
     assert "**Ask:** Ship it? (by 2026-11-25)" in tiles
@@ -704,6 +713,105 @@ def test_a_due_today_brief_says_so() -> None:
     assert rv.due_parts(undated) == ()
 
 
+def test_an_overdue_brief_says_how_late_and_a_far_one_gives_only_its_date() -> None:
+    late = rv.RankedBrief(1, "x", "X", "", "", dt.date(2026, 11, 12), -7, ())
+    assert rv.due_parts(late)[1:] == ("was due 2026-11-12",)
+    assert rv.due_parts(far_brief()) == ("due 2027-01-01",)
+
+
+# --- the status grid ----------------------------------------------------------------------------
+
+
+def far_brief(waiting_on: tuple[str, ...] = (), effort: str = "") -> rv.RankedBrief:
+    return rv.RankedBrief(1, "x", "X", "", effort, dt.date(2027, 1, 1), 43, waiting_on)
+
+
+def grid_row(title: str, status: rv.Chip, *children: rv.StatusRow) -> rv.StatusRow:
+    return rv.StatusRow(title, "", rv.Target(), None, status, "", children)
+
+
+RED, DONE = rv.Chip("Red", rv.Tone.BAD), rv.Chip("Done", rv.Tone.GOOD)
+TWO_LEVELS = rv.StatusGrid(
+    "Project",
+    "milestone",
+    (grid_row("A", RED, grid_row("A1", DONE), grid_row("A2", DONE)), grid_row("B", DONE)),
+)
+
+
+def test_a_grid_numbers_children_under_their_parent_and_counts_each_status_once() -> None:
+    assert [n for n, _ in TWO_LEVELS.numbered()] == ["1", "1.1", "1.2", "2"]
+    assert TWO_LEVELS.tally() == ((RED, 1), (DONE, 3))
+    assert TWO_LEVELS.totals() == "2 projects, 2 milestones"
+
+
+def test_only_a_row_with_children_opens_and_the_key_follows_the_grid() -> None:
+    html = TWO_LEVELS.render(rv.HtmlFormat(), 2)
+    assert html.count('<details class="sg-item">') == 1 and html.count('<div class="sg-item">') == 1
+    assert html.index("A2") < html.index('<p class="sg-foot">')
+    text = TWO_LEVELS.render(rv.MarkdownFormat(), 2)
+    assert "| 1.2 | ↳ **A2** |" in text and text.endswith("Key: `Red` 1, `Done` 3")
+
+
+def test_progress_reads_done_of_total_and_turns_good_only_when_complete() -> None:
+    assert (rv.Progress(0, 0).percent, rv.Progress(1, 4).percent, rv.Progress(1, 4).text) == (
+        0,
+        25,
+        "1/4",
+    )
+    assert rv.Progress(2, 2).tone(rv.Tone.BAD) is rv.Tone.GOOD
+    assert rv.Progress(1, 2).tone(rv.Tone.BAD) is rv.Tone.BAD
+    assert rv.Progress(0, 0).tone(rv.Tone.WARN) is rv.Tone.WARN
+
+
+def test_every_stage_has_exactly_one_tone() -> None:
+    assert set(rv.STAGE_TONE) == set(rm.Stage)
+    assert rv.stage_chip(rm.Stage.NOW) == rv.Chip(rm.Stage.NOW.value, rv.Tone.ACTIVE)
+
+
+@pytest.mark.parametrize(
+    ("brief_of", "label", "note"),
+    [
+        (
+            lambda: rv.RankedBrief(1, "x", "X", "", "", dt.date(2026, 11, 12), -7, ("y",)),
+            "Overdue",
+            "Waits on y",
+        ),
+        (lambda: far_brief(("y",)), "Waiting", "Waits on y"),
+        (
+            lambda: rv.RankedBrief(1, "x", "X", "", "m", dt.date(2026, 11, 25), 6, ()),
+            "Due soon",
+            "Effort m",
+        ),
+        (lambda: far_brief(), "Ready", "Not estimated"),
+    ],
+)
+def test_a_brief_row_takes_its_most_pressing_standing_and_says_what_it_needs(
+    brief_of: Callable[[], rv.RankedBrief], label: str, note: str
+) -> None:
+    row = rv.brief_row(brief_of())
+    assert (row.status.label, row.note, row.progress) == (label, note, None)
+
+
+def test_a_date_chip_is_dashed_when_empty_and_red_when_late_in_each_markup() -> None:
+    html, md = rv.HtmlFormat(), rv.MarkdownFormat()
+    assert "sg-undated" in html._target(rv.Target()) and md._target(rv.Target()) == rv.NO_DATE
+    late = rv.Target("2026-11-12", late=True)
+    assert "sg-late" in html._target(late) and md._target(late) == "2026-11-12 `late`"
+    assert "sg-late" not in html._target(rv.Target("2026-11-12"))
+
+
+def test_the_nav_marks_the_current_view_and_the_contents_page_has_none(report: rv.Report) -> None:
+    html = rv.HTML.render(rv.VIEWS["project"], report)
+    assert '<a href="project" aria-current="page">Project roll-up</a>' in html
+    assert '<a href="work">Work roll-up</a>' in html
+    assert "**Project roll-up** · [Portfolio" in rv.MARKDOWN.render(rv.VIEWS["project"], report)
+    assert "<nav" not in rv.Index().render(rv.HTML, report)
+
+
+def test_a_note_starts_with_a_capital() -> None:
+    assert (rv.sentence("slipped 3 days"), rv.sentence("")) == ("Slipped 3 days", "")
+
+
 # --- the contents page and the guide -----------------------------------------------------------
 
 
@@ -746,7 +854,9 @@ def test_a_page_link_is_a_link_to_a_sibling_file_in_each_markup() -> None:
 def test_a_project_without_milestones_says_so_in_its_stage_line_and_grid(atlas: rv.Entry) -> None:
     bare = dataclasses.replace(atlas.project, milestones=())
     assert rv.stage_line(bare) == rv.NO_MILESTONES
-    assert rv.milestone_grid(bare) == rv.paragraph(rv.NO_MILESTONES)
+    row = rv.ProjectView.row(dataclasses.replace(atlas, project=bare))
+    assert (row.children, row.progress) == ((), rv.Progress(0, 0))
+    assert row.note == "No open milestone has a date."
 
 
 def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(

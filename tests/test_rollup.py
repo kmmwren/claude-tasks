@@ -556,12 +556,12 @@ def test_empty_and_skipped_are_said_plainly(tmp_path):
 # --- HTML, files, server ---------------------------------------------------------------------
 
 
-def test_pm_html_is_tiles_then_a_milestone_table_then_collapsed_detail(work):
+def test_pm_html_is_a_status_grid_then_tiles_then_collapsed_detail(work):
     page = rv.HTML.render(rv.VIEWS["project"], built(work))
     assert "<title>Project roll-up</title>" in page and "<h1>Project roll-up</h1>" in page
-    assert page.index("<h2>Projects</h2>") < page.index("<h2>Milestones</h2>")
-    assert page.index("<h2>Milestones</h2>") < page.index("<h2>Detail</h2>")
-    assert '<span class="chip chip-good">Green</span>' in page and "<table>" in page
+    assert page.index("<h2>Status</h2>") < page.index("<h2>Projects</h2>")
+    assert page.index("<h2>Projects</h2>") < page.index("<h2>Detail</h2>")
+    assert '<span class="chip chip-good">Green</span>' in page and '<div class="sg">' in page
     assert "<details><summary>Show detail</summary>" in page
     assert "<strong>Ask:</strong> Ship it? (by 2026-11-01)" in page
     assert "<h5>No release named, last 14 days</h5>" in page and "One (2026-10-22)" in page

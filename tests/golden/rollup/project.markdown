@@ -2,6 +2,24 @@
 
 *Generated 2026-11-19T12:00:00+00:00 from alpha-source, beta-source, idle-source.*
 
+[Work roll-up](work.md) · **Project roll-up** · [Portfolio roll-up](portfolio.md)
+
+## Status
+
+| # | Project | Due | Progress | Status | Note |
+|---|---|---|---|---|---|
+| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10) |
+| 1.1 | ↳ **Shipping is done** 2 done | 2026-11-05 | 2/2 | `Done` | No slip |
+| 1.2 | ↳ **The active thing** 1 active, 1 queued, 1 unverified | 2026-11-30 `late` | 0/3 | `Missed` | Slipped 20 days; b3 waits on b4 |
+| 1.3 | ↳ **Later** 1 parked, 1 queued | No date | 0/2 | `Now` | No first date |
+| 1.4 | ↳ **Empty** No briefs | No date | 0/0 | `Next` | No first date |
+| 2 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date. |
+| 2.1 | ↳ **Only** 1 queued | No date | 0/1 | `Now` | No first date |
+| 3 | **Beta** Beta works. | No date | 1/1 | `Green` | No open milestone has a date. |
+| 3.1 | ↳ **Only** 1 done | No date | 1/1 | `Done` | No first date |
+
+3 projects, 6 milestones. Key: `Red` 1, `Done` 2, `Missed` 1, `Now` 2, `Next` 1, `Not set by owner` 1, `Green` 1
+
 ## Projects
 
 ### Atlas
@@ -51,29 +69,6 @@
 **Latest shipped:** B1 title (2026-11-18)
 
 **Source:** beta-source @ SHA0002, 2026-11-19 09:00 UTC
-
-## Milestones
-
-### Atlas
-
-| Milestone | Status | Due | Slip | Briefs | Evidence | Flags |
-|---|---|---|---|---|---|---|
-| Shipping is done | `Done` 100% done | 2026-11-05 | No slip | 2 done | 0 | None |
-| The active thing | `Now` `missed` `1 waiting` 50% done | 2026-11-30 | slipped 20 days | 1 active, 1 queued, 1 unverified | 3 | dev: x on; prod: x off |
-| Later | `Now` 50% done | No date | No first date | 1 parked, 1 queued | 0 | None |
-| Empty | `Next` 0% done | No date | No first date | No briefs | 0 | None |
-
-### Gamma
-
-| Milestone | Status | Due | Slip | Briefs | Evidence | Flags |
-|---|---|---|---|---|---|---|
-| Only | `Now` 50% done | No date | No first date | 1 queued | 0 | None |
-
-### Beta
-
-| Milestone | Status | Due | Slip | Briefs | Evidence | Flags |
-|---|---|---|---|---|---|---|
-| Only | `Done` 100% done | No date | No first date | 1 done | 0 | None |
 
 ## Detail
 

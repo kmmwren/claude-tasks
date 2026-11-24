@@ -2,6 +2,21 @@
 
 *Generated 2026-11-19T12:00:00+00:00 from alpha-source, beta-source, idle-source.*
 
+[Work roll-up](work.md) · [Project roll-up](project.md) · **Portfolio roll-up**
+
+## Initiatives
+
+| # | Initiative | Due | Progress | Status | Note |
+|---|---|---|---|---|---|
+| 1 | **Platform** 1 project | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10) |
+| 1.1 | ↳ **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10) |
+| 2 | **Growth** 1 project | No date | 0/1 | `Not set by owner` | No open milestone has a date. |
+| 2.1 | ↳ **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date. |
+| 3 | **No initiative** 1 project | No date | 1/1 | `Green` | No open milestone has a date. |
+| 3.1 | ↳ **Beta** Beta works. | No date | 1/1 | `Green` | No open milestone has a date. |
+
+3 initiatives, 3 projects. Key: `Red` 2, `Not set by owner` 2, `Green` 2
+
 ## Platform
 
 ### Atlas

@@ -2,15 +2,25 @@
 
 *Generated 2026-11-19T12:00:00+00:00 from alpha-source, beta-source, idle-source.*
 
+**Work roll-up** · [Project roll-up](project.md) · [Portfolio roll-up](portfolio.md)
+
+## Ready, most urgent first
+
+| # | Project | Due | Progress | Status | Note |
+|---|---|---|---|---|---|
+| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | 3 ready briefs, 1 open bug |
+| 1.1 | ↳ **B4 title** b4 | 2026-11-12 `late` | Not counted | `Overdue` | Not estimated |
+| 1.2 | ↳ **B5 title** b5 | 2026-11-25 | Not counted | `Due soon` | Effort l |
+| 1.3 | ↳ **B10 title** b10 | 2027-01-15 | Not counted | `Waiting` | Waits on b5 |
+| 2 | **Beta** Beta works. | No date | 1/1 | `Green` | No ready briefs. |
+| 3 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | 1 ready brief, 0 open bugs |
+| 3.1 | ↳ **G1 title** g1 | No date | Not counted | `Ready` | Not estimated |
+
+3 projects, 4 ready briefs. Key: `Red` 1, `Overdue` 1, `Due soon` 1, `Waiting` 1, `Green` 1, `Not set by owner` 1, `Ready` 1
+
 ## Atlas
 
 **Source:** alpha-source @ SHA0001, 2026-11-19 09:00 UTC
-
-### Ready, most urgent first
-
-1. B4 title (b4) `overdue 7 days` was due 2026-11-12
-2. B5 title (b5) `due in 6 days` 2026-11-25 effort l
-3. B10 title (b10) due 2027-01-15 `waiting` on b5
 
 ### Bugs
 
@@ -24,10 +34,6 @@
 
 **Source:** beta-source @ SHA0002, 2026-11-19 09:00 UTC
 
-### Ready, most urgent first
-
-No ready briefs.
-
 ### Bugs
 
 No open bugs.
@@ -39,10 +45,6 @@ No uncovered requirements.
 ## Gamma
 
 **Source:** beta-source @ SHA0003, 2026-11-19 09:00 UTC
-
-### Ready, most urgent first
-
-1. G1 title (g1)
 
 ### Bugs
 
