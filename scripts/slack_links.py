@@ -17,7 +17,10 @@ import sys
 from dataclasses import asdict, dataclass
 from urllib.parse import parse_qs, urlparse
 
-PERMALINK = re.compile(r"<?(https://[\w.-]+\.slack\.com/archives/[^\s>|]+)(?:\|[^>]*)?>?")
+# A permalink needs a channel and a p<digits> message, so a channel link or one cut short by "…" is not one.
+PERMALINK = re.compile(
+    r"<?(https://[\w.-]+\.slack\.com/archives/[\w-]+/p\d+/?(?:\?[^\s>|…]*)?)(?:\|[^>]*)?>?"
+)
 PARK = re.compile(r"\bpark(?:ed|ing)?\b", re.IGNORECASE)
 # Parking needs her explicit word, so a negated or questioning mention never parks.
 NOT_PARK = re.compile(

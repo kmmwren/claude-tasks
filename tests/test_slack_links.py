@@ -95,6 +95,15 @@ def test_permalink_key_is_none_for_other_urls():
 
 
 @pytest.mark.parametrize(
+    "url",
+    ["https://acme.slack.com/archives/C0999ZZZZ…", "https://acme.slack.com/archives/C0999ZZZZ"],
+)
+def test_a_channel_or_truncated_link_is_not_a_permalink(url):
+    assert slack_links.permalink_key(url) is None
+    assert slack_links.parse(f"see {url}").links == []
+
+
+@pytest.mark.parametrize(
     "words", ["don't park these", "do not park this", "never park it", "why was this parked?"]
 )
 def test_words_that_negate_or_ask_about_parking_do_not_park(words):
