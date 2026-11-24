@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 import slack_links
 
 TOP = "https://example.slack.com/archives/C0123ABCD/p1773265865773179"
@@ -91,3 +92,10 @@ def test_a_reply_is_keyed_by_its_thread_root():
 
 def test_permalink_key_is_none_for_other_urls():
     assert slack_links.permalink_key("https://example.test/archives/C1/p1") is None
+
+
+@pytest.mark.parametrize(
+    "words", ["don't park these", "do not park this", "never park it", "why was this parked?"]
+)
+def test_words_that_negate_or_ask_about_parking_do_not_park(words):
+    assert slack_links.parse(f"{words}\n{TOP}").links[0].parked is False

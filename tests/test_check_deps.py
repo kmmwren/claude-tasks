@@ -307,3 +307,19 @@ def test_check_reads_the_known_queues_from_the_environment(tmp_path, monkeypatch
     assert ("dangling", "w") not in _kinds(beta)
     monkeypatch.delenv("CLAUDE_TASKS_ROOTS")
     assert ("dangling", "w") in _kinds(beta)
+
+
+def test_a_valid_date_is_no_dangling_id_and_a_malformed_one_is_flagged(tmp_path):
+    root = make_queue(
+        tmp_path,
+        {
+            "a": {"status": "blocked", "blocked_by": "[date:2099-01-01]"},
+            "b": {"status": "blocked", "blocked_by": "[date:soon]"},
+        },
+    )
+    assert _kinds(root) == [("bad-date", "b")]
+
+
+def test_a_blocked_brief_whose_date_has_passed_is_releasable(tmp_path):
+    root = make_queue(tmp_path, {"a": {"status": "blocked", "blocked_by": "[date:2000-01-01]"}})
+    assert _kinds(root) == [("releasable", "a")]

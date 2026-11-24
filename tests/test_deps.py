@@ -1,5 +1,7 @@
 """deps.py — the shared dependency model."""
 
+import datetime as dt
+
 import deps
 
 from tests.queue_helpers import brief_text, make_queue
@@ -124,3 +126,24 @@ def test_a_ref_problem_names_an_unknown_queue_and_a_missing_brief(tmp_path):
     assert deps.ref_problem(deps.QueueRef("alpha", "dep"), [alpha]) is None
     assert "no single known queue" in deps.ref_problem(deps.QueueRef("zeta", "dep"), [alpha])
     assert "no brief 'gone'" in deps.ref_problem(deps.QueueRef("alpha", "gone"), [alpha])
+
+
+def test_a_date_entry_is_neither_an_id_nor_a_queue_ref():
+    b = _b(blocked_by="[a, date:2026-12-01]")
+    assert b.declared_ids == {"a"}
+    assert b.remote_refs == []
+    assert b.date_blockers == ["date:2026-12-01"]
+    assert deps.QueueRef.parse("date:2026-12-01") is None
+
+
+def test_a_date_dependency_is_unmet_before_its_day_and_met_on_it():
+    b = _b(blocked_by="[date:2026-12-01]")
+    assert deps.unmet(b, set(), today=dt.date(2026, 11, 30)) == ["date:2026-12-01"]
+    assert deps.unmet(b, set(), today=dt.date(2026, 12, 1)) == []
+    assert deps.awaits_release(b, set(), today=dt.date(2026, 12, 2))
+
+
+def test_a_malformed_date_never_counts_as_reached():
+    b = _b(blocked_by="[date:2026-13-40]")
+    assert deps.date_of("date:2026-13-40") is None
+    assert deps.unmet(b, set(), today=dt.date(2099, 1, 1)) == ["date:2026-13-40"]

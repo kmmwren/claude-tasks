@@ -5,7 +5,8 @@ check_deps.py — lint a queue's dependency graph. Exit 1 when anything is wrong
 Finds, in one pass:
   cycle              briefs that wait on each other, directly or through a chain
   dangling           a `blocked_by` / `depends:` id that names no brief, or a `<queue>:<id>` naming an unknown queue or brief
-  in-progress-unmet  a brief being worked whose dependencies are not all done
+  in-progress-unmet  a brief being worked whose dependencies are not all done (dates included)
+  bad-date           a `date:` blocker that is not date:YYYY-MM-DD, so it would never release
   blocked-no-reason  a brief in blocked/ with an empty `blocked_by`
   blocked-no-probe   an `external:` blocker with no `blocked_probe: N: <command>` line (or `human`)
   releasable         a blocked brief whose blockers are all done (run unblock.py)
@@ -28,6 +29,7 @@ Finds, in one pass:
 
 import argparse
 import dataclasses
+import datetime
 import json
 import pathlib
 import sys
@@ -36,7 +38,16 @@ import tomllib
 from collections.abc import Sequence
 
 from _paths import is_brief, known_roots, require_queue, resolve_root
-from deps import Brief, awaits_release, dependency_edges, done_ids, load_queue, ref_problem
+from deps import (
+    Brief,
+    awaits_release,
+    date_of,
+    date_reached,
+    dependency_edges,
+    done_ids,
+    load_queue,
+    ref_problem,
+)
 from facts import declared_brief, facts_files
 from host_land import HostQueue, LandError
 from milestones import MilestonesError, milestone_titles
@@ -148,6 +159,7 @@ def _brief_problems(
 ) -> list[Problem]:
     out = [Problem("dangling", b.id, d) for d in sorted(b.local_ids - known)]
     out += [Problem("dangling", b.id, p) for ref in b.remote_refs if (p := ref_problem(ref, roots))]
+    out += [Problem("bad-date", b.id, d) for d in b.date_blockers if date_of(d) is None]
     if b.status in ("ready", "in-progress", "parked") and not b.declares_dependencies:
         out.append(
             Problem(
@@ -160,6 +172,7 @@ def _brief_problems(
         waiting = sorted(
             d for d in dependency_edges(b, known) | set(b.external_blockers) if d not in done
         )
+        waiting += sorted(d for d in b.date_blockers if not date_reached(d, datetime.date.today()))
         if waiting:
             out.append(Problem("in-progress-unmet", b.id, ", ".join(waiting)))
     if b.status == "blocked":

@@ -22,7 +22,9 @@ Usage:
   # move a brief between states (commits via the lock unless --no-sync)
   python scripts/transition.py move <brief-id> in-progress
   python scripts/transition.py move <brief-id> done   --log "shipped; tests green"
-  python scripts/transition.py move <brief-id> parked --log "ESCALATED — needs a login"
+  python scripts/transition.py move <brief-id> in-progress --log "ESCALATED — needs a login"
+  # "leave it until 1 December" is a dependency on the day, released by unblock.py on it
+  python scripts/transition.py move <brief-id> blocked --blocked-by date:2026-12-01
 
   # declare what a ready, in-progress or parked brief waits on, in place (declaration.py)
   python scripts/transition.py declare <brief-id> --no-deps
@@ -47,9 +49,11 @@ from deps import (
     Brief,
     QueueRef,
     blocker_number,
+    date_of,
     declares_dependencies,
     fm,
     fm_repeated,
+    is_date,
     is_external,
     load_queue,
     parse_list,
@@ -328,17 +332,22 @@ def _append_log(text: str, today: str, message: str) -> str:
 
 
 def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) -> None:
-    """Refuse a self-block, an unknown blocker id, or a `<queue>:<id>` that names no known brief (externals are free text)."""
+    """Refuse a self-block, an unknown blocker id, a malformed `date:`, or a `<queue>:<id>` naming no known brief."""
     if brief_id in blocked_by:
         raise ValueError(f"{brief_id!r} cannot be blocked by itself")
+    bad_dates = [b for b in blocked_by if is_date(b) and date_of(b) is None]
+    if bad_dates:
+        raise ValueError(f"malformed date blocker(s) {bad_dates}; write date:YYYY-MM-DD")
     known = {b.id for b in load_queue(root)}
     refs = [ref for item in blocked_by if (ref := QueueRef.parse(item))]
     unknown = [
-        b for b in blocked_by if not is_external(b) and b not in known and QueueRef.parse(b) is None
+        b
+        for b in blocked_by
+        if not (is_external(b) or is_date(b)) and b not in known and QueueRef.parse(b) is None
     ]
     if unknown:
         raise ValueError(
-            f"unknown blocker id(s) {unknown}; use a brief id, <queue>:<id> or external:<reason>"
+            f"unknown blocker id(s) {unknown}; use a brief id, <queue>:<id>, date:YYYY-MM-DD or external:<reason>"
         )
     roots = known_roots(root)
     problems = [p for ref in refs if (p := ref_problem(ref, roots))]
