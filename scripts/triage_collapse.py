@@ -129,5 +129,5 @@ def apply_collapse(plan: Collapse, root: pathlib.Path, today: str) -> list[str]:
             atomic_write(child.path, child.with_field("parent", plan.parent_id).text)
     log = f"collapsed into {plan.parent_id} by inbox-triage; move back to inbox/ to restore"
     for child in plan.children:
-        move_brief(child.id, "done", root, log=log, today=today)
+        move_brief(child.id, "done", root, log=log, today=today, superseded_by=[plan.parent_id])
     return [plan.parent_id, *(c.id for c in plan.children)]

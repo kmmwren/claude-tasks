@@ -28,6 +28,7 @@ from _concurrency import NETWORK_TIMEOUT, repo_lock
 from _credentials import carries_credential
 from _default_branch import default_branch
 from _paths import PROJECT_MARKER
+from done_guard import DoneBackstop
 
 DEFAULT_MESSAGE = "queue: sync uncommitted briefs"
 WIP_PREFIX = "wip/tasks-"
@@ -105,6 +106,11 @@ class HostQueue:
             p for p in _status_paths(out) if not pathlib.PurePath(p).name.startswith(STATE_PREFIX)
         }
         return sorted(paths)
+
+    def return_unsettled_done(self, root: pathlib.Path) -> None:
+        """Send a brief this land would ship into done/ with an open criterion back where it came from."""
+        pending = set(self.pending())
+        DoneBackstop(root).run(lambda rel: (self.rel / rel).as_posix() in pending)
 
     def shippable(self) -> list[str]:
         """`pending` less the files that carry a credential, which stay local."""
@@ -220,6 +226,7 @@ def land_host_queue(
             print("  (host land deferred: lock held; your files are safe on disk.)")
             return False
         try:
+            queue.return_unsettled_done(root)
             paths = queue.shippable()
             if paths:
                 _ship(queue, paths, message)

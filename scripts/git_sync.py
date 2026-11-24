@@ -27,6 +27,7 @@ from _advance import advance_to_origin  # noqa: E402
 from _concurrency import NETWORK_TIMEOUT, Deadline, HeldLock, repo_lock  # noqa: E402
 from _credentials import carries_credential  # noqa: E402
 from _default_branch import default_branch  # noqa: E402
+from done_guard import DoneBackstop, scope_of  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
 from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
@@ -567,6 +568,7 @@ def _commit_locked(
             f"  (refused: {len(leaks)} held back for looking like a credential. "
             "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
         )
+    DoneBackstop(root).run(scope_of(ids, paths))
     refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
     _stage_named_briefs(root, ids, refused)
     if paths:
