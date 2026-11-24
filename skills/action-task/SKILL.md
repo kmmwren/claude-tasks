@@ -101,7 +101,11 @@ Execute against the success criteria using the right approach (TDD for code, etc
   then edit the brief to set `autonomy: needs-input`, write the precise question under
   `## Notes / open questions`, commit with `scripts/git_sync.py '<message>' <id>`, and stop. The
   `ESCALATED —` spelling is exact (an autonomy tracker can grep for it).
-- **Park** (no longer worth doing now): `transition.py move <id> parked --log "<why>"`.
+- **Park** only on the user's explicit word ("park it"): `transition.py move <id> parked --log
+  "<their words>"`. Judgement never parks: a wait is a dependency, a question is an escalation.
+- **Leave until a date** ("leave it until 1 December") is a dependency on the day, not a park:
+  `transition.py move <id> blocked --blocked-by date:2026-12-01`. The daily release sweep
+  returns it to `ready/` on that day, like any other finished dependency.
 
 ## Safety rails (these override "just finish it")
 - **Destructive or outward-facing actions get confirmed first.** Never delete/overwrite

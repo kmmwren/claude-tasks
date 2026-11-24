@@ -21,6 +21,11 @@ from _paths import read_stdin
 
 PERMALINK = re.compile(r"<?(https://[\w.-]+\.slack\.com/archives/[^\s>|]+)(?:\|[^>]*)?>?")
 PARK = re.compile(r"\bpark(?:ed|ing)?\b", re.IGNORECASE)
+# Parking needs her explicit word, so a negated or questioning mention never parks.
+NOT_PARK = re.compile(
+    r"\b(?:don'?t|do not|never|not|no)\s+(?:\w+\s+)?park|\bwhy\b[^.?!]*\bpark|\bpark[^.?!]*\?",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -50,7 +55,8 @@ def thread_key(channel: str, thread_ts: str) -> str:
 
 
 def asks_to_park(direction: str, note: str) -> bool:
-    return PARK.search(f"{direction} {note}") is not None
+    words = f"{direction} {note}"
+    return PARK.search(words) is not None and NOT_PARK.search(words) is None
 
 
 def locate(url: str) -> tuple[str, str, str]:

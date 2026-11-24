@@ -42,7 +42,15 @@ import sys
 
 from _concurrency import atomic_write, require_lock, reserve_name
 from _paths import COMMENT_START, TASK_DIRS, QueueBriefs, read_stdin, require_queue, resolve_root
-from deps import CONFIRMED_KEY, PROBE_KEY, is_external, load_queue, probe_gaps
+from deps import (
+    CONFIRMED_KEY,
+    PROBE_KEY,
+    date_of,
+    is_date,
+    is_external,
+    load_queue,
+    probe_gaps,
+)
 from fingerprint import Fingerprint, Located, find_duplicate
 from git_sync import sync_commit as _sync_commit
 from readiness import (
@@ -146,6 +154,9 @@ class Dependencies:
             return "a ready brief needs --blocked-by <id|external:reason>, or --no-deps when it depends on nothing"
         if status == "blocked" and not self.blocked_by:
             return "a blocked brief needs --blocked-by <id|external:reason>"
+        bad_dates = [b for b in self.blocked_by if is_date(b) and date_of(b) is None]
+        if bad_dates:
+            return f"malformed date blocker(s) {bad_dates}; write date:YYYY-MM-DD"
         gaps = probe_gaps(self.blocked_by, {PROBE_KEY: self.probes, CONFIRMED_KEY: self.confirmed})
         if status == "blocked" and gaps:
             return f"blocker(s) {gaps} are external with no probe; add --probe 'N: <command>' (or 'N: human' with --confirmed)"
@@ -153,7 +164,7 @@ class Dependencies:
 
     def unknown_ids(self, root: pathlib.Path) -> list[str]:
         known = {b.id for b in load_queue(QueueBriefs.read(root))}
-        return [b for b in self.blocked_by if not is_external(b) and b not in known]
+        return [b for b in self.blocked_by if not (is_external(b) or is_date(b)) and b not in known]
 
 
 def filing_status(a: argparse.Namespace) -> str:

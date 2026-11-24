@@ -12,9 +12,13 @@ A brief depends on other briefs through three frontmatter spellings, all of whic
 
 An `external:<reason>` entry is a blocker no brief can complete (a login, a decision, a
 vendor). It never resolves by itself; `unblock.py resolve` clears it explicitly.
+
+A `date:YYYY-MM-DD` entry means "leave this until that day": unmet before the day and met on it,
+so the daily release sweep returns the brief to ready/ like any other finished dependency.
 """
 
 import dataclasses
+import datetime
 import pathlib
 import re
 from collections.abc import Sequence
@@ -92,6 +96,28 @@ def is_external(item: str) -> bool:
     return item.startswith(EXTERNAL_PREFIX)
 
 
+DATE_PREFIX = "date:"
+# Written by a deliberate declaration (`declare`, `--no-deps`), unlike a bulk `blocked_by: []`.
+DECLARED_FIELD = "deps_declared"
+
+
+def is_date(item: str) -> bool:
+    return item.startswith(DATE_PREFIX)
+
+
+def date_of(item: str) -> datetime.date | None:
+    """The day a `date:YYYY-MM-DD` entry names; None when malformed, so it never counts as reached."""
+    try:
+        return datetime.date.fromisoformat(item[len(DATE_PREFIX) :])
+    except ValueError:
+        return None
+
+
+def date_reached(item: str, today: datetime.date) -> bool:
+    day = date_of(item)
+    return day is not None and day <= today
+
+
 PR_HOLD = re.compile(r"^(?:[\w.-]+/[\w.-]+#\d+|split)$")
 
 
@@ -113,7 +139,7 @@ class QueueRef:
     @classmethod
     def parse(cls, item: str) -> "QueueRef | None":
         """The reference an item spells, None for a plain id, an `external:` reason or a PR hold."""
-        if is_external(item) or is_pr_hold(item):
+        if is_external(item) or is_date(item) or is_pr_hold(item):
             return None
         queue, sep, bid = item.rpartition(QUALIFIER)
         return cls(queue, bid) if sep and queue and bid else None
@@ -200,10 +226,19 @@ class Brief:
         return [b for b in self.blocked_by if is_external(b)]
 
     @property
+    def reviewed_declaration(self) -> bool:
+        """True once someone judged the brief's waits and declared them, so its prose is history."""
+        return bool(self.fields.get(DECLARED_FIELD))
+
+    @property
+    def date_blockers(self) -> list[str]:
+        return [b for b in self.blocked_by if is_date(b)]
+
+    @property
     def declared_ids(self) -> set[str]:
         """Ids this brief names as dependencies in the strict forms (blocked_by, depends:)."""
         return {
-            b for b in self.blocked_by if not is_external(b) and not is_pr_hold(b)
+            b for b in self.blocked_by if not (is_external(b) or is_date(b) or is_pr_hold(b))
         } | self.depends_tags
 
     @property
@@ -258,16 +293,18 @@ def _done_elsewhere(ref: QueueRef, roots: Sequence[pathlib.Path]) -> bool:
     )
 
 
-def unmet(brief: Brief, done_ids: set[str]) -> list[str]:
-    """Dependencies that block `brief`: external reasons always, ids until they are done."""
+def unmet(brief: Brief, done_ids: set[str], today: datetime.date | None = None) -> list[str]:
+    """Dependencies that block `brief`: external reasons always, ids until done, dates until reached."""
+    day = today or datetime.date.today()
     ids = brief.declared_ids | brief.legacy_tokens
-    return sorted({d for d in ids if d not in done_ids} | set(brief.external_blockers))
+    dates = {d for d in brief.date_blockers if not date_reached(d, day)}
+    return sorted({d for d in ids if d not in done_ids} | set(brief.external_blockers) | dates)
 
 
-def awaits_release(brief: Brief, done_ids: set[str]) -> bool:
+def awaits_release(brief: Brief, done_ids: set[str], today: datetime.date | None = None) -> bool:
     """A blocked brief that names something to wait for, all of it now satisfied."""
     named = brief.blocked_by or brief.declared_ids or brief.legacy_tokens
-    return bool(named) and not unmet(brief, done_ids)
+    return bool(named) and not unmet(brief, done_ids, today)
 
 
 def dependency_edges(brief: Brief, known_ids: set[str]) -> set[str]:

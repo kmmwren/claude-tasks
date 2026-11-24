@@ -266,3 +266,23 @@ def test_cli_resolve_error_exits_nonzero(tmp_path, capsys):
         unblock.main(["--root", str(root), "resolve", "ghost", "x"])
     assert e.value.code == 1
     assert "no brief" in capsys.readouterr().err
+
+
+def test_a_date_dependency_releases_the_brief_on_its_day(tmp_path):
+    root = make_queue(
+        tmp_path, {"waiter": {"status": "blocked", "blocked_by": "[date:2026-06-05]"}}
+    )
+    assert unblock.release_unblocked(root, today="2026-06-04") == []
+    assert unblock.release_unblocked(root, today="2026-06-05") == ["waiter"]
+    assert "unblocked: date:2026-06-05" in _read(root, "ready", "waiter")
+
+
+def test_a_date_and_an_id_both_have_to_be_met(tmp_path):
+    root = make_queue(
+        tmp_path,
+        {
+            "dep": {"status": "ready"},
+            "waiter": {"status": "blocked", "blocked_by": "[dep, date:2026-06-01]"},
+        },
+    )
+    assert unblock.release_unblocked(root, today="2026-06-05") == []

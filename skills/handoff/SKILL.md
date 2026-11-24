@@ -184,6 +184,8 @@ note via `--context`. The target state is one of `inbox` (default), `ready`, or 
 - **"hand off everything to parked"** → file every item with `--status parked`. Parked =
   consciously suspended; add a one-line directive note so future-you knows why and when to
   resume, e.g. `--context "Parked from session <date>: paused until <trigger>."`
+- **"leave these until <date>"** is a dependency on the day, not a park: `--status blocked
+  --blocked-by date:YYYY-MM-DD`. The daily release sweep returns them to `ready/` on that day.
 - **"hand these off as ready to go"** → `--status ready` (they're actionable as-is). The script
   rejects a ready brief without `--goal`, `--criteria` (alias `--success`) and `--context`, so
   add `--goal "<end state>" --criteria "<checkable condition>"` to the command below.

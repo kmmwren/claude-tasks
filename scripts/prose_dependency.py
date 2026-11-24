@@ -131,7 +131,7 @@ def waits_in_prose(line: str, known: set[str], merged: set[str], humans: bool = 
 
 
 def declares_dependency(b: Brief) -> bool:
-    return bool(b.blocked_by or b.declared_ids or b.legacy_tokens)
+    return bool(b.blocked_by or b.declared_ids or b.legacy_tokens or b.reviewed_declaration)
 
 
 def approving_decision(b: Brief, directory: pathlib.Path) -> str | None:

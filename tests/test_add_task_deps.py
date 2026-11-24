@@ -102,3 +102,12 @@ def test_a_blocked_brief_cannot_be_forced_into_ready(tmp_path, capsys):
 def test_an_inbox_capture_may_leave_the_declaration_to_triage(queue):
     add_task.main(["--title", "Idea", "--root", str(queue), "--no-sync"])
     assert "blocked_by" not in fm(only(queue, "inbox"))
+
+
+def test_a_date_blocker_files_to_blocked_without_a_probe(queue):
+    file_brief(queue, "--blocked-by", "date:2026-12-01")
+    assert parse_list(fm(only(queue, "blocked"))["blocked_by"]) == ["date:2026-12-01"]
+
+
+def test_a_malformed_date_blocker_is_refused(queue, capsys):
+    assert "date:YYYY-MM-DD" in refused(queue, capsys, "--blocked-by", "date:next week")

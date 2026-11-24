@@ -1338,3 +1338,16 @@ def test_promoting_an_undeclared_brief_is_allowed_with_no_deps_and_declares_it(r
         "enriched-staging-thought", "ready", root, today="2026-06-02", no_deps=True
     )
     assert _blocked_by_line(newp) == "blocked_by: []"
+
+
+def test_move_to_blocked_accepts_a_date_dependency_without_a_probe(root):
+    new = transition.move_brief(
+        "rotate-the-api-key", "blocked", root, blocked_by=["date:2026-12-01"], today="2026-06-02"
+    )
+    assert transition.fm(new.read_text())["blocked_by"] == "[date:2026-12-01]"
+
+
+def test_move_to_blocked_rejects_a_malformed_date(root):
+    with pytest.raises(ValueError, match="date:YYYY-MM-DD"):
+        transition.move_brief("rotate-the-api-key", "blocked", root, blocked_by=["date:next week"])
+    assert (root / "ready" / "rotate-the-api-key.md").exists()

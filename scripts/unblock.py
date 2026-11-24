@@ -45,7 +45,7 @@ def releasable(
     queue = load_queue(briefs)
     done = done_ids(briefs, roots)
     _, unlocks = index_queue(briefs)
-    ready = [b for b in queue if b.status == "blocked" and awaits_release(b, done)]
+    ready = [b for b in queue if b.status == "blocked" and awaits_release(b, done, today)]
     ready.sort(key=lambda b: (-score(b.fields, today, unlocks=unlocks.get(b.id, 0)), b.id))
     return ready
 
@@ -71,7 +71,7 @@ def release_unblocked(
                     root,
                     today=today,
                     log=f"unblocked: {', '.join(brief.blocked_by) or 'dependencies'} done",
-                    only_if=partial(_still_releasable, root, brief.id, roots),
+                    only_if=partial(_still_releasable, root, brief.id, roots, day),
                 )
             except ValueError:
                 continue  # another actor released or moved it first
@@ -79,13 +79,18 @@ def release_unblocked(
     return released
 
 
-def _still_releasable(root: pathlib.Path, brief_id: str, roots: Sequence[pathlib.Path]) -> bool:
+def _still_releasable(
+    root: pathlib.Path,
+    brief_id: str,
+    roots: Sequence[pathlib.Path],
+    today: datetime.date | None = None,
+) -> bool:
     """Fresh read, meant to run under the queue lock: still blocked, every wait satisfied."""
     briefs = QueueBriefs.read(root)
     queue = load_queue(briefs)
     done = done_ids(briefs, roots)
     return any(
-        b.id == brief_id and b.status == "blocked" and awaits_release(b, done) for b in queue
+        b.id == brief_id and b.status == "blocked" and awaits_release(b, done, today) for b in queue
     )
 
 

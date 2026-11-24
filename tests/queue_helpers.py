@@ -30,8 +30,10 @@ def brief_text(
     importance: str = "3",
     autonomy: str = "full",
     probed: bool = True,
+    deps_declared: str = "",
     body: str = "## Goal\n\ng\n",
 ) -> str:
+    declared = f"deps_declared: {deps_declared}\n" if deps_declared else ""
     items = [i.strip() for i in blocked_by.strip("[]").split(",") if i.strip()]
     probes = "".join(
         f"blocked_probe: {n}: exit 10\n"
@@ -50,7 +52,7 @@ tags: {tags}
 blockers: {blockers}
 blocked_by: {blocked_by}
 milestone: {milestone}
-{probes}---
+{declared}{probes}---
 
 {body}
 ## Execution log

@@ -64,7 +64,7 @@ def declare_brief(
             raise ValueError(f"no brief with id {brief_id!r} (moved by another actor)")
         status = path.parent.name
         text = ensure_frontmatter(path.read_text(encoding="utf-8"), path.stem, status, today)
-        text = _update_frontmatter(text, status, today, blocked_by=blocked_by)
+        text = _update_frontmatter(text, status, today, blocked_by=blocked_by, declared=True)
         atomic_write(path, _append_log(text, today, message))
     return path
 

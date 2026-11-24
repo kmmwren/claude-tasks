@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 import slack_links
 
 from tests.queue_helpers import NOT_ASCII, piped
@@ -99,3 +100,10 @@ def test_main_reads_a_utf8_pipe_whatever_the_locale(capsys, monkeypatch):
     monkeypatch.setattr("sys.stdin", piped(f"{NOT_ASCII} {TOP} note"))
     assert slack_links.main([]) == 0
     assert json.loads(capsys.readouterr().out)["direction"] == NOT_ASCII
+
+
+@pytest.mark.parametrize(
+    "words", ["don't park these", "do not park this", "never park it", "why was this parked?"]
+)
+def test_words_that_negate_or_ask_about_parking_do_not_park(words):
+    assert slack_links.parse(f"{words}\n{TOP}").links[0].parked is False

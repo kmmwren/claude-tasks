@@ -130,8 +130,9 @@ A brief that cannot proceed moves to `blocked/` with what it waits for:
 python scripts/transition.py move <id> blocked --blocked-by other-id,external:vendor reply
 ```
 
-`blocked_by` lists brief ids and/or `external:<reason>` entries (a login, a decision, a
-vendor; reasons may not contain commas). When every id is `done` and no external entry
+`blocked_by` lists brief ids, `external:<reason>` entries (a login, a decision, a
+vendor; reasons may not contain commas) and `date:YYYY-MM-DD` entries ("leave it until that
+day": unmet before it, met on it). When every id is `done` and no external entry
 remains, `unblock.py` returns the brief to `ready/` with `blocked_by` cleared, releasing
 several at once in priority order. It runs automatically after `transition.py move <id>
 done`, and can be run any time (`--dry-run` to preview). An external blocker is cleared by
@@ -164,6 +165,12 @@ listed in `$CLAUDE_TASKS_ROOTS`, separated like `PATH`.
                    unblocked B → ready
               3. picker: prints next: with the top runnable brief in ready/
 ```
+
+A date works the same way with no completion to wait for: `blocked_by: [date:2026-12-01]` is
+unmet until 1 December, and the daily `unblock.py` sweep over every root in
+`$CLAUDE_TASKS_ROOTS` moves the brief to `ready/` that morning, logging
+`unblocked: date:2026-12-01 done`. Parking is only for an explicit "park it"; a wait is always a
+dependency.
 
 Worked example: `B` waits on `A`, `web:C` and a vendor reply. `A` goes done first, so `B` logs
 `landed: A done: …` and stays blocked. The vendor replies (`unblock.py resolve`). `C` goes done in
