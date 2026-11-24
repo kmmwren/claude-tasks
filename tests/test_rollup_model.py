@@ -764,3 +764,70 @@ def test_prioritise_ranks_an_extracted_snapshot_with_no_git_and_no_scripts(world
     assert not (root / ".git").exists() and not (root / "scripts").exists()
     ranked = prioritise.rank(root, today=dt.date(2026, 11, 19))
     assert sorted(b["id"] for b in ranked) == ["b4", "b5"]
+
+
+# --- parked milestones ---------------------------------------------------------------------
+
+PARKED_TAIL = (
+    '[[milestones]]\nid = "m1"\ntitle = "Set aside"\ndue = "2026-11-01"\nparked = true\n'
+    'parked_on = "2026-11-05"\nparked_reason = "Vendor slipped"\n\n'
+    '[[milestones]]\nid = "m2"\ntitle = "Sooner"\ndue = "2026-12-01"\n'
+)
+FIRST_PROMISE = {
+    "history/due/m1-2026-10-01-aaaaaaaa.toml": (
+        'milestone = "m1"\ndue = "2026-11-01"\nset_on = "2026-10-01"\nreason = "First date."\n'
+    )
+}
+PARKED_BRIEFS = (
+    BriefSpec("b1", "in-progress", milestone="m1", ticked=1, unticked=1),
+    BriefSpec("b2", "ready", milestone="m2", ticked=0, unticked=1),
+)
+
+
+def parked_project(tmp_path: pathlib.Path, tail: str = PARKED_TAIL) -> rm.Project:
+    spec = QueueSpec(project_toml(tail=tail), PARKED_BRIEFS, FIRST_PROMISE)
+    return built(tmp_path, spec)
+
+
+def test_a_parked_milestone_with_ticked_criteria_is_in_the_parked_stage(
+    tmp_path: pathlib.Path,
+) -> None:
+    parked = parked_project(tmp_path).milestones[0]
+    assert (parked.stage, parked.percent_done) == (rm.Stage.PARKED, 50)
+    assert parked.parking == rm.Parking(dt.date(2026, 11, 5), "Vendor slipped")
+    assert parked.line() == "Set aside (50%, parked since 2026-11-05: Vendor slipped)"
+
+
+def test_a_parked_milestone_whose_briefs_are_all_done_is_done_with_no_parking(
+    tmp_path: pathlib.Path,
+) -> None:
+    done = BriefSpec("b1", "done", milestone="m1")
+    spec = QueueSpec(project_toml(tail=PARKED_TAIL), (done,))
+    first = built(tmp_path, spec).milestones[0]
+    assert (first.stage, first.parking) == (rm.Stage.DONE, None)
+
+
+def test_a_parked_milestone_past_its_first_date_is_not_late_or_missed(
+    tmp_path: pathlib.Path,
+) -> None:
+    parked = parked_project(tmp_path).milestones[0]
+    assert (parked.missed, parked.late_days, parked.baseline) == (False, 0, "2026-11-01")
+
+
+def test_the_same_milestone_not_parked_is_late_and_missed(tmp_path: pathlib.Path) -> None:
+    open_ = parked_project(tmp_path, PARKED_TAIL.replace("parked = true\n", "")).milestones[0]
+    assert (open_.stage, open_.missed, open_.late_days) == (rm.Stage.NOW, True, 18)
+
+
+def test_the_board_sentence_counts_parked_and_never_names_one_as_next(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = parked_project(tmp_path).board.text
+    assert (
+        text == "Alpha is green; 0 of 2 milestones done; 1 parked; next is Sooner due 2026-12-01."
+    )
+
+
+def test_a_parked_stage_is_last_and_stage_of_status_knows_it() -> None:
+    assert list(rm.Stage)[-1] is rm.Stage.PARKED == rm.Stage.of("parked")
+    assert [s for s in rm.Stage if s.scheduled] == [rm.Stage.NOW, rm.Stage.NEXT]

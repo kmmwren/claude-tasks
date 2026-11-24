@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **A project owner can park a milestone.** A `[[milestones]]` row with `parked = true` (optional
+  `parked_on`, `parked_reason`) is shown as Parked unless all its briefs are done; the tile, the
+  portfolio sentence and the json count it, and it is never late, missed or next due. The json
+  schema stays `claude-tasks.rollup/v1`; `parked` keys are additive.
 - **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
   trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
   is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a

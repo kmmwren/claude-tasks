@@ -149,6 +149,7 @@ def listed_milestones(queue: pathlib.Path, raw: Any) -> list[dict[str, Any]]:
     for number, m in enumerate(raw, 1):
         if _has_text_id(m):
             _warn_if_listing_briefs(where, m, "milestone")
+            _warn_if_parked_is_not_boolean(where, m)
             usable.append(m)
         else:
             warn(f"{where} row {number} needs a text id; that row is left out")
@@ -162,6 +163,11 @@ def _warn_if_listing_briefs(where: str, row: dict[str, Any], field_name: str) ->
             f"{where} '{row['id']}' lists briefs, which is deprecated; "
             f"give each brief `{field_name}: {row['id']}`"
         )
+
+
+def _warn_if_parked_is_not_boolean(where: str, row: dict[str, Any]) -> None:
+    if "parked" in row and not isinstance(row["parked"], bool):
+        warn(f"{where} '{row['id']}' parked must be true or false; the milestone is not parked")
 
 
 def _has_text_id(row: Any) -> bool:
@@ -219,18 +225,23 @@ def _select(
     return [b for b in briefs if b["id"] in wanted or (domain and b["domain"] == domain)]
 
 
-def _rollup(chosen: list[dict[str, Any]]) -> dict[str, Any]:
+def _status(states: list[str], ticked: int, parked: bool) -> str:
+    """Done wins over parked; a parked milestone with no briefs is still parked."""
+    if states and all(s == "done" for s in states):
+        return "done"
+    if parked:
+        return "parked"
+    if not states:
+        return "unmapped"
+    if ticked or any(s in ("active", "unverified") for s in states):
+        return "active"
+    return "not-started"
+
+
+def _rollup(chosen: list[dict[str, Any]], parked: bool = False) -> dict[str, Any]:
     ticked = sum(b["crit_done"] for b in chosen)
     total = sum(b["crit_total"] for b in chosen)
-    states = [brief_state(b) for b in chosen]
-    if not chosen:
-        status = "unmapped"
-    elif all(s == "done" for s in states):
-        status = "done"
-    elif ticked or any(s in ("active", "unverified") for s in states):
-        status = "active"
-    else:
-        status = "not-started"
+    status = _status([brief_state(b) for b in chosen], ticked, parked)
     return {
         "ticked": ticked,
         "total": total,
@@ -250,8 +261,9 @@ def _milestone_row(
 ) -> dict[str, Any]:
     spec = MilestoneSpec.parse(m["id"], m)
     picked = _belonging(briefs, spec.id, _milestone_of, m.get("briefs"))
-    roll = _rollup(picked)
+    roll = _rollup(picked, m.get("parked") is True)
     due = parse_date(m.get("due"))
+    parked_on = parse_date(m.get("parked_on"))
     return {
         "id": spec.id,
         "title": spec.title,
@@ -260,7 +272,9 @@ def _milestone_row(
         "release": spec.release or "",
         "briefs": [b["id"] for b in picked],
         "criteria": [c for b in picked for c in _criteria(b)],
-        "missed": bool(due and due < today and roll["status"] != "done"),
+        "missed": bool(due and due < today and roll["status"] not in ("done", "parked")),
+        "parked_on": parked_on.isoformat() if parked_on else "",
+        "parked_reason": str(m.get("parked_reason") or "").strip(),
         **roll,
     }
 
@@ -730,8 +744,13 @@ def build_model(
 
 e = html.escape
 
-STATUS_WORD = {"done": "Done", "active": "In progress", "unverified": "In progress"}
-STATUS_CLASS = {"Done": "done", "In progress": "prog", "Not started": "todo"}
+STATUS_WORD = {
+    "done": "Done",
+    "active": "In progress",
+    "unverified": "In progress",
+    "parked": "Parked",
+}
+STATUS_CLASS = {"Done": "done", "In progress": "prog", "Not started": "todo", "Parked": "todo"}
 HEALTH_WORD = {GREEN: "On track", AMBER: "At risk", RED: "Off track"}
 TABS = (
     ("plan", "Plan"),
@@ -958,7 +977,7 @@ def _cards(m: dict[str, Any]) -> str:
             + f'<p><a href="#decisions" data-tab="decisions">See the options on the Decisions tab</a>{extra}</p></section>'
         )
     live = [x for x in m["milestones"] if x["status"] in ("active", "unverified")]
-    upcoming = live or [x for x in m["milestones"] if x["status"] != "done"]
+    upcoming = live or [x for x in m["milestones"] if x["status"] not in ("done", "parked")]
     rows = "".join(f"<li><span>{e(x['reader_title'])}</span></li>" for x in upcoming[:3])
     cards += (
         '<section class="card next"><h2>Next up</h2>'
