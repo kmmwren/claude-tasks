@@ -172,7 +172,8 @@
             "sha": "FULLSHA1",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         },
         {
           "id": "m3",
@@ -199,7 +200,8 @@
             "sha": "FULLSHA1",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         }
       ],
       "next": [
@@ -225,7 +227,8 @@
             "sha": "FULLSHA1",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         }
       ],
       "done": [
@@ -253,9 +256,11 @@
             "sha": "FULLSHA1",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         }
       ],
+      "parked": [],
       "shipped": [
         {
           "id": "b7",
@@ -477,9 +482,11 @@
             "sha": "FULLSHA2",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         }
       ],
+      "parked": [],
       "shipped": [
         {
           "id": "b1",
@@ -562,11 +569,13 @@
             "sha": "FULLSHA3",
             "committed": "2026-11-19T09:00:00+00:00",
             "stale": false
-          }
+          },
+          "parked": null
         }
       ],
       "next": [],
       "done": [],
+      "parked": [],
       "shipped": [],
       "shipped_by_release": [],
       "backlog": [

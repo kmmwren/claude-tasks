@@ -53,10 +53,16 @@ class Stage(enum.Enum):
     NOW = "Now"
     NEXT = "Next"
     DONE = "Done"
+    PARKED = "Parked"
 
     @property
     def key(self) -> str:
         return self.name.lower()
+
+    @property
+    def scheduled(self) -> bool:
+        """Only work in flight or queued carries a date that can be late or come next."""
+        return self in (Stage.NOW, Stage.NEXT)
 
     @classmethod
     def of(cls, status: str) -> "Stage":
@@ -67,6 +73,7 @@ _STAGE_OF_STATUS = {
     "done": Stage.DONE,
     "active": Stage.NOW,
     "not-started": Stage.NEXT,
+    "parked": Stage.PARKED,
     "unmapped": Stage.NEXT,
 }
 
@@ -142,6 +149,23 @@ class Blocker:
 
 
 @dataclasses.dataclass(frozen=True)
+class Parking:
+    """When and why the project owner set a milestone aside; either may be unrecorded."""
+
+    on: dt.date | None
+    reason: str
+
+    @classmethod
+    def of(cls, row: Mapping[str, Any]) -> "Parking":
+        return cls(parse_date(row["parked_on"]), row["parked_reason"])
+
+    def detail(self) -> str:
+        """` since 2026-11-05: Vendor slipped`, or whichever parts were recorded."""
+        since = f" since {self.on.isoformat()}" if self.on else ""
+        return since + (f": {self.reason}" if self.reason else "")
+
+
+@dataclasses.dataclass(frozen=True)
 class MilestoneSummary:
     milestone: Milestone
     stage: Stage
@@ -158,6 +182,7 @@ class MilestoneSummary:
     flags: tuple[EnvironmentFlags, ...]
     evidence: tuple[BriefEvidence, ...]
     as_at: AsAt
+    parking: Parking | None = None  # set only while the milestone's stage is Parked
 
     @property
     def id(self) -> str:
@@ -178,8 +203,13 @@ class MilestoneSummary:
     def _notes(self) -> list[str]:
         if self.stage is Stage.DONE:
             return self._waiting_note()
+        if self.stage is Stage.PARKED:
+            return [f"{self.percent_done}%", *self._parked_note(), *self._waiting_note()]
         due = [f"due {self.due}" + (", missed" if self.missed else "")] if self.due else []
         return [f"{self.percent_done}%", *due, *self._waiting_note()]
+
+    def _parked_note(self) -> list[str]:
+        return [f"parked{self.parking.detail()}"] if self.parking else []
 
     def _waiting_note(self) -> list[str]:
         return [f"{self.waiting_count} waiting"] if self.waiting_count else []
@@ -263,15 +293,18 @@ class BoardSentence:
         cls, title: str, health: Health, milestones: tuple[MilestoneSummary, ...], as_at: AsAt
     ) -> "BoardSentence":
         done = sum(m.stage is Stage.DONE for m in milestones)
+        parked = sum(m.stage is Stage.PARKED for m in milestones)
         parts = [f"{title} is {SENTENCE_WORD[health.effective]}"]
         if milestones:
             parts.append(f"{done} of {plural(len(milestones), 'milestone')} done")
+        if parked:
+            parts.append(f"{parked} parked")
         parts += cls._dates(milestones)
         return cls(as_at, "; ".join(parts) + ".")
 
     @staticmethod
     def _dates(milestones: tuple[MilestoneSummary, ...]) -> list[str]:
-        open_ = [m for m in milestones if m.stage is not Stage.DONE]
+        open_ = [m for m in milestones if m.stage.scheduled]
         missed = [m for m in open_ if m.missed]
         dated = sorted((m for m in open_ if m.due), key=lambda m: m.due)
         notes = [f"{len(missed)} past their date"] if missed else []
@@ -407,7 +440,7 @@ def _milestone(
     baseline = schedule.baseline if schedule else None
     open_ = [b for b in mine if b.state != "done"]
     sized = [EFFORT_DAYS[b.effort] for b in open_ if b.effort in EFFORT_DAYS]
-    late = (read.today - baseline).days if baseline and stage is not Stage.DONE else 0
+    late = (read.today - baseline).days if baseline and stage.scheduled else 0
     return MilestoneSummary(
         Milestone(row["id"], title, dict(Counter(b.state for b in mine)), row["release"] or None),
         stage,
@@ -426,6 +459,7 @@ def _milestone(
         _flags(read, [b.id for b in mine]),
         tuple(BriefEvidence(i, e) for b in mine for i in [b.id] for e in read.facts_of(i).evidence),
         read.as_at,
+        Parking.of(row) if stage is Stage.PARKED else None,
     )
 
 

@@ -587,7 +587,7 @@ def test_the_project_json_keeps_its_old_keys_and_adds_the_new(report: rv.Report)
 def test_the_portfolio_json_keeps_its_old_keys(report: rv.Report) -> None:
     project = json.loads(rv.render("portfolio", "json", report))["projects"][0]
     assert project["health"].keys() == {"effective", "owner", "reason"}
-    assert project["milestones"] == {"done": 1, "total": 4}
+    assert project["milestones"] == {"done": 1, "parked": 0, "total": 4}
     assert project["next_due"] == {"id": "m2", "title": "The active thing", "due": "2026-11-30"}
     assert project["missed"][0]["id"] == "m2"
     no_date = json.loads(rv.render("portfolio", "json", report))["projects"][1]
@@ -757,3 +757,104 @@ def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(
     entry(tmp_path, ALPHA, {**ATLAS_FILES, "tasks.toml": "name = [unterminated\n"})
     err = capsys.readouterr().err
     assert f"cannot read {ALPHA}/tasks.toml (" in err and err.count("cannot read") == 1
+
+
+# --- parked milestones ---------------------------------------------------------------------
+
+DELTA = """[project]
+slug = "delta"
+title = "Delta"
+outcome = "Delta works."
+
+[health]
+colour = "green"
+reason = "Fine."
+set_by = "Owner"
+set_on = "2026-11-18"
+
+[[milestones]]
+id = "m1"
+title = "Shipped"
+
+[[milestones]]
+id = "m2"
+title = "Building"
+
+[[milestones]]
+id = "m3"
+title = "Queued"
+due = "2026-12-01"
+
+[[milestones]]
+id = "m4"
+title = "Set aside"
+due = "2026-11-01"
+parked = true
+parked_on = "2026-11-05"
+parked_reason = "Vendor slipped"
+
+[[milestones]]
+id = "m5"
+title = "Parked but finished"
+parked = true
+"""
+DELTA_FILES = {
+    "tasks.toml": 'name = "Delta"\n',
+    "project.toml": DELTA,
+    "done/d1.md": brief("d1", "done", milestone="m1"),
+    "in-progress/d2.md": brief("d2", "in-progress", milestone="m2", unticked=1),
+    "ready/d3.md": brief("d3", "ready", milestone="m3", unticked=1).replace("- [x] done\n", ""),
+    "in-progress/d4.md": brief("d4", "in-progress", milestone="m4", unticked=1),
+    "done/d5.md": brief("d5", "done", milestone="m5"),
+}
+
+
+@pytest.fixture(scope="module")
+def delta(tmp_path_factory: pytest.TempPathFactory) -> rv.Entry:
+    return entry(tmp_path_factory.mktemp("delta"), ALPHA, DELTA_FILES)
+
+
+def test_the_tile_counts_parked_after_next(delta: rv.Entry) -> None:
+    assert rv.stage_line(delta.project) == "2 of 5 milestones done, 1 now, 1 next, 1 parked."
+
+
+def test_a_tile_with_nothing_parked_reads_as_before(report: rv.Report) -> None:
+    assert "parked" not in rv.stage_line(report.entries[1].project)
+
+
+def test_a_parked_milestone_shows_a_parked_status_and_a_finished_one_shows_done(
+    delta: rv.Entry,
+) -> None:
+    text = rv.render("project", "markdown", rv.Report(NOW, (ALPHA,), (delta,)))
+    rows = {line.split("|")[1].strip(): line for line in text.splitlines() if line.startswith("| ")}
+    assert "`Parked`" in rows["Set aside"] and "missed" not in rows["Set aside"]
+    assert "`Done`" in rows["Parked but finished"]
+
+
+def test_the_detail_lists_a_parked_group_last_with_its_date_and_reason(delta: rv.Entry) -> None:
+    sections = rv.stage_sections(delta.project)
+    assert [s.heading for s in sections] == ["Now", "Next", "Done", "Parked"]
+    text = rv.render("project", "markdown", rv.Report(NOW, (ALPHA,), (delta,)))
+    assert "Parked since 2026-11-05: Vendor slipped." in text
+
+
+def test_a_parked_milestone_is_not_missed_and_never_the_next_due(delta: rv.Entry) -> None:
+    assert [m.id for m in delta.project.milestones if m.missed] == []
+    assert rv.next_due(delta.project).id == "m3"
+    assert "**Next:** Queued due 2026-12-01" in rv.render(
+        "project", "markdown", rv.Report(NOW, (ALPHA,), (delta,))
+    )
+
+
+def test_the_json_carries_the_parked_group_and_count_under_the_same_schema(delta: rv.Entry) -> None:
+    one = rv.Report(NOW, (ALPHA,), (delta,))
+    project = json.loads(rv.render("project", "json", one))
+    parked = project["projects"][0]["parked"]
+    assert [m["id"] for m in parked] == ["m4"]
+    assert parked[0]["parked"] == {"on": "2026-11-05", "reason": "Vendor slipped"}
+    assert parked[0]["missed"] is False and project["projects"][0]["done"][0]["parked"] is None
+    assert project["schema"] == "claude-tasks.rollup/v1"
+    portfolio = json.loads(rv.render("portfolio", "json", one))["projects"][0]
+    assert portfolio["milestones"] == {"done": 2, "parked": 1, "total": 5}
+    assert portfolio["missed"] == [] and portfolio["next_due"]["id"] == "m3"
+    assert "1 parked" in portfolio["board"]["text"]
