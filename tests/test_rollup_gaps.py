@@ -53,6 +53,12 @@ def test_a_done_milestone_needs_no_date(tmp_path: pathlib.Path) -> None:
     assert rg.gaps(project) == ()
 
 
+def test_a_parked_milestone_needs_no_date(tmp_path: pathlib.Path) -> None:
+    project = demo(tmp_path, project_toml(m2="parked = true\n"))
+    assert project.milestones[1].stage is rm.Stage.PARKED
+    assert rg.gaps(project) == ()
+
+
 def test_a_new_expectation_is_one_subclass(tmp_path: pathlib.Path) -> None:
     class HasOutcome(rg.Expectation):
         def gaps(self, project: rm.Project):  # type: ignore[no-untyped-def]

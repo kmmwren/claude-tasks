@@ -177,3 +177,64 @@ def test_release_is_read_and_shown_only_when_set(tmp_path):
     assert [x["release"] for x in m["milestones"]] == ["", "2026.12"]
     html = pv.render_fragment(m)
     assert html.count("Ships in 2026.12") == 1
+
+
+# --- parked milestones -------------------------------------------------------------------------
+
+
+def parked_queue(tmp_path, due="", in_progress=True):
+    """The demo queue with m1 parked; `in_progress` reopens its one brief, ticked criterion and all."""
+    q = make_queue(tmp_path, due=f"{due}parked = true\n")
+    if in_progress:
+        q.joinpath("done/b1.md").rename(q / "in-progress" / "b1.md")
+    return q
+
+
+def first_row(q):
+    return model(q)["milestones"][0]
+
+
+def test_a_parked_milestone_with_ticked_criteria_is_parked_not_in_progress(tmp_path):
+    row = first_row(parked_queue(tmp_path))
+    assert row["ticked"] == 1 and row["status"] == "parked"
+    assert "Parked" in pv.render_fragment(model(parked_queue(tmp_path / "again")))
+
+
+def test_a_milestone_that_is_not_parked_with_the_same_briefs_is_in_progress(tmp_path):
+    q = make_queue(tmp_path)
+    q.joinpath("done/b1.md").rename(q / "in-progress" / "b1.md")
+    assert first_row(q)["status"] == "active"
+
+
+def test_a_parked_milestone_with_every_brief_done_is_done(tmp_path):
+    row = first_row(parked_queue(tmp_path, in_progress=False))
+    assert row["status"] == "done" and row["percent_done"] == 100
+
+
+def test_a_parked_milestone_with_no_briefs_is_parked(tmp_path):
+    q = parked_queue(tmp_path)
+    q.joinpath("in-progress/b1.md").unlink()
+    assert first_row(q)["status"] == "parked"
+
+
+def test_a_parked_milestone_past_its_date_is_not_missed_and_does_not_cap_health(tmp_path):
+    q = parked_queue(tmp_path, due='due = "2026-10-20"\n')
+    m = model(q)
+    assert m["milestones"][0]["missed"] is False
+    assert "missed milestone date" not in [s["signal"] for s in m["health"]["capping"]]
+
+
+def test_parking_carries_its_date_and_reason_and_both_are_optional(tmp_path):
+    q = parked_queue(tmp_path, due='parked_on = "2026-10-01"\nparked_reason = " Vendor slipped "\n')
+    row = first_row(q)
+    assert (row["parked_on"], row["parked_reason"]) == ("2026-10-01", "Vendor slipped")
+    bare = first_row(parked_queue(tmp_path / "bare"))
+    assert (bare["parked_on"], bare["parked_reason"]) == ("", "")
+
+
+def test_a_parked_flag_that_is_not_true_or_false_is_named_and_ignored(tmp_path, capsys):
+    q = make_queue(tmp_path, due='parked = "yes"\n')
+    assert first_row(q)["status"] == "done"
+    assert (
+        "'m1' parked must be true or false; the milestone is not parked" in capsys.readouterr().err
+    )

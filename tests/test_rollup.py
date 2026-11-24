@@ -539,7 +539,7 @@ def test_portfolio_gives_each_project_a_sentence_and_its_reasons(work):
     r = built(work)
     data = json.loads(rv.JSON.render(rv.VIEWS["portfolio"], r))
     a, b = data["projects"]
-    assert a["milestones"] == {"done": 1, "total": 2} and a["missed"] == []
+    assert a["milestones"] == {"done": 1, "parked": 0, "total": 2} and a["missed"] == []
     assert a["as_at"]["committed"] == AS_AT
     assert b["next_due"] == {"id": "M0", "title": "Zero", "due": "2026-10-01"}
     assert b["missed"] == [{"id": "M0", "title": "Zero", "due": "2026-10-01"}]

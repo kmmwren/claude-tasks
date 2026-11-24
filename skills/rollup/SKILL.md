@@ -23,6 +23,11 @@ with one "Source: <label> @ <commit>, <date>" line, and a gap is written out ("N
 - **portfolio**: projects grouped by initiative, each with one sentence of status (health, milestones
   done, how many are past their date, what is next), its health and one line per milestone.
 
+A milestone row in `project.toml` with `parked = true` (and optional `parked_on` and `parked_reason`)
+shows as Parked: it has its own count on the tile, the portfolio sentence and the json, is listed
+last in the detail, and is never late, missed or next due; a parked milestone whose briefs are all
+done shows as Done.
+
 Only these fields appear: each project's slug, title, initiative, source label, commit and `outcome`;
 the owner's health colour, reason and date (never the owner's name); the project's `ask` and its
 deadline; the text of the automatic checks; milestone ids, titles, due dates, slip, progress, counts,
@@ -103,7 +108,7 @@ warning. Run `rollup.py sources` to check what each source gives.
 
 ## What every project records
 
-Each project names an `initiative` in `project.toml`, and each milestone that is not done has a due
+Each project names an `initiative` in `project.toml`, and each milestone in flight or queued (not done or parked) has a due
 date. `rollup.py gaps` lists every project that falls short, each with the command or line that fixes
 it, and exits 1 while anything is missing, so a scheduled job or CI step can fail on it. Every view's
 JSON carries the same list as `gaps`. A new rule is one more `Expectation` subclass in

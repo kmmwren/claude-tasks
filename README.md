@@ -207,6 +207,10 @@ frontmatter, and every count and the project page derive from it. The `[[milesto
 a queue's `project.toml` take the same `release` key and no longer take a `briefs` list; an old
 one is ignored.
 
+A `[[milestones]]` row can set `parked = true`, with an optional `parked_on = "YYYY-MM-DD"` and
+`parked_reason`, to set the milestone aside. The roll-up then shows it as Parked, never as late,
+missed or next due, unless every one of its briefs is done, in which case it shows Done.
+
 ### Sharing a queue: claiming with `assignee`
 
 A queue can be shared by several people and agents. Because briefs are files in git, two

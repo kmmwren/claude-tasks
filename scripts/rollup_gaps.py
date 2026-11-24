@@ -38,7 +38,7 @@ class HasInitiative(Expectation):
 class OpenMilestonesHaveDue(Expectation):
     def gaps(self, project: rm.Project) -> Iterator[Gap]:
         for m in project.milestones:
-            if m.stage is not rm.Stage.DONE and not m.due:
+            if m.stage.scheduled and not m.due:
                 yield Gap(project.slug, m.id, "due date", _set_due(m.id))
 
 

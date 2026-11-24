@@ -954,7 +954,12 @@ def milestone_table(m: rm.MilestoneSummary) -> dict[str, Any]:
         "flags": [flags_table(f) for f in m.flags],
         "evidence": [evidence_table(e) for e in m.evidence],
         "as_at": m.as_at.table(),
+        "parked": parking_table(m.parking),
     }
+
+
+def parking_table(parking: rm.Parking | None) -> dict[str, Any] | None:
+    return {"on": date_text(parking.on), "reason": parking.reason} if parking else None
 
 
 def build_table(tile: rm.Tile) -> dict[str, Any] | None:
@@ -1118,7 +1123,7 @@ def attention(e: Entry) -> tuple[int, int]:
     """Red, then amber, then green that is stale or unset, then the rest; a bigger slip first."""
     h = e.project.health
     unsure = 2 if h.stale or not h.owner else 3
-    open_ = (m for m in e.project.milestones if m.stage is not rm.Stage.DONE)
+    open_ = (m for m in e.project.milestones if m.stage.scheduled)
     return TIERS.get(h.effective, unsure), -max((m.slip_days or 0 for m in open_), default=0)
 
 
@@ -1129,14 +1134,15 @@ def slip_phrase(days: int) -> str:
 def stage_line(p: rm.Project) -> str:
     if not p.milestones:
         return NO_MILESTONES
-    done, now, nxt = (len(p.stage(s)) for s in (rm.Stage.DONE, rm.Stage.NOW, rm.Stage.NEXT))
-    missed = [f"{n} missed"] if (n := sum(m.missed for m in p.milestones)) else []
+    n = {s: len(p.stage(s)) for s in rm.Stage}
+    missed = [f"{k} missed"] if (k := sum(m.missed for m in p.milestones)) else []
+    held = [f"{n[rm.Stage.PARKED]} parked"] if n[rm.Stage.PARKED] else []
     counts = [
-        f"{done} of {plural(len(p.milestones), 'milestone')} done",
-        f"{now} now",
-        f"{nxt} next",
+        f"{n[rm.Stage.DONE]} of {plural(len(p.milestones), 'milestone')} done",
+        f"{n[rm.Stage.NOW]} now",
+        f"{n[rm.Stage.NEXT]} next",
     ]
-    return ", ".join([*counts, *missed]) + "."
+    return ", ".join([*counts, *held, *missed]) + "."
 
 
 def next_line(p: rm.Project) -> str:
@@ -1335,8 +1341,10 @@ def effort_text(m: rm.MilestoneSummary) -> str:
 def milestone_details(m: rm.MilestoneSummary) -> tuple[Row, ...]:
     release = [row(f"Release {m.milestone.release}.")] if m.milestone.release else []
     effort = [row(effort_text(m))] if m.effort_days or m.unestimated else []
+    parked = [row(f"Parked{m.parking.detail()}.")] if m.parking else []
     return (
         row(schedule_text(m)),
+        *parked,
         *release,
         *effort,
         *(row(f"{b.brief} waits on {', '.join(b.waiting_on)}.") for b in m.blockers),
@@ -1369,7 +1377,11 @@ class PortfolioView(View):
             },
             "board": board_table(p.board),
             "tile": tile_table(p.tile),
-            "milestones": {"done": len(p.stage(rm.Stage.DONE)), "total": len(p.milestones)},
+            "milestones": {
+                "done": len(p.stage(rm.Stage.DONE)),
+                "parked": len(p.stage(rm.Stage.PARKED)),
+                "total": len(p.milestones),
+            },
             "next_due": (
                 {"id": soonest.id, "title": soonest.title, "due": soonest.due} if soonest else None
             ),
