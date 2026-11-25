@@ -19,7 +19,11 @@ from urllib.parse import parse_qs, urlparse
 
 from _paths import read_stdin
 
-PERMALINK = re.compile(r"<?(https://[\w.-]+\.slack\.com/archives/[^\s>|]+)(?:\|[^>]*)?>?")
+# Only archives/<channel>/p<ts> is a permalink; a link cut off at the channel (a truncated
+# session name) reads as plain text, since locate() cannot place it in a thread.
+PERMALINK = re.compile(
+    r"<?(https://[\w.-]+\.slack\.com/archives/[A-Za-z0-9]+/p\d+/?(?:\?[^\s>|]*)?)(?:\|[^>]*)?>?"
+)
 PARK = re.compile(r"\bpark(?:ed|ing)?\b", re.IGNORECASE)
 # Parking needs her explicit word, so a negated or questioning mention never parks.
 NOT_PARK = re.compile(

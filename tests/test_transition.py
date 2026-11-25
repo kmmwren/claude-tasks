@@ -159,6 +159,14 @@ def test_find_brief_prefers_brief_folder_over_inbox_for_a_frontmatter_id(root):
     assert transition.find_brief("shared-id", root) == ready
 
 
+def test_find_brief_skips_a_brief_that_vanishes_after_the_listing(root):
+    # A dangling symlink is listed by glob but cannot be read, as when another process moves a brief mid-scan.
+    (root / "ready" / "0000-moved-away.md").symlink_to(root / "ready" / "gone.md")
+    path = root / "ready" / "2026-11-04-dated-stem.md"
+    path.write_text(_brief("ready", "fm-id", "T"))
+    assert transition.find_brief("fm-id", root) == path
+
+
 def test_move_by_frontmatter_id_keeps_the_filename(root):
     (root / "ready" / "2026-11-04-dated-stem.md").write_text(_brief("ready", "fm-id", "T"))
     new_path = transition.move_brief("fm-id", "in-progress", root, today="2026-11-23")

@@ -301,6 +301,22 @@ def test_a_brief_that_cannot_be_read_is_skipped(tmp_path, capsys):
     assert "skipping gone.md" in capsys.readouterr().err
 
 
+def test_an_unreadable_queue_holds_back_only_the_briefs_with_id_dependencies(
+    tmp_path, capsys, monkeypatch
+):
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "first", folder="done")
+    add_brief(clone, "after-done", not_before=PAST, blocked_by="[first]")
+    add_brief(clone, "free", not_before=PAST)
+
+    def denied(queue):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(maintain_mod, "done_ids", denied)
+    assert maintainer(clone, []).tick().claimed == ("free",)
+    assert "id dependencies count as unmet" in capsys.readouterr().err
+
+
 def test_a_lost_claim_is_reported_and_nothing_is_run(tmp_path, monkeypatch):
     clone = queue_repo(tmp_path)
     add_brief(clone, "b1", not_before=PAST)

@@ -141,14 +141,25 @@ def read_folder(
     folder: pathlib.Path, shown_as: str | None = None, consequence: str = SKIPPED
 ) -> BriefFolder:
     """Every brief in `folder` by name, read once, split into the decoded and the undecodable."""
-    read = [
-        (path, read_brief(path, f"{shown_as or folder}/{path.name}", consequence))
-        for path in sorted(folder.glob("*.md"))
-    ]
+    listed = (
+        _listed(p, f"{shown_as or folder}/{p.name}", consequence)
+        for p in sorted(folder.glob("*.md"))
+    )
+    read = [entry for entry in listed if entry is not None]
     return BriefFolder(
         tuple(brief for _, brief in read if brief is not None),
         tuple(path for path, brief in read if brief is None),
     )
+
+
+def _listed(
+    path: pathlib.Path, shown_as: str, consequence: str
+) -> tuple[pathlib.Path, BriefFile | None] | None:
+    """None for a brief another process moved between the folder listing and the read."""
+    try:
+        return path, read_brief(path, shown_as, consequence)
+    except FileNotFoundError:
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
