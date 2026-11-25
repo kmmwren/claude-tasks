@@ -351,14 +351,13 @@ def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
 
 
 def _set_fields(text: str, fields: Mapping[str, str]) -> str:
-    """Set each `key: value` in the frontmatter block; a value is flattened onto one line."""
-    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
-    if not m or not fields:
+    """Set each `key: value` in the frontmatter block, each value flattened onto one line.
+
+    A brief with no block raises, so a caller that asked for a record never gets a silent no-op.
+    """
+    if not fields:
         return text
-    block = m.group(2)
-    for key, value in fields.items():
-        block = set_field(block, key, " ".join(value.split()))
-    return text[: m.start(2)] + block + text[m.end(2) :]
+    return set_frontmatter_fields(text, {k: " ".join(v.split()) for k, v in fields.items()})
 
 
 def _append_log(text: str, today: str, message: str) -> str:

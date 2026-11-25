@@ -11,7 +11,9 @@ from deps import fm
 from triage_brief import InboxBrief, load_inbox
 from triage_close import (
     CLOSING_FIELDS,
+    MOVE_LOG,
     CloseRules,
+    LogEvent,
     Move,
     MoveLog,
     MoveRecord,
@@ -316,7 +318,9 @@ def test_headings_in_a_merged_body_sit_below_the_merge_heading():
     )
 
 
-ENRICHED = dict(goal="Ship it.", context="Per o/r#2.", criteria=("It ships.",), ticked=True)
+ENRICHED = dict(
+    goal="Ship it.", context="Per o/r#2.", criteria=("It ships.",), ticked=True, blocked_by="[]"
+)
 
 
 def _closed_on_evidence(tmp_path):
@@ -461,7 +465,7 @@ def test_the_move_log_reads_back_a_typed_record(tmp_path):
     root = make_inbox(tmp_path, {})
     log = MoveLog(root)
     log.append(Move("a", "T", "inbox", Reason.DUPLICATE, "x", "k"))
-    assert log.last("a") == MoveRecord("a", "inbox", "done", "duplicate", "x")
+    assert log.last("a") == MoveRecord("a", "inbox", "done", LogEvent.DUPLICATE, "x")
     assert log.last("zz") is None
 
 
@@ -527,3 +531,88 @@ def test_fenced_code_in_a_merged_body_keeps_its_hashes():
     assert _demoted(body) == (
         "### One\n```bash\n# comment\n## also\n```\n### Two\n~~~\n# tilde\n~~~\n###### six"
     )
+
+
+def test_a_body_is_merged_when_the_survivor_only_holds_a_longer_ids_merge(tmp_path):
+    root = make_inbox(tmp_path, {"fix-login": inbox_text("fix-login", **DUP_BODY)})
+    held = inbox_text("keep", goal="Survivor goal.") + "\n## Merged from fix-login-page\n\nOther.\n"
+    (root / "inbox" / "keep.md").write_text(held)
+    move = Move("fix-login", "Title of fix-login", "inbox", Reason.DUPLICATE, "same", "keep")
+    assert apply_moves([move], root, "2026-11-11") == [move]
+    survivor = (root / "inbox" / "keep.md").read_text()
+    assert "\n## Merged from fix-login\n" in survivor and "Unique goal of the twin." in survivor
+
+
+def test_move_log_reasons_are_log_events_and_keep_the_strings_written_today(tmp_path):
+    root = make_inbox(tmp_path, {})
+    MoveLog(root).append(Move("a", "T", "inbox", Reason.EVIDENCE, "x"))
+    MoveLog(root).append_reopen("a", "done", "inbox")
+    assert [r["reason"] for r in _rows(root)] == ["evidence", "reopened"]
+    record = MoveLog(root).last("a")
+    assert record is not None and record.reason is LogEvent.REOPENED
+
+
+def test_a_row_with_an_unknown_reason_is_skipped_with_a_warning(tmp_path, capsys):
+    root = make_inbox(tmp_path, {})
+    MoveLog(root).append(Move("a", "T", "inbox", Reason.EVIDENCE, "x"))
+    with (root / MOVE_LOG).open("a") as handle:
+        handle.write(json.dumps({"id": "a", "from": "inbox", "to": "done", "reason": "?"}) + "\n")
+    record = MoveLog(root).last("a")
+    assert record is not None and record.reason is LogEvent.EVIDENCE
+    assert f"{MOVE_LOG} line 2 unreadable, skipped" in capsys.readouterr().err
+
+
+def test_a_torn_log_row_does_not_stop_reopen_from_the_brief_itself(tmp_path, capsys):
+    root = _closed_on_evidence(tmp_path)
+    (root / MOVE_LOG).write_text('{"id": "a", "from": "rea\n')
+    assert reopen("a", root, "2026-11-12") == "ready"
+    assert "line 1 unreadable, skipped" in capsys.readouterr().err
+
+
+def test_a_torn_row_is_skipped_and_the_rows_around_it_still_read(tmp_path):
+    root = make_inbox(tmp_path, {})
+    log = MoveLog(root)
+    log.append(Move("a", "T", "inbox", Reason.EVIDENCE, "x"))
+    with (root / MOVE_LOG).open("a") as handle:
+        handle.write('{"id": "b", "fr\n\n')
+    log.append(Move("c", "T", "inbox", Reason.EVIDENCE, "y"))
+    assert [log.last(i) is not None for i in "abc"] == [True, False, True]
+
+
+@pytest.mark.parametrize("reason", [Reason.EVIDENCE, Reason.DUPLICATE])
+def test_a_brief_with_no_frontmatter_is_left_open_and_the_survivor_untouched(
+    tmp_path, capsys, reason
+):
+    root = make_inbox(tmp_path, {})
+    (root / "inbox" / "a.md").write_text("# Bare note\n\nNo block at all.\n")
+    keep = inbox_text("keep", goal="Survivor goal.")
+    (root / "inbox" / "keep.md").write_text(keep)
+    move = Move("a", "Bare", "inbox", reason, "x", "keep" if reason is Reason.DUPLICATE else None)
+    assert apply_moves([move], root, "2026-11-11") == []
+    assert (root / "inbox" / "a.md").exists() and not (root / "done" / "a.md").exists()
+    assert (root / "inbox" / "keep.md").read_text() == keep and not (root / MOVE_LOG).exists()
+    assert "a not closed" in capsys.readouterr().err
+
+
+def test_an_evidence_close_ticks_the_criteria_with_its_evidence_note(tmp_path):
+    root = make_inbox(tmp_path, {})
+    unticked = {**ENRICHED, "ticked": False, "title": "Merge o/r#1", "context": "o/r#1"}
+    (root / "ready" / "a.md").write_text(inbox_text("a", status="ready", **unticked))
+    move = Move("a", "Merge o/r#1", "ready", Reason.EVIDENCE, "o/r#1 MERGED")
+    merged = _states({("o/r", 1): PrState.MERGED})
+    assert apply_moves([move], root, "2026-11-11", merged) == [move]
+    assert "- [x] It ships." in (root / "done" / "a.md").read_text()
+
+
+def test_a_tilde_fence_holding_backtick_lines_stays_one_block():
+    body = "# One\n~~~\n```\n# inside\n```\n# still inside\n~~~\n## Two"
+    assert _demoted(body) == "### One\n~~~\n```\n# inside\n```\n# still inside\n~~~\n### Two"
+
+
+def test_a_closed_reason_the_brief_carries_but_no_event_knows_is_not_reopened(tmp_path):
+    root = _closed_on_evidence(tmp_path)
+    (root / MOVE_LOG).unlink()
+    path = root / "done" / "a.md"
+    path.write_text(path.read_text().replace("closed_reason: evidence", "closed_reason: odd"))
+    with pytest.raises(ValueError, match="has not closed"):
+        reopen("a", root, "2026-11-12")

@@ -250,7 +250,7 @@ def _declare(opts: Options, report: Report) -> list[str]:
     """Declare the briefs with no blockers; returns those written (none on a dry run)."""
     declarations = declare_empty(opts.root, opts.apply, opts.today)
     report.declared_empty, report.held_for_fill = len(declarations.declared), len(declarations.held)
-    return declarations.declared if opts.apply else []
+    return list(declarations.declared) if opts.apply else []
 
 
 def _collapse(opts: Options, report: Report) -> tuple[list[str], set[str]]:
@@ -353,16 +353,20 @@ def _reopen(ap: argparse.ArgumentParser, brief_id: str | None, root: pathlib.Pat
     print(f"{brief_id} -> {folder}/")
 
 
-def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Collapse, promote and close inbox briefs.")
-    ap.add_argument("command", choices=["promote", "reopen"])
-    ap.add_argument("brief_id", nargs="?", help="the brief `reopen` puts back")
-    ap.add_argument("--root", type=pathlib.Path)
+def _add_mode(ap: argparse.ArgumentParser) -> None:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="write and commit (default: dry run)")
     mode.add_argument(
         "--dry-run", action="store_true", help="print the planned closes and alerts; writes nothing"
     )
+
+
+def _parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Collapse, promote and close inbox briefs.")
+    ap.add_argument("command", choices=["promote", "reopen"])
+    ap.add_argument("brief_id", nargs="?", help="the brief `reopen` puts back")
+    ap.add_argument("--root", type=pathlib.Path)
+    _add_mode(ap)
     ap.add_argument("--llm", action="store_true", help="fill missing fields with claude -p")
     ap.add_argument("--model", default="sonnet")
     ap.add_argument("--batch-size", type=int, default=15)
@@ -371,7 +375,9 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _llm_calls(args: argparse.Namespace, root: pathlib.Path) -> tuple[PredictFn | None, ClassifyFn | None]:
+def _llm_calls(
+    args: argparse.Namespace, root: pathlib.Path
+) -> tuple[PredictFn | None, ClassifyFn | None]:
     """The fill and classify calls when `--llm` is set, both on the queue's configured launcher."""
     if not args.llm:
         return None, None

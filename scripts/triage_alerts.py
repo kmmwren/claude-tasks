@@ -138,6 +138,15 @@ def _warn(why: str) -> bool:
     return False
 
 
+def _post(script: pathlib.Path, text: str) -> None:
+    """Load the alerts script from its path and post `text` through it."""
+    spec = importlib.util.spec_from_file_location("session_alerts", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.post(CHANNEL, PROJECT, KIND, text)
+
+
 def session_alert_notifier(scripts_dir: pathlib.Path = SCRIPTS_DIR) -> Notifier:
     """Post to the session-alerts channel; warn on stderr and report False when it cannot."""
 
@@ -146,15 +155,8 @@ def session_alert_notifier(scripts_dir: pathlib.Path = SCRIPTS_DIR) -> Notifier:
         if not script.exists():
             return _warn(f"{script} is absent")
         try:
-            spec = importlib.util.spec_from_file_location("session_alerts", script)
-            assert spec is not None and spec.loader is not None
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            module.post(CHANNEL, PROJECT, KIND, text)
-        except (
-            Exception,
-            SystemExit,
-        ) as err:  # a broken alert script never stops triage or loses a close
+            _post(script, text)
+        except (Exception, SystemExit) as err:  # a broken alert script never loses a close
             return _warn(f"{script.name} failed: {err}")
         return True
 

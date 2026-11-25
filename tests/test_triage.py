@@ -240,7 +240,7 @@ def test_a_second_run_in_one_process_shares_the_first_runs_no_quota_latch(
     assert len(calls) == 1
 
 
-FINISHED = dict(criteria=("It ships.",), ticked=True)
+FINISHED = dict(criteria=("It ships.",), ticked=True, blocked_by="[]")
 
 
 @pytest.fixture
@@ -322,9 +322,9 @@ def _judged_queue(tmp_path):
     root = make_inbox(
         tmp_path,
         {
-            "junk": inbox_text("junk"),
-            "stale": inbox_text("stale", extra="created: 2026-10-01\n"),
-            "fresh": inbox_text("fresh", extra="created: 2026-11-20\n"),
+            "junk": inbox_text("junk", blocked_by="[]"),
+            "stale": inbox_text("stale", blocked_by="[]", extra="created: 2026-10-01\n"),
+            "fresh": inbox_text("fresh", blocked_by="[]", extra="created: 2026-11-20\n"),
         },
     )
     calls = {
@@ -443,9 +443,11 @@ def test_main_reads_the_triage_table_for_its_rules(tmp_path, capsys, offline):
 
 def test_main_dry_run_also_prints_the_alert_plan(tmp_path, capsys, offline, monkeypatch):
     root = make_inbox(tmp_path, {"junk": inbox_text("junk")})
-    monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
+    monkeypatch.setattr(triage, "claude_predict", lambda model, launch=None: _fill)
     monkeypatch.setattr(
-        triage, "claude_classify", lambda model: _classifier({"junk": _call(BC.DROP, "obsolete")})
+        triage,
+        "claude_classify",
+        lambda model, launch=None: _classifier({"junk": _call(BC.DROP, "obsolete")}),
     )
     triage.main(["promote", "--dry-run", "--llm", "--root", str(root)])
     out = capsys.readouterr().out
@@ -459,9 +461,11 @@ def test_main_apply_sends_the_alert_through_the_session_alert_notifier(
     root = make_inbox(tmp_path, {"junk": inbox_text("junk")})
     bell = Bell()
     monkeypatch.setattr(triage, "session_alert_notifier", lambda: bell)
-    monkeypatch.setattr(triage, "claude_predict", lambda model: _fill)
+    monkeypatch.setattr(triage, "claude_predict", lambda model, launch=None: _fill)
     monkeypatch.setattr(
-        triage, "claude_classify", lambda model: _classifier({"junk": _call(BC.DROP, "obsolete")})
+        triage,
+        "claude_classify",
+        lambda model, launch=None: _classifier({"junk": _call(BC.DROP, "obsolete")}),
     )
     triage.main(["promote", "--apply", "--llm", "--root", str(root)])
     assert len(bell.texts) == 1 and json.loads(capsys.readouterr().out)["alerts_delivered"]

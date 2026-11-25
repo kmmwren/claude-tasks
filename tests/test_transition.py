@@ -1382,8 +1382,10 @@ def test_move_sets_extra_frontmatter_fields_flattened_to_one_line(root):
     assert fields["status"] == "done"
 
 
-def test_set_fields_leaves_text_without_frontmatter_unchanged():
-    assert (
+def test_set_fields_refuses_text_without_frontmatter_so_a_record_is_never_dropped():
+    with pytest.raises(ValueError, match="no frontmatter"):
         transition._set_fields("no frontmatter\n", {"closed_reason": "evidence"})
-        == "no frontmatter\n"
-    )
+
+
+def test_set_fields_with_nothing_to_set_leaves_any_text_alone():
+    assert transition._set_fields("no frontmatter\n", {}) == "no frontmatter\n"

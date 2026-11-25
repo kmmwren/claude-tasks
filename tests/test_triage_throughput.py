@@ -8,6 +8,7 @@ import headless
 import pytest
 import triage
 from deps import fm
+from git_sync import SyncResult
 
 from tests.queue_helpers import inbox_text, make_inbox
 
@@ -20,7 +21,9 @@ WAITING = "This waits for o/r#9 to land before anyone starts."
 def synced(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        triage, "sync_commit", lambda msg, root, ids: calls.append(sorted(ids)) or True
+        triage,
+        "sync_commit",
+        lambda msg, root, ids, paths=(): calls.append(sorted(ids)) or SyncResult.COMMITTED,
     )
     return calls
 
@@ -116,7 +119,7 @@ def test_main_says_once_that_no_quota_ended_the_calls_and_reports_how_many_it_sk
     tmp_path, capsys, monkeypatch
 ):
     _no_quota(monkeypatch)
-    monkeypatch.setattr(triage, "LiveSources", lambda root: LIVE)
+    monkeypatch.setattr(triage, "LiveSources", lambda root, prs=None: LIVE)
     briefs = {f"b{i}": inbox_text(f"b{i}", title=f"Fix o/r#1 {i}") for i in range(4)}
     root = make_inbox(tmp_path, briefs)
     with pytest.raises(SystemExit):

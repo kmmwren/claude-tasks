@@ -11,7 +11,7 @@ from tests.queue_helpers import inbox_text, make_inbox
 
 @pytest.fixture
 def offline(monkeypatch):
-    monkeypatch.setattr(triage, "LiveSources", lambda root: {"o/r#1"}.__contains__)
+    monkeypatch.setattr(triage, "LiveSources", lambda root, prs=None: {"o/r#1"}.__contains__)
 
 
 def test_main_exits_nonzero_when_every_headless_call_fails(tmp_path, capsys, monkeypatch, offline):

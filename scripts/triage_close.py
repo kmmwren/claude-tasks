@@ -10,11 +10,12 @@ import dataclasses
 import datetime
 import enum
 import fcntl
+import functools
 import json
 import pathlib
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 
 from _concurrency import atomic_write, require_lock
 from class_log import BriefClass, Verdict
@@ -29,7 +30,6 @@ MOVE_LOG = "closed.jsonl"
 STALE_DAYS = 21
 MAX_MOVES = 200
 DONE = "done"
-REOPENED = "reopened"
 REOPENED_FIELD = "reopened"
 CLOSED_REASON = "closed_reason"
 CLOSED_EVIDENCE = "closed_evidence"
@@ -47,6 +47,14 @@ class Reason(enum.StrEnum):
 
     EVIDENCE = "evidence"
     DUPLICATE = "duplicate"
+
+
+class LogEvent(enum.StrEnum):
+    """What a move-log row records: a closing, by its reason, or the owner putting the brief back."""
+
+    EVIDENCE = Reason.EVIDENCE.value
+    DUPLICATE = Reason.DUPLICATE.value
+    REOPENED = "reopened"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -71,6 +79,16 @@ class Move:
         return {k: values[k] for k in CLOSING_FIELDS if values[k]}
 
     @property
+    def settled_by(self) -> str | None:
+        """The evidence that ticks the open criteria of a brief closed because it is finished."""
+        return self.detail if self.reason is Reason.EVIDENCE else None
+
+    @property
+    def carried_by(self) -> list[str] | None:
+        """The survivor that now carries a duplicate's criteria, which is what ticks them."""
+        return [self.survivor] if self.survivor else None
+
+    @property
     def log(self) -> str:
         return (
             f"closed by inbox-triage ({self.reason}): {self.detail}; "
@@ -85,7 +103,7 @@ class MoveRecord:
     brief_id: str
     source: str
     target: str
-    reason: str
+    reason: LogEvent
     evidence: str
 
 
@@ -111,6 +129,15 @@ def _whole(value: object, default: int, minimum: int) -> int:
     return default
 
 
+def _parse_row(line: str) -> MoveRecord | None:
+    try:
+        row = json.loads(line)
+        reason = LogEvent(row["reason"])
+        return MoveRecord(row["id"], row["from"], row["to"], reason, row["evidence"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 class MoveLog:
     """Append-only JSONL of every move and reopen, in the queue so it travels with the briefs."""
 
@@ -118,30 +145,33 @@ class MoveLog:
         self.path = root / MOVE_LOG
 
     def append(self, move: Move) -> None:
-        self._write(move.brief_id, move.source, DONE, str(move.reason), move.detail)
+        self._write(move.brief_id, move.source, DONE, LogEvent(move.reason), move.detail)
 
     def append_reopen(self, brief_id: str, was_in: str, back_to: str) -> None:
-        self._write(brief_id, was_in, back_to, REOPENED, f"back in {back_to}/")
+        self._write(brief_id, was_in, back_to, LogEvent.REOPENED, f"back in {back_to}/")
 
     def last(self, brief_id: str) -> MoveRecord | None:
         """The newest row for `brief_id`, or None when triage never logged a move of it."""
-        rows = (
-            (json.loads(line) for line in self.path.read_text().splitlines())
-            if self.path.exists()
-            else ()
-        )
-        found = [r for r in rows if r["id"] == brief_id]
-        if not found:
-            return None
-        row = found[-1]
-        return MoveRecord(brief_id, row["from"], row["to"], row["reason"], row["evidence"])
+        found = [r for r in self._records() if r.brief_id == brief_id]
+        return found[-1] if found else None
 
-    def _write(self, brief_id: str, source: str, target: str, reason: str, detail: str) -> None:
+    def _records(self) -> Iterator[MoveRecord]:
+        """Every readable row; a torn or hand-edited one is skipped with a warning, never fatal."""
+        if not self.path.exists():
+            return
+        for number, line in enumerate(self.path.read_text(errors="replace").splitlines(), 1):
+            record = _parse_row(line)
+            if record is not None:
+                yield record
+            elif line.strip():
+                print(f"triage: {MOVE_LOG} line {number} unreadable, skipped", file=sys.stderr)
+
+    def _write(self, brief_id: str, source: str, target: str, event: LogEvent, detail: str) -> None:
         row = {
             "id": brief_id,
             "from": source,
             "to": target,
-            "reason": reason,
+            "reason": str(event),
             "evidence": detail,
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         }
@@ -180,17 +210,11 @@ def verdict_moves(
         for v in verdicts
         if v.cls is BriefClass.DUPLICATE and v.brief_id in dupes and eligible(inbox[v.brief_id])
     ]
-    return [
-        Move(
-            v.brief_id,
-            inbox[v.brief_id].title,
-            "inbox",
-            Reason.DUPLICATE,
-            v.reason,
-            dupes[v.brief_id],
-        )
-        for v in calls
-    ]
+    return [_duplicate_move(v, inbox[v.brief_id], dupes[v.brief_id]) for v in calls]
+
+
+def _duplicate_move(verdict: Verdict, brief: InboxBrief, survivor: str) -> Move:
+    return Move(verdict.brief_id, brief.title, "inbox", Reason.DUPLICATE, verdict.reason, survivor)
 
 
 def capped(moves: Sequence[Move], limit: int) -> tuple[list[Move], int]:
@@ -212,20 +236,27 @@ def _demote(line: str) -> str:
 
 def _demoted(body: str) -> str:
     """Headings pushed below the `## Merged from` heading; fenced code, where `#` is a comment, is kept."""
-    lines, fenced = [], False
+    lines: list[str] = []
+    marker: str | None = None
     for line in body.split("\n"):
-        if _FENCE.match(line):
-            fenced = not fenced
-            lines.append(line)
-        else:
-            lines.append(line if fenced else _demote(line))
+        after = _fence_after(marker, line)
+        lines.append(line if marker or after else _demote(line))
+        marker = after
     return "\n".join(lines)
+
+
+def _fence_after(marker: str | None, line: str) -> str | None:
+    """The marker of the fence still open after `line`; only the marker that opened a fence closes it."""
+    found = _FENCE.match(line)
+    if found is None or (marker and found[1] != marker):
+        return marker
+    return None if marker else found[1]
 
 
 def _with_merged(survivor: str, source_id: str, source: str) -> str:
     """`survivor` with `source` appended under `## Merged from <id>`, ahead of the execution log."""
     heading = f"## Merged from {source_id}"
-    if heading in survivor:
+    if re.search(rf"(?m)^{re.escape(heading)}[ \t]*$", survivor):
         return survivor
     block = f"{heading}\n\n{_demoted(_body(source))}\n\n"
     log = EXECUTION_LOG.search(survivor)
@@ -271,26 +302,43 @@ def _skip(move: Move, err: Exception) -> bool:
     return False
 
 
+def _frontmatter_missing(move: Move, root: pathlib.Path) -> bool:
+    """A closure is recorded in frontmatter, so a brief without a block cannot be closed."""
+    path = root / move.source / f"{move.brief_id}.md"
+    return path.exists() and not _FRONTMATTER.match(path.read_text())
+
+
+def _land(move: Move, root: pathlib.Path, today: str, states: PrStates) -> bool:
+    """Merge a duplicate into its survivor, then move it to done/; False when the merge refused."""
+    if move.survivor and not _merge_into_survivor(move, root, today, states):
+        return False
+    move_brief(
+        move.brief_id,
+        DONE,
+        root,
+        log=move.log,
+        today=today,
+        fields=move.fields,
+        only_if=functools.partial(_closable, move, root, states),
+        settle_with=move.settled_by,
+        superseded_by=move.carried_by,
+    )
+    return True
+
+
 def _apply(move: Move, root: pathlib.Path, today: str, states: PrStates, log: MoveLog) -> bool:
     """Make one move and log it at once, so a later failure never leaves a move unlogged."""
+    if _frontmatter_missing(move, root):
+        return _skip(move, ValueError("it has no frontmatter to record the closure in"))
     try:
-        if move.survivor and not _merge_into_survivor(move, root, today, states):
-            return False
-        move_brief(
-            move.brief_id,
-            DONE,
-            root,
-            log=move.log,
-            today=today,
-            fields=move.fields,
-            only_if=lambda: _closable(move, root, states),
-        )
+        landed = _land(move, root, today, states)
     except ValueError:
         return False
     except (RuntimeError, TimeoutError) as err:
         return _skip(move, err)
-    log.append(move)
-    return True
+    if landed:
+        log.append(move)
+    return landed
 
 
 def apply_moves(
@@ -308,14 +356,16 @@ def _recorded_on_brief(brief_id: str, root: pathlib.Path) -> MoveRecord | None:
     if not (path and fields.get(CLOSED_REASON) and fields.get(CLOSED_FROM)):
         return None
     detail = fields.get(CLOSED_EVIDENCE) or fields.get(DUPLICATE_OF, "")
-    return MoveRecord(
-        brief_id, fields[CLOSED_FROM], path.parent.name, fields[CLOSED_REASON], detail
-    )
+    try:
+        reason = LogEvent(fields[CLOSED_REASON])
+    except ValueError:
+        return None
+    return MoveRecord(brief_id, fields[CLOSED_FROM], path.parent.name, reason, detail)
 
 
 def _closure(brief_id: str, root: pathlib.Path) -> MoveRecord:
     row = MoveLog(root).last(brief_id) or _recorded_on_brief(brief_id, root)
-    if row is None or row.reason == REOPENED:
+    if row is None or row.reason is LogEvent.REOPENED:
         raise ValueError(f"triage has not closed {brief_id!r}, or it is already reopened")
     return row
 
