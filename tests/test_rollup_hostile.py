@@ -65,7 +65,8 @@ def test_hostile_text_never_becomes_markup_in_html(tmp_path, view):
     page = rv.HTML.render(rv.VIEWS[view], hostile_everywhere(tmp_path))
     assert "<script" not in page and "onmouseover" not in page.replace(ESCAPED_TITLE, "")
     assert page.count(ESCAPED_TITLE) >= ESCAPED_AT_LEAST[view]
-    assert "<a " not in page
+    assert all(SAFE_TARGET.fullmatch(h) for h in re.findall(r"<a href=\"([^\"]*)\"", page))
+    assert page.count("<a ") == len(re.findall(r"<a href=\"[^\"]*\"", page))
 
 
 def test_html_on_the_server_front_page_links_only_to_fixed_targets(tmp_path):

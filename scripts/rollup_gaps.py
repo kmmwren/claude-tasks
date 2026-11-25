@@ -20,6 +20,15 @@ class Gap:
     def table(self) -> dict[str, str]:
         return dataclasses.asdict(self)
 
+    def label(self) -> str:
+        """The gap as a project's own row names it: `initiative`, or `m2 due date`."""
+        return self.missing if self.subject == "project" else f"{self.subject} {self.missing}"
+
+
+def missing_note(gaps: Iterable[Gap]) -> str:
+    labels = [g.label() for g in gaps]
+    return f"Missing {', '.join(labels)}" if labels else ""
+
 
 class Expectation(ABC):
     """One fact a project must record; a new rule is one more subclass in EXPECTATIONS."""

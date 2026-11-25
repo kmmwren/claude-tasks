@@ -44,11 +44,21 @@ NO_MILESTONES = "No milestones defined."
 NO_NEXT = "no open milestone has a date."
 NO_ASK = "none."
 NO_BRIEFS = "No briefs"
-NO_FLAGS = "None"
 NO_DATE = "No date"
 NO_BASELINE = "No first date"
 NO_SLIP = "No slip"
+NO_COUNT = "Not counted"
 DETAIL_SUMMARY = "Show detail"
+BADGE = "Roll-up"
+CHEVRON = (
+    '<svg class="sg-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>'
+)
+CALENDAR = (
+    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" '
+    'aria-hidden="true"><rect x="2.5" y="4" width="15" height="13" rx="2"/>'
+    '<path d="M2.5 8.5h15M6.5 2v4M13.5 2v4"/></svg>'
+)
 NO_SHIPPED = f"Nothing shipped in the last {rm.SHIPPED_DAYS} days."
 HTML_CSP = (
     "default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; "
@@ -298,11 +308,18 @@ class Tone(enum.Enum):
     GOOD = "good"
     WARN = "warn"
     BAD = "bad"
+    ACTIVE = "active"
     NEUTRAL = "neutral"
 
 
 HEALTH_TONE = {pv.GREEN: Tone.GOOD, pv.AMBER: Tone.WARN, pv.RED: Tone.BAD}
 BUILD_TONE = {"green": Tone.GOOD, "red": Tone.BAD}
+STAGE_TONE = {
+    rm.Stage.DONE: Tone.GOOD,
+    rm.Stage.NOW: Tone.ACTIVE,
+    rm.Stage.NEXT: Tone.NEUTRAL,
+    rm.Stage.PARKED: Tone.NEUTRAL,
+}
 
 
 class Inline(ABC):
@@ -360,16 +377,6 @@ class Code(Inline):
 
     def render(self, m: "Markup") -> str:
         return m.code(self.text)
-
-
-@dataclasses.dataclass(frozen=True)
-class Day(Inline):
-    """A calendar date, kept on one line."""
-
-    iso: str
-
-    def render(self, m: "Markup") -> str:
-        return m.day(self.iso)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -464,17 +471,6 @@ class NumberedBullets(Bullets):
 
 
 @dataclasses.dataclass(frozen=True)
-class Table(Block):
-    """Cells are rows of inline parts, so a cell can carry a chip but never a block."""
-
-    headings: tuple[str, ...]
-    rows: tuple[tuple[Row, ...], ...]
-
-    def render(self, m: "Markup", depth: int) -> str:
-        return m.table(list(self.headings), [[c.render(m) for c in r] for r in self.rows])
-
-
-@dataclasses.dataclass(frozen=True)
 class Section(Block):
     """A headed part of a page."""
 
@@ -507,15 +503,99 @@ class Details(Block):
 
 
 @dataclasses.dataclass(frozen=True)
+class Target:
+    """The date a row aims at; `late` once it has passed with the work not done."""
+
+    iso: str = ""
+    late: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class Progress:
+    done: int
+    total: int
+
+    @classmethod
+    def of(cls, milestones: Iterable[rm.MilestoneSummary]) -> "Progress":
+        stages = [m.stage for m in milestones]
+        return cls(stages.count(rm.Stage.DONE), len(stages))
+
+    @property
+    def percent(self) -> int:
+        return round(100 * self.done / self.total) if self.total else 0
+
+    @property
+    def text(self) -> str:
+        return f"{self.done}/{self.total}"
+
+    def tone(self, standing: Tone) -> Tone:
+        """A finished count reads as done whatever the row's standing; otherwise it shares it."""
+        return Tone.GOOD if self.total and self.done == self.total else standing
+
+
+@dataclasses.dataclass(frozen=True)
+class StatusRow:
+    """One line of a status grid; `progress` is None where nothing is counted."""
+
+    title: str
+    description: str
+    target: Target
+    progress: Progress | None
+    status: Chip
+    note: str
+    children: tuple["StatusRow", ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class StatusGrid(Block):
+    """Rows read down by status, each opening onto the rows it is made of."""
+
+    noun: str
+    child_noun: str
+    rows: tuple[StatusRow, ...]
+
+    def render(self, m: "Markup", depth: int) -> str:
+        return m.status_grid(self)
+
+    def numbered(self) -> Iterable[tuple[str, StatusRow]]:
+        """Every row with its place: `2` for a top row, `2.3` for the third row under it."""
+        for n, top in enumerate(self.rows, 1):
+            yield str(n), top
+            yield from ((f"{n}.{k}", child) for k, child in enumerate(top.children, 1))
+
+    def tally(self) -> tuple[tuple[Chip, int], ...]:
+        """How many rows stand at each status, in order of first appearance."""
+        return tuple(Counter(r.status for _, r in self.numbered()).items())
+
+    def totals(self) -> str:
+        children = sum(len(r.children) for r in self.rows)
+        counts = [(len(self.rows), self.noun), (children, self.child_noun)]
+        return ", ".join(plural(n, noun.lower()) for n, noun in counts)
+
+
+@dataclasses.dataclass(frozen=True)
+class Sibling(Inline):
+    """Another view of the same roll-up, linked in whichever format the page is drawn in."""
+
+    view: "View"
+    current: bool = False
+
+    def render(self, m: "Markup") -> str:
+        return m.sibling(self.view.title, m.filename(self.view), self.current)
+
+
+@dataclasses.dataclass(frozen=True)
 class Document:
     title: str
     generated: str
     sources: tuple[str, ...]
     blocks: tuple[Block, ...]
+    nav: tuple[Inline, ...] = ()
 
     def render(self, m: "Markup") -> str:
         body = [b.render(m, 2) for b in self.blocks]
-        return m.document(self.title, self.generated, self.sources, body)
+        nav = [n.render(m) for n in self.nav]
+        return m.document(self.title, self.generated, self.sources, nav, body)
 
 
 def paragraph(*parts: Inline | str) -> Paragraph:
@@ -582,9 +662,6 @@ class Markup(Format, ABC):
     @abstractmethod
     def code(self, text: str) -> str: ...
 
-    def day(self, iso: str) -> str:
-        return self.text(iso)
-
     @abstractmethod
     def link(self, text: str, url: str) -> str: ...
 
@@ -604,9 +681,6 @@ class Markup(Format, ABC):
     def numbered(self, items: list[tuple[str, list[str]]]) -> str: ...
 
     @abstractmethod
-    def table(self, headings: list[str], rows: list[list[str]]) -> str: ...
-
-    @abstractmethod
     def section(self, heading: str, depth: int, body: list[str]) -> str: ...
 
     def tile(self, heading: str, depth: int, body: list[str]) -> str:
@@ -616,8 +690,19 @@ class Markup(Format, ABC):
     def details(self, summary: str, body: list[str]) -> str: ...
 
     @abstractmethod
+    def status_grid(self, grid: StatusGrid) -> str: ...
+
+    def sibling(self, title: str, target: str, current: bool) -> str:
+        return self.strong(title) if current else self.link(title, target)
+
+    @abstractmethod
     def document(
-        self, title: str, generated: str, sources: tuple[str, ...], body: list[str]
+        self,
+        title: str,
+        generated: str,
+        sources: tuple[str, ...],
+        nav: list[str],
+        body: list[str],
     ) -> str: ...
 
 
@@ -680,45 +765,140 @@ class MarkdownFormat(Markup):
         opening = f"<details>\n<summary>{html.escape(summary)}</summary>"
         return "\n\n".join([opening, *body, "</details>"])
 
+    def status_grid(self, grid: StatusGrid) -> str:
+        """A table whose child rows are numbered under their parent and marked with an arrow."""
+        headings = ["#", grid.noun, "Due", "Progress", "Status", "Note"]
+        rows = [self._grid_cells(n, r) for n, r in grid.numbered()]
+        key = ", ".join(f"{self.chip(c.label, c.tone)} {n}" for c, n in grid.tally())
+        return "\n\n".join([self.table(headings, rows), f"{escape_md(grid.totals())}. Key: {key}"])
+
+    def _grid_cells(self, number: str, r: StatusRow) -> list[str]:
+        arrow = "↳ " if "." in number else ""
+        return [
+            number,
+            f"{arrow}{self.strong(r.title)} {escape_md(r.description)}".rstrip(),
+            self._target(r.target),
+            r.progress.text if r.progress else NO_COUNT,
+            self.chip(r.status.label, r.status.tone),
+            escape_md(r.note),
+        ]
+
+    def _target(self, t: Target) -> str:
+        return (t.iso + (" `late`" if t.late else "")) if t.iso else NO_DATE
+
     def document(
-        self, title: str, generated: str, sources: tuple[str, ...], body: list[str]
+        self,
+        title: str,
+        generated: str,
+        sources: tuple[str, ...],
+        nav: list[str],
+        body: list[str],
     ) -> str:
         origin = ", ".join(escape_md(s) for s in sources)
         head = [f"# {escape_md(title)}", f"*Generated {generated} from {origin}.*"]
-        return "\n\n".join([*head, *body]) + "\n"
+        links = [" · ".join(nav)] if nav else []
+        return "\n\n".join([*head, *links, *body]) + "\n"
 
 
-STYLE = """:root{--bg:#fff;--fg:#1d2433;--muted:#556070;--line:#d9dee7;--card:#f6f8fb;
---good:#17653a;--good-bg:#e2f3e8;--warn:#85500a;--warn-bg:#fdf0d5;--bad:#a1241d;--bad-bg:#fce5e3;
---neutral:#394354;--neutral-bg:#e9edf3;--link:#1457a8}
-@media (prefers-color-scheme:dark){:root{--bg:#14171d;--fg:#e6e9ef;--muted:#a0a9b8;--line:#2c323d;
---card:#1b1f27;--good:#86d9a1;--good-bg:#12301f;--warn:#f1c473;--warn-bg:#3a2a0d;--bad:#ff9f98;
---bad-bg:#3e1613;--neutral:#c5ccd8;--neutral-bg:#2a303b;--link:#8ab8f5}}
+STYLE = """:root{--page:#F5F6FA;--card:#fff;--ink:#1F2950;--text:#2C3E50;--muted:#8A93AD;--slate:#5B6B8C;
+--line:#E4E5EE;--soft:#EEF0F5;--kid:#FBFCFE;--link:#1F5FBF;--date:#EFF1F7;--date-fg:#3D4670;
+--late:#F8C7CD;--late-fg:#8A0E12;--empty:#D3D8E5;--total:#3E5A8F;
+--good:#16A34A;--good-bg:#D9F4E3;--good-bar:#1DB45A;--warn:#B7791F;--warn-bg:#FFF0D4;--warn-bar:#FFB800;
+--bad:#E5303A;--bad-bg:#FDDDDF;--bad-bar:#F0313C;--active:#2B5FD9;--active-bg:#E3ECFF;--active-bar:#4C7DF0;
+--neutral:#3A4466;--neutral-bg:#EEF0F5;--neutral-bar:#C9D3E6}
+@media (prefers-color-scheme:dark){:root{--page:#0B1020;--card:#141A2E;--ink:#E6E9F2;--text:#D5DAE6;
+--slate:#A3AEC8;--line:#262E4A;--soft:#1D2440;--kid:#11172A;--link:#8AB4FF;--date:#1F2742;
+--date-fg:#C9D0E4;--late:#4A1A20;--late-fg:#FFB3B8;--empty:#39425F;--total:#9DB2DA;
+--good:#6EE19A;--good-bg:#12351F;--warn:#F5C76A;--warn-bg:#3A2C0C;--bad:#FF9AA0;--bad-bg:#40161B;
+--active:#9DBBFF;--active-bg:#18264A;--neutral:#C5CCDE;--neutral-bg:#232B45;--neutral-bar:#3A4466}}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;margin:0}
-main{max-width:62rem;margin:0 auto;padding:1rem}
-h1{font-size:1.6rem;margin:.2rem 0}h2{font-size:1.3rem;margin:2rem 0 .3rem}
-h3{font-size:1.1rem;margin:1.2rem 0 .2rem}h4,h5,h6{font-size:1rem;margin:1rem 0 .2rem}
+body{background:var(--page);color:var(--text);font:14px/1.5 Roboto,Arial,system-ui,sans-serif;margin:0}
+.wrap,main{max-width:72rem;margin:0 auto;padding:0 1.5rem}
+main{padding-bottom:3rem}
+.cover{background:linear-gradient(to right,#001039 0%,#0B2260 55%,#163D80 100%);color:#fff;padding:1.6rem 0 1.4rem}
+.badge{display:inline-block;border:1px solid rgba(250,203,50,.45);border-radius:20px;padding:3px 13px;
+font-size:.7rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#FACB32;
+background:rgba(100,160,255,.08)}
+.cover h1{font-size:2rem;font-weight:700;margin:.5rem 0 .4rem;color:#fff}
+.meta{display:flex;flex-wrap:wrap;gap:.4rem 1.4rem;margin:0;font-size:.8rem;color:rgba(255,255,255,.65)}
+.meta strong{color:#fff;margin-right:.35rem}
+nav.views{background:#001039}
+nav.views .wrap{display:flex;flex-wrap:wrap;gap:.2rem 1.6rem;padding-top:.7rem;padding-bottom:.7rem}
+nav.views a{color:rgba(255,255,255,.85);font-size:.75rem;font-weight:600;letter-spacing:.8px;
+text-transform:uppercase;text-decoration:none;padding-bottom:.2rem;border-bottom:2px solid transparent}
+nav.views a:hover{color:#fff}nav.views a[aria-current=page]{color:#fff;border-bottom-color:#FACB32}
+h2{display:flex;align-items:center;gap:.5rem;font-size:.8rem;font-weight:700;letter-spacing:1.4px;
+text-transform:uppercase;color:var(--ink);margin:2.2rem 0 .9rem}
+h2::before{content:"";width:4px;height:15px;background:var(--ink);flex:none}
+h3{font-size:1.05rem;color:var(--ink);margin:1.4rem 0 .3rem}
+h4,h5,h6{font-size:.95rem;color:var(--ink);margin:1rem 0 .2rem}
 p{margin:.4rem 0}a{color:var(--link)}code{font-size:.9em}
 section{overflow-wrap:anywhere}
-section.depth-2{border-top:1px solid var(--line);padding-top:.2rem}
-.stamp{color:var(--muted);font-size:.85rem;margin:0 0 .4rem}
-.chip{display:inline-block;border-radius:.6rem;padding:0 .55rem;font-size:.85rem;font-weight:600;
-white-space:nowrap}
+.chip{display:inline-block;border-radius:999px;padding:.05rem .65rem;font-size:.78rem;font-weight:600;
+white-space:nowrap;line-height:1.5}
 .chip-good{color:var(--good);background:var(--good-bg)}.chip-warn{color:var(--warn);background:var(--warn-bg)}
-.chip-bad{color:var(--bad);background:var(--bad-bg)}.chip-neutral{color:var(--neutral);background:var(--neutral-bg)}
+.chip-bad{color:var(--bad);background:var(--bad-bg)}.chip-active{color:var(--active);background:var(--active-bg)}
+.chip-neutral{color:var(--neutral);background:var(--neutral-bg)}
 ul.items,ul.details{margin:.2rem 0;padding-left:1.2rem}ul.items>li{margin:.35rem 0}
-ul.details{color:var(--muted)}.head{color:var(--fg)}
+ul.details{color:var(--slate)}.head{color:var(--text)}
 ol.items{margin:.2rem 0;padding-left:1.6rem}ol.items>li{margin:.35rem 0}
-section.tile{background:var(--card);border:1px solid var(--line);border-radius:.5rem;
-padding:.1rem .9rem .6rem;margin:.8rem 0}
-table{border-collapse:collapse;display:block;overflow-x:auto;margin:.4rem 0}
-th,td{border:1px solid var(--line);padding:.3rem .6rem;text-align:left;vertical-align:top}
-th,time{white-space:nowrap}
-details{margin:.4rem 0}summary{cursor:pointer;color:var(--muted)}
+section.tile{background:var(--card);border:1px solid var(--line);border-radius:6px;
+padding:.1rem 1rem .7rem;margin:.8rem 0;box-shadow:0 1px 2px rgba(16,24,64,.05)}
+time{white-space:nowrap}
+details{margin:.4rem 0}summary{cursor:pointer;color:var(--slate)}
 figure.evidence{margin:.4rem 0;max-width:100%}figure.evidence img,figure.evidence video{max-width:100%;
 height:auto;border:1px solid var(--line);border-radius:.3rem;background:var(--card)}
-figcaption{font-size:.85rem;color:var(--muted)}"""
+figcaption{font-size:.85rem;color:var(--muted)}
+.sg{--cols:2.8rem minmax(0,1fr) 8.4rem 8.6rem 8rem minmax(0,15rem);background:var(--card);
+border:1px solid var(--line);border-radius:6px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,64,.05)}
+.sg-head,.sg-row{display:grid;grid-template-columns:var(--cols);align-items:center}
+.sg-head{background:#1F2950;color:#fff;font-size:.68rem;font-weight:500;letter-spacing:.4px;text-transform:uppercase}
+.sg-head span{padding:0 .7rem;border-left:1px solid rgba(255,255,255,.14);line-height:2.4rem}
+.sg-head span:first-child{border-left:0;text-align:center}
+.sg-item{margin:0;border-top:1px solid var(--line)}
+.sg-row{position:relative;min-height:3.2rem;padding:.45rem 0}
+.sg-row>span{padding:0 .7rem;min-width:0}
+.sg-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--neutral-bar)}
+.tone-good::before{background:var(--good-bar)}.tone-warn::before{background:var(--warn-bar)}
+.tone-bad::before{background:var(--bad-bar)}.tone-active::before{background:var(--active-bar)}
+summary.sg-row{cursor:pointer;color:inherit;list-style:none}summary.sg-row::-webkit-details-marker{display:none}
+summary.sg-row:hover{background:var(--kid)}
+.sg-n{display:flex;justify-content:center}
+.sg-num{display:inline-flex;align-items:center;justify-content:center;min-width:1.45rem;height:1.45rem;
+padding:0 .25rem;border-radius:3px;background:#1F2950;color:#fff;font-size:.72rem;font-weight:600}
+.sg-name{display:flex;gap:.45rem;align-items:flex-start}
+.sg-chev{flex:none;width:.7rem;height:.7rem;margin-top:.4rem;color:var(--muted);transition:transform .15s}
+details[open]>summary .sg-chev{transform:rotate(90deg)}
+.sg-words{min-width:0}
+.sg-title{display:block;color:var(--ink);font-weight:500}
+.sg-desc{display:block;color:var(--muted);font-size:.8rem;font-style:italic;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+.sg-date{display:inline-flex;align-items:center;gap:.3rem;background:var(--date);color:var(--date-fg);
+font:700 .74rem/1 "Roboto Mono",ui-monospace,SFMono-Regular,Menlo,monospace;padding:.32rem .45rem;
+border-radius:3px;white-space:nowrap}
+.sg-date svg{width:.75rem;height:.75rem;flex:none}
+.sg-late{background:var(--late);color:var(--late-fg)}
+.sg-undated{background:transparent;border:1px dashed var(--empty);color:var(--muted);font-family:inherit;font-weight:500}
+.sg-prog{display:flex;align-items:center;gap:.5rem}
+.sg-bar{flex:1;max-width:5.5rem;height:.5rem;border-radius:2px;background:var(--soft);
+box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}
+.sg-fill{display:block;height:100%}
+.fill-good{background:var(--good-bar)}.fill-warn{background:var(--warn-bar)}.fill-bad{background:var(--bad-bar)}
+.fill-active{background:var(--active-bar)}.fill-neutral{background:var(--neutral-bar)}
+.sg-pc{font-size:.75rem;color:var(--slate);font-variant-numeric:tabular-nums}
+.sg-none{font-size:.75rem;color:var(--muted)}
+.sg-note{color:var(--slate);font-size:.8rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sg-kids{background:var(--kid);border-top:1px solid var(--soft);padding-left:1.7rem}
+.sg-kids .sg-row{min-height:2.6rem;border-bottom:1px solid var(--soft)}
+.sg-kids .sg-row:last-child{border-bottom:0}
+.sg-kids .sg-num{background:transparent;color:var(--slate);box-shadow:inset 0 0 0 1px var(--empty)}
+.sg-kids .sg-title{font-weight:400}
+.sg-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem 1.5rem;margin:.6rem .1rem 0;
+font-size:.8rem;color:var(--total)}
+.sg-key{display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center}
+@media (max-width:760px){.sg{--cols:2.4rem minmax(0,1fr) auto}
+.sg-head span:nth-child(n+4),.sg-row>.sg-p,.sg-row>.sg-o{display:none}
+.sg-row>.sg-s{grid-column:2/-1;padding-top:.3rem}.sg-kids{padding-left:.6rem}.cover h1{font-size:1.5rem}}"""
 
 
 class HtmlFormat(Markup):
@@ -774,11 +954,6 @@ class HtmlFormat(Markup):
             f'<ul class="details">{rest}</ul></li>' if rest else "</li>"
         )
 
-    def table(self, headings: list[str], rows: list[list[str]]) -> str:
-        head = "".join(f"<th>{html.escape(h)}</th>" for h in headings)
-        body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>" for cells in rows)
-        return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
-
     def section(self, heading: str, depth: int, body: list[str]) -> str:
         return self._section(f"depth-{depth}", heading, depth, body)
 
@@ -794,18 +969,97 @@ class HtmlFormat(Markup):
     def details(self, summary: str, body: list[str]) -> str:
         return f"<details><summary>{html.escape(summary)}</summary>{''.join(body)}</details>"
 
+    def status_grid(self, grid: StatusGrid) -> str:
+        """Each row with children opens as a `<details>`, so expanding needs no script."""
+        headings = ("#", grid.noun, "Due", "Progress", "Status", "Note")
+        cells = "".join(f"<span>{html.escape(h)}</span>" for h in headings)
+        rows = "".join(self._grid_item(str(n), r) for n, r in enumerate(grid.rows, 1))
+        head = f'<div class="sg-head">{cells}</div>'
+        return f'<div class="sg">{head}{rows}</div>{self._grid_foot(grid)}'
+
+    def _grid_item(self, number: str, r: StatusRow) -> str:
+        if not r.children:
+            return f'<div class="sg-item">{self._grid_row("div", number, r, "")}</div>'
+        kids = "".join(self._grid_row("div", str(k), c, "") for k, c in enumerate(r.children, 1))
+        summary = self._grid_row("summary", number, r, CHEVRON)
+        return f'<details class="sg-item">{summary}<div class="sg-kids">{kids}</div></details>'
+
+    def _grid_row(self, tag: str, number: str, r: StatusRow, chevron: str) -> str:
+        cells = (
+            ("sg-n", f'<span class="sg-num">{number}</span>'),
+            ("sg-name", f"{chevron}{self._words(r)}"),
+            ("sg-d", self._target(r.target)),
+            ("sg-p", self._progress(r)),
+            ("sg-s", r.status.render(self)),
+            ("sg-o", f'<span class="sg-note">{html.escape(r.note)}</span>'),
+        )
+        shown = "".join(f'<span class="{cls}">{body}</span>' for cls, body in cells)
+        return f'<{tag} class="sg-row tone-{r.status.tone.value}">{shown}</{tag}>'
+
+    @staticmethod
+    def _words(r: StatusRow) -> str:
+        title = f'<span class="sg-title">{html.escape(r.title)}</span>'
+        desc = f'<span class="sg-desc">{html.escape(r.description)}</span>' if r.description else ""
+        return f'<span class="sg-words">{title}{desc}</span>'
+
+    def _target(self, t: Target) -> str:
+        if not t.iso:
+            return f'<span class="sg-date sg-undated">{NO_DATE}</span>'
+        late = " sg-late" if t.late else ""
+        return f'<span class="sg-date{late}">{CALENDAR}{self.day(t.iso)}</span>'
+
+    @staticmethod
+    def _progress(r: StatusRow) -> str:
+        p = r.progress
+        if p is None:
+            return f'<span class="sg-none">{NO_COUNT}</span>'
+        fill = f'<span class="sg-fill fill-{p.tone(r.status.tone).value}" style="width:{p.percent}%"></span>'
+        bar = (
+            f'<span class="sg-bar" role="img" aria-label="{p.done} of {p.total} done">{fill}</span>'
+        )
+        return f'<span class="sg-prog">{bar}<span class="sg-pc">{p.text}</span></span>'
+
+    def _grid_foot(self, grid: StatusGrid) -> str:
+        key = "".join(f"<span>{c.render(self)} {n}</span>" for c, n in grid.tally())
+        totals = f'<span class="sg-totals">{html.escape(grid.totals())}</span>'
+        return f'<p class="sg-foot">{totals}<span class="sg-key">{key}</span></p>'
+
+    def sibling(self, title: str, target: str, current: bool) -> str:
+        mark = ' aria-current="page"' if current else ""
+        return f'<a href="{html.escape(target)}"{mark}>{html.escape(title)}</a>'
+
     def document(
-        self, title: str, generated: str, sources: tuple[str, ...], body: list[str]
+        self,
+        title: str,
+        generated: str,
+        sources: tuple[str, ...],
+        nav: list[str],
+        body: list[str],
     ) -> str:
-        origin = html.escape(", ".join(sources))
-        stamp = f'<p class="stamp">Generated <time datetime="{html.escape(generated)}">{html.escape(generated)}</time> from {origin}.</p>'
         return (
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<meta http-equiv="Content-Security-Policy" content="{html.escape(HTML_CSP)}">'
-            f"<title>{html.escape(title)}</title><style>{STYLE}</style></head><body><main>"
-            f"<header><h1>{html.escape(title)}</h1>{stamp}</header>{''.join(body)}"
-            "</main></body></html>\n"
+            f"<title>{html.escape(title)}</title><style>{STYLE}</style></head><body>"
+            f"{self._cover(title, generated, sources)}{self._nav(nav)}"
+            f"<main>{''.join(body)}</main></body></html>\n"
+        )
+
+    def _cover(self, title: str, generated: str, sources: tuple[str, ...]) -> str:
+        stamp = f"<span><strong>Generated</strong>{self.day(generated)}</span>"
+        origin = f"<span><strong>Sources</strong>{html.escape(', '.join(sources))}</span>"
+        return (
+            f'<header class="cover"><div class="wrap"><span class="badge">{BADGE}</span>'
+            f'<h1>{html.escape(title)}</h1><p class="meta">{stamp}{origin}</p></div></header>'
+        )
+
+    @staticmethod
+    def _nav(nav: list[str]) -> str:
+        links = "".join(nav)
+        return (
+            f'<nav class="views" aria-label="Views"><div class="wrap">{links}</div></nav>'
+            if nav
+            else ""
         )
 
 
@@ -906,6 +1160,83 @@ def ranked_item(b: RankedBrief) -> Item:
     effort = [f"effort {b.effort}"] if b.effort else []
     head = (f"{b.title} ({b.id})", *due_parts(b), *effort, *waiting_parts(b.waiting_on))
     return Item(row(*head))
+
+
+# --- status grid rows ------------------------------------------------------------------------
+
+MISSED = Chip("Missed", Tone.BAD)
+READY = Chip("Ready")
+BRIEF_STANDING: tuple[tuple[Callable[[RankedBrief], bool], Chip], ...] = (
+    (lambda b: b.overdue, Chip("Overdue", Tone.BAD)),
+    (lambda b: bool(b.waiting_on), Chip("Waiting", Tone.WARN)),
+    (lambda b: b.due_soon, Chip("Due soon", Tone.WARN)),
+)
+
+
+def sentence(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def stage_chip(stage: rm.Stage) -> Chip:
+    return Chip(stage.value, STAGE_TONE[stage])
+
+
+def milestone_status(m: rm.MilestoneSummary) -> Chip:
+    return MISSED if m.missed else stage_chip(m.stage)
+
+
+def target_of(m: rm.MilestoneSummary | None) -> Target:
+    return Target(m.due, m.missed) if m else Target()
+
+
+def project_row(e: Entry, note: str, children: tuple[StatusRow, ...] = ()) -> StatusRow:
+    """A project's health, its next dated milestone, how many are done and what it lacks."""
+    p = e.project
+    standing = health_chips(p.health)[0]
+    progress = Progress.of(p.milestones)
+    return StatusRow(
+        p.title, p.outcome, target_of(p.next_due()), progress, standing, lacking(note, p), children
+    )
+
+
+def lacking(note: str, p: rm.Project) -> str:
+    """The note, with what the project has not recorded appended as its own clause."""
+    missing = rg.missing_note(rg.gaps(p))
+    return "; ".join(filter(None, (note.rstrip("."), missing))) if missing else note
+
+
+def milestone_row(m: rm.MilestoneSummary) -> StatusRow:
+    counts = m.milestone.counts
+    progress = Progress(counts.get("done", 0), sum(counts.values()))
+    waits = (f"{b.brief} waits on {', '.join(b.waiting_on)}" for b in m.blockers)
+    note = "; ".join([sentence(slip_text(m)), *waits])
+    return StatusRow(
+        m.title, counts_text(m), Target(m.due, m.missed), progress, milestone_status(m), note
+    )
+
+
+def brief_note(b: RankedBrief) -> str:
+    if b.waiting_on:
+        return f"Waits on {', '.join(b.waiting_on)}"
+    return f"Effort {b.effort}" if b.effort else "Not estimated"
+
+
+def brief_row(b: RankedBrief) -> StatusRow:
+    standing = next((chip for applies, chip in BRIEF_STANDING if applies(b)), READY)
+    target = Target(date_text(b.due), b.overdue)
+    return StatusRow(b.title, b.id, target, None, standing, brief_note(b))
+
+
+def initiative_row(g: InitiativeGroup) -> StatusRow:
+    """An initiative stands at its worst project and aims at its soonest open milestone."""
+    milestones = [m for e in g.entries for m in e.project.milestones]
+    soonest = rm.next_due(milestones)
+    standing = health_chips(min(g.entries, key=attention).project.health)[0]
+    projects = tuple(project_row(e, sentence(next_line(e.project))) for e in g.entries)
+    described = plural(len(g.entries), "project")
+    note = sentence(due_line(soonest))
+    target, progress = target_of(soonest), Progress.of(milestones)
+    return StatusRow(g.title, described, target, progress, standing, note, projects)
 
 
 # --- JSON tables of the model's own objects --------------------------------------------------
@@ -1078,7 +1409,8 @@ class View(ABC):
 
     def document(self, r: Report) -> Document:
         body = self.sections(r) if r.entries else (paragraph(NO_PROJECTS),)
-        return Document(self.title, r.stamp, r.sources, (*body, *self.footnotes(r)))
+        nav = tuple(Sibling(v, v is self) for v in VIEWS.values())
+        return Document(self.title, r.stamp, r.sources, (*body, *self.footnotes(r)), nav)
 
 
 class WorkView(View):
@@ -1096,7 +1428,15 @@ class WorkView(View):
         }
 
     def sections(self, report: Report) -> tuple[Block, ...]:
-        return tuple(self.project(e) for e in report.entries)
+        rows = tuple(self.row(e) for e in report.entries)
+        ready = Section("Ready, most urgent first", (StatusGrid("Project", "ready brief", rows),))
+        return (ready, *(self.project(e) for e in report.entries))
+
+    @staticmethod
+    def row(e: Entry) -> StatusRow:
+        b = e.board
+        counted = f"{plural(len(b.work), 'ready brief')}, {plural(len(b.bugs), 'open bug')}"
+        return project_row(e, counted if b.work else NO_READY, tuple(brief_row(x) for x in b.work))
 
     @staticmethod
     def project(e: Entry) -> Section:
@@ -1106,10 +1446,6 @@ class WorkView(View):
             e.title,
             (
                 source_line(e.project),
-                Section(
-                    "Ready, most urgent first",
-                    (numbered((ranked_item(x) for x in b.work), NO_READY),),
-                ),
                 Section("Bugs", (numbered((ranked_item(x) for x in b.bugs), NO_BUGS),)),
                 Section("Requirements with no covering brief", (lines(uncovered, NO_UNCOVERED),)),
             ),
@@ -1146,7 +1482,10 @@ def stage_line(p: rm.Project) -> str:
 
 
 def next_line(p: rm.Project) -> str:
-    soonest = p.next_due()
+    return due_line(p.next_due())
+
+
+def due_line(soonest: rm.MilestoneSummary | None) -> str:
     if soonest is None:
         return NO_NEXT
     slip = (
@@ -1183,14 +1522,6 @@ def counts_text(m: rm.MilestoneSummary) -> str:
     return counts or NO_BRIEFS
 
 
-def flags_text(m: rm.MilestoneSummary) -> str:
-    per_environment = (
-        f"{env.environment}: " + ", ".join(f"{f.name} {f.state}" for f in env.flags)
-        for env in m.flags
-    )
-    return "; ".join(per_environment) or NO_FLAGS
-
-
 def slip_text(m: rm.MilestoneSummary) -> str:
     if m.slip_days is None:
         return NO_BASELINE
@@ -1200,29 +1531,7 @@ def slip_text(m: rm.MilestoneSummary) -> str:
 def status_parts(m: rm.MilestoneSummary) -> tuple[Inline | str, ...]:
     waiting = [Chip(f"{m.waiting_count} waiting", Tone.WARN)] if m.waiting_count else []
     missed = [Chip("missed", Tone.BAD)] if m.missed else []
-    return (Chip(m.stage.value), *missed, *waiting, f"{m.percent_done}% done")
-
-
-MILESTONE_HEADINGS = ("Milestone", "Status", "Due", "Slip", "Briefs", "Evidence", "Flags")
-
-
-def milestone_cells(m: rm.MilestoneSummary) -> tuple[Row, ...]:
-    return (
-        row(m.title),
-        row(*status_parts(m)),
-        row(Day(m.due) if m.due else NO_DATE),
-        row(slip_text(m)),
-        row(counts_text(m)),
-        row(str(len(m.evidence))),
-        row(flags_text(m)),
-    )
-
-
-def milestone_grid(p: rm.Project) -> Block:
-    """Layer 2: one row per milestone, so projects can be read down a column."""
-    if not p.milestones:
-        return paragraph(NO_MILESTONES)
-    return Table(MILESTONE_HEADINGS, tuple(milestone_cells(m) for m in p.milestones))
+    return (stage_chip(m.stage), *missed, *waiting, f"{m.percent_done}% done")
 
 
 def stage_sections(p: rm.Project) -> tuple[Section, ...]:
@@ -1262,10 +1571,6 @@ def per_project(heading: str, entries: Iterable[Entry], make: Callable[[Entry], 
     return Section(heading, tuple(make(e) for e in entries))
 
 
-def milestones_of(e: Entry) -> Section:
-    return Section(e.title, (milestone_grid(e.project),))
-
-
 def detail_of(e: Entry) -> Section:
     return Section(e.title, (Details(DETAIL_SUMMARY, detail_blocks(e)),))
 
@@ -1298,11 +1603,17 @@ class ProjectView(View):
 
     def sections(self, report: Report) -> tuple[Block, ...]:
         ordered = sorted(report.entries, key=attention)
+        rows = tuple(self.row(e) for e in ordered)
         return (
+            Section("Status", (StatusGrid("Project", "milestone", rows),)),
             per_project("Projects", ordered, tile),
-            per_project("Milestones", ordered, milestones_of),
             per_project("Detail", ordered, detail_of),
         )
+
+    @staticmethod
+    def row(e: Entry) -> StatusRow:
+        milestones = tuple(milestone_row(m) for m in e.project.milestones)
+        return project_row(e, sentence(next_line(e.project)), milestones)
 
 
 def released_section(r: rm.ShippedRelease) -> Section:
@@ -1404,15 +1715,15 @@ class PortfolioView(View):
         return {"initiatives": members}
 
     def sections(self, report: Report) -> tuple[Block, ...]:
-        return tuple(
-            Section(g.title, tuple(self.project(e) for e in g.entries))
-            for g in initiatives(report.entries)
-        )
+        groups = initiatives(report.entries)
+        grid = StatusGrid("Initiative", "project", tuple(initiative_row(g) for g in groups))
+        detail = (Section(g.title, tuple(self.project(e) for e in g.entries)) for g in groups)
+        return (Section("Initiatives", (grid,)), *detail)
 
     @staticmethod
     def project(e: Entry) -> Section:
         p = e.project
-        one_liners = (Item(row(m.line(), Chip(m.stage.value))) for m in p.milestones)
+        one_liners = (Item(row(m.line(), stage_chip(m.stage))) for m in p.milestones)
         return Section(
             p.title,
             (

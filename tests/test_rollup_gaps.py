@@ -92,3 +92,16 @@ def test_every_level_carries_the_gaps_in_its_json(tmp_path: pathlib.Path) -> Non
     for view in rollup.rv.VIEWS.values():
         (project,) = view.data(report)["projects"]
         assert [g["subject"] for g in project["gaps"]] == ["m2"]
+
+
+def test_each_gap_labels_itself_as_its_project_row_says_it(tmp_path: pathlib.Path) -> None:
+    project = demo(tmp_path, project_toml(head="", m2=""))
+    assert rg.missing_note(rg.gaps(project)) == "Missing initiative, m2 due date"
+    assert rg.missing_note(()) == ""
+
+
+def test_a_project_row_carries_what_the_project_lacks(tmp_path: pathlib.Path) -> None:
+    report = rollup_of(tmp_path, with_project_toml(project_toml(m2="")))
+    (entry,) = report.entries
+    assert rollup.rv.project_row(entry, "Next: Two").note == "Next: Two; Missing m2 due date"
+    assert rollup.rv.project_row(entry, "").note == "Missing m2 due date"
