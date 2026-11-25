@@ -45,6 +45,8 @@ from triage_enrich import Fill, PredictFn, claude_predict
 from triage_promote import Gate, Promotion, promote
 from triage_sources import LiveSources
 
+EX_TEMPFAIL = 75  # sysexits.h: temporary failure, the caller should retry later
+
 
 @dataclasses.dataclass
 class Report:
@@ -244,9 +246,11 @@ def main(argv: list[str] | None = None) -> None:
         TALLY.failed,
         TALLY.skipped,
     )
+    print(json.dumps(dataclasses.asdict(report), indent=2))
     if no_capacity():
         print(f"inbox-triage: no headless capacity; skipped {TALLY.skipped} calls", file=sys.stderr)
-    print(json.dumps(dataclasses.asdict(report), indent=2))
+        # A scheduler tells "skipped, retry later" from "ran clean" and from "failed" by this status.
+        sys.exit(EX_TEMPFAIL)
     if TALLY.all_failed:
         # A scheduled run that fills nothing still looked healthy; failing lets the watchdog see it.
         sys.exit(f"inbox-triage: all {TALLY.calls} headless claude calls failed")
