@@ -123,6 +123,125 @@ making the queue safe for many concurrent Claude sessions) and `git_sync.py` (se
 commits through the same lock). New generic modules: `_paths.py` (root resolution) and
 `config.py` (`tasks.toml` loader).
 
+## The queue engine: one source of truth, kept current
+
+claude-tasks holds every brief, and `maintain` keeps the queues true without a person. Four rules set
+the shape, each from a recorded decision (file names in claude-config `decisions/`):
+
+- One store. `2026-11-04-generic-tasks-fold-into-projects.md`: "one single source of truth".
+- Capture stays fast. `2026-11-17-capture-stays-fast-hygiene-runs-async.md`: "I don't want to add
+  lots of slowness at the time of doing handoff into inbox".
+- Anything triggers it. `2026-11-17-queue-engine-runs-anywhere-trigger-agnostic.md`: "I'd like to have
+  anything run the engine".
+- Nothing is lost. `2026-11-17-triage-never-loses-work.md`: "the most important thing is that I don't
+  lose things".
+
+### One store across queues
+
+The git sync, the `wip/tasks-<slug>` branch of a queue inside another repo and the parked-conflict
+branches are in [queue-sync.md](queue-sync.md). On top of that:
+
+- A brief lives in one queue. A wait across queues is a `<queue>:<id>` blocker, resolved against the
+  roots in `$CLAUDE_TASKS_ROOTS`; `check_deps.py` reports a reference to an unknown queue or brief as
+  `dangling`.
+- Moving a brief from the generic queue into the project that owns it is the router, personal tooling
+  outside this repo. It scores each brief against the registry's project names and `route_terms`,
+  moves the unambiguous ones into `direct` queues, and leaves `routed/<id>.md` as a pointer in the
+  brief's place, never a copy. Hygiene runs it as `router.py tick --no-judge` for the generic queue
+  only, so an ambiguous brief waits for a judged pass.
+- A session project folded back into its parent leaves a `moved_to:` stub (`fold_session.py`).
+
+### Triggers, phases and the lease
+
+Any trigger calls `maintain.py --tier laptop|cloud`. After the wake step above, the tick runs
+**hygiene**: ordered steps in two phases, each with its own freshness record.
+
+| Step | Phase | Does |
+|---|---|---|
+| `unblock` | deterministic | releases blocked briefs whose waits are done |
+| `dep-check` | deterministic | `check_deps.py`; findings are reported, not a failure |
+| `blocker-recheck` | deterministic | re-tests external blockers (personal tooling, generic queue only) |
+| `route` | deterministic | the router above |
+| `triage-mechanical` | deterministic | `triage.py promote --apply`: promote, merge duplicates, close on evidence |
+| `board` | deterministic | regenerates the board |
+| `triage-judge` | judgement | `triage.py promote --apply --llm`: model verdicts, drop alerts |
+| `board-after-judge` | judgement | regenerates the board |
+
+- The deterministic phase needs no Claude credits and always runs. The judgement phase runs only when
+  the usage-limit reader (`limit_state`) shows an account with capacity, or is absent; otherwise the
+  phase is deferred untouched and the next tick retries.
+- A phase is due when its record is older than `hygiene_interval_minutes` (default 240). A step whose
+  script is absent on this machine is recorded as skipped, and a runner that has the script treats the
+  phase as due again, so a cloud tick without the personal tooling does not hide the work from a laptop.
+- One runner at a time holds `maintain/hygiene-lease.json`. Taking and releasing it are commits pushed
+  from a scratch worktree cut at origin's tip; a push that lost a race restarts from the new tip, up to
+  eight times. Releasing writes the finished phases' records in the same commit, so a record reaches
+  origin exactly when the lease is let go. A failed phase is not recorded and is due again.
+- A lease that expires mid-run starts no further step and records nothing. A refused push prints
+  `ERROR` and reports `hygiene-refused`; other failures warn and the tick carries on.
+
+### What keeps each thing current
+
+- **Dependencies.** `unblock` moves a blocked brief to `ready/` once every `blocked_by` entry is done,
+  including `<queue>:<id>` and `date:` entries. `transition.py move <id> done` also logs what landed on
+  every dependent in every known queue (`cascade.py`); a close by any other route, triage included,
+  releases its dependents at the next `unblock` step. `dep-check` reports cycles, dangling ids,
+  undeclared dependencies and a wait described only in prose.
+- **Ordering.** Briefs released together land in `ready/` in priority order, which is the order to work
+  them.
+- **Priority.** Never stored. `prioritise.py` scores every brief on each call: the default scorer adds
+  150 per brief that waits on it, and the `wsjf` scorer adds age and lets a blocker inherit the score of
+  the brief waiting on it. The ranker above sits on top. Nothing needs refreshing.
+- **Done-ness.** Triage, below.
+
+### Triage: promotion is the gate
+
+Capture writes to `inbox/` and the sync commits it. Promotion to `ready/` is where `triage.py` checks
+a brief. The owner's rule: "Inbox is kind of a dumping section but by the time they get in ready, they
+should have been deduplicated or they could be marked straight as done". One run, in order: collapse
+bulk filings, declare empty dependencies, find evidence closes, classify and promote, merge
+duplicates, close, alert, commit.
+
+- **Evidence closes.** In `inbox/` and `ready/`, a brief moves to `done/` when every success criterion
+  is ticked, or when a PR its title or goal names is merged or closed and nothing says more follows. An
+  unreadable PR is no evidence. The brief records `closed_reason`, `closed_evidence` and `closed_from`.
+- **Duplicates.** A brief with the same normalised title and cited sources as an earlier one is
+  appended to the survivor under `## Merged from <id>`, then moved to `done/` with `duplicate_of`.
+  A survivor that is closed or claimed takes no merge, so the duplicate stays put.
+- **Judgement alerts.** A needs-info brief untouched past `stale_days` (21) and a model-called `drop`
+  raise one aggregated alert per run, repeated no sooner than `stale_days` later. The brief does not
+  move. Nothing is parked or closed on a timer or on a model's say-so.
+- **Refusals alert.** A close refused because criteria are unticked, or not carried by the survivor,
+  raises an `UNCLOSABLE` alert; a duplicate's merge already made is kept.
+- **Undo.** Every close is a row in `closed.jsonl`; `triage.py reopen <id>` puts the brief back and
+  marks it so triage never closes it again. At most `max_moves` (200) closes run per run, evidence first.
+
+### One brief through the engine
+
+1. A session hands off "Add retry to the export job" and the sync pushes it to `inbox/`.
+2. At the next hygiene run `route` matches its project's `route_terms`, moves it into that project's
+   queue and leaves `routed/<id>.md` behind. The project queue's own tick runs its triage next.
+3. A second session captures the same title citing the same PR. Triage fingerprints it as a repeat,
+   appends its body to the first brief, and moves it to `done/` with `duplicate_of` set.
+4. The first brief passes the gate and is promoted to `ready/`.
+5. The PR merges. The next run reads the PR as merged, moves the brief to `done/` with
+   `closed_evidence: <repo>#<n> MERGED`, and `unblock` releases the briefs that waited on it.
+6. Had the duplicate in step 3 carried an open criterion the first brief lacks, its close would be
+   refused, its merged body kept, and an `UNCLOSABLE` alert would name it.
+
+### Not built yet
+
+- A cloud routine that calls `maintain --tier cloud`, and a trigger that picks accounts by remaining
+  credits. Only the laptop LaunchAgent template ships. The wake step's last-run record is per tier, so
+  a cloud tick does not yet skip on a fresh laptop tick; hygiene phases do skip, as their records are
+  shared.
+- Judged routing as a hygiene step: `route` runs without the judge.
+- A health metric (inflow against outflow, share stale) on the board.
+- A separate store for peer messages and agent reports.
+- Capture without checks: `add_task.py` still merges an exact repeat into the brief it matches, and
+  `--ready` still files straight to `ready/` after its field checks. The rule above would move both
+  into triage.
+
 ## The predictor head: ranking against a taste profile
 
 `prioritise.py` is the filter. `rank.py` is the ranker, and only human-facing lists use it.
