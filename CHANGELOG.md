@@ -35,6 +35,11 @@
 - **History facts are named by the clock.** `set-health`, `set-due` and `set-rollout` name each
   `history/` file `<day>-<hex seconds>.toml`, taking the next second when the name exists, so a second
   change on the same day is always the one read as current. A random suffix could mis-order them.
+- **Triage routes a brief into any project queue and starts the land.** A move into a pr-mode
+  queue is a route like any other, and after a successful `router.py apply` triage starts
+  `router.py land` detached (log: `~/.claude/logs/claude-tasks-router.log`). The `NEEDS_PR` outcome
+  and the "route needs a PR" and "routing unsure" alerts are gone; the router's own judge owns
+  ambiguous briefs, which stay in ready.
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or
   `$CLAUDE_TASKS_LAUNCHER` to run the judge and the triage calls through a launcher script; with
   neither, both call plain `claude -p`. A named launcher that is missing or not executable prints one

@@ -1,15 +1,15 @@
 ## 2026-11-25 triage asks the router at promotion
 
-1. **Outcome check.** A brief triage promotes from inbox to ready that the router places in a direct-mode project queue is routed there after triage commits; one the router cannot place, or places in a queue that takes briefs only by PR, stays in the general queue and raises an `AlertReason` alert. A brief the router has no view on (already routed, already judged) is promoted with no route and no alert. `tests/test_triage_routing.py` holds one test per behaviour.
-2. **True constraints.** Capture stays a plain write: "I don't want to add lots of slowness at the time of doing handoff into inbox" (decisions/2026-11-17-capture-stays-fast-hygiene-runs-async.md), so routing runs only in the async triage. "the most important thing is that I don't lose things" (2026-11-17-triage-never-loses-work.md): an unsure brief is alerted, never dropped or parked, and an absent or failing router leaves every brief where it is. One router, one registry: "one single source of truth" (2026-11-04-generic-tasks-fold-into-projects.md).
+1. **Outcome check.** A brief triage promotes from inbox to ready that the router places in a project queue is routed there, in any queue mode, after triage commits, and triage then starts a detached `router.py land`; one the router cannot place stays in the general queue for the router's own judge, which alerts on it, and triage raises no routing alert. A brief the router has no view on (already routed, already judged) is promoted with no route and no alert. `tests/test_triage_routing.py` holds one test per behaviour.
+2. **True constraints.** Capture stays a plain write: "I don't want to add lots of slowness at the time of doing handoff into inbox" (decisions/2026-11-17-capture-stays-fast-hygiene-runs-async.md), so routing runs only in the async triage. "the most important thing is that I don't lose things" (2026-11-17-triage-never-loses-work.md): an unsure brief stays in ready for the router's judge to alert on, never dropped or parked, and an absent or failing router leaves every brief where it is. One router, one registry: "one single source of truth" (2026-11-04-generic-tasks-fold-into-projects.md).
 3. **Check first.** The router's `plan` JSON is the contract (`moves`, `ambiguous`), exercised by a fake router script in the tests.
 4. **Already exists.** The project router (`router.py plan` and `apply`) and `triage_alerts.py` (`AlertReason`, `Alert`, the ledger). Both are extended; triage re-implements neither the scoring nor the alert path.
 5. **Cheapest experiment.** Run `router.py plan` over the live generic queue and read its `moves` and `ambiguous` rows.
 6. **Waiting.** None.
 7. **Interface.** `$CLAUDE_TASKS_ROUTER` names the router; unset, the installed one is used when present, else routing is off. Additive.
 8. **Cost.** One `plan` call per triage run that promotes something; no model call.
-9. **Risk.** Low: a failed plan or apply leaves the brief in ready/. A PR-mode queue is not written to: the alert names that gap.
-10. **Capture.** The alert for an unsure or PR-only brief, and `route_notice` in the run report.
+9. **Risk.** Low: a failed plan or apply leaves the brief in ready/. The land runs detached and its output goes to `~/.claude/logs/claude-tasks-router.log`; a land that fails to start is a warning, and the router's own tick lands the route later.
+10. **Capture.** `route_notice` in the run report and the router log.
 
 ## 2026-11-23 every brief declares its dependencies
 
