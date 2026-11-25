@@ -122,8 +122,9 @@ def test_main_says_once_that_no_quota_ended_the_calls_and_reports_how_many_it_sk
     monkeypatch.setattr(triage, "LiveSources", lambda root, prs=None: LIVE)
     briefs = {f"b{i}": inbox_text(f"b{i}", title=f"Fix o/r#1 {i}") for i in range(4)}
     root = make_inbox(tmp_path, briefs)
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as stop:
         triage.main(["promote", "--root", str(root), "--llm", "--batch-size", "1"])
+    assert stop.value.code == triage.EX_TEMPFAIL
     captured = capsys.readouterr()
     assert captured.err.count("no headless capacity") == 1
     assert json.loads(captured.out)["llm_skipped"] > 0

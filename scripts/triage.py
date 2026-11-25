@@ -77,6 +77,8 @@ from triage_route import Decision, Router, RouterCli, routes_by_project, routes_
 from triage_sources import LiveSources
 from triage_unchecked import clear_checked, load_unchecked, repeat_moves
 
+EX_TEMPFAIL = 75  # sysexits.h: temporary failure, the caller should retry later
+
 
 @dataclasses.dataclass
 class Report:
@@ -503,6 +505,9 @@ def main(argv: list[str] | None = None) -> None:
         print(routes_plan(report.routes))
     else:
         print(json.dumps(dataclasses.asdict(report), indent=2))
+    if no_capacity():
+        # A scheduler tells "skipped, retry later" from "ran clean" and from "failed" by this status.
+        sys.exit(EX_TEMPFAIL)
     if TALLY.all_failed:
         # A scheduled run that fills nothing still looked healthy; failing lets the watchdog see it.
         sys.exit(f"inbox-triage: all {TALLY.calls} headless claude calls failed")
