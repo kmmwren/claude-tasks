@@ -1364,3 +1364,26 @@ def test_set_frontmatter_fields_sets_new_and_existing_keys_and_keeps_the_body():
 def test_set_frontmatter_fields_refuses_a_brief_with_no_block():
     with pytest.raises(ValueError, match="no frontmatter block"):
         transition.set_frontmatter_fields("just prose\n", {"a": "b"})
+
+
+def test_move_sets_extra_frontmatter_fields_flattened_to_one_line(root):
+    newp = transition.move_brief(
+        "raw-staging-thought",
+        "done",
+        root,
+        today="2026-06-02",
+        fields={"closed_reason": "evidence", "closed_evidence": "obsolete,\n  superseded"},
+    )
+    fields = transition.fm(newp.read_text())
+    assert (fields["closed_reason"], fields["closed_evidence"]) == (
+        "evidence",
+        "obsolete, superseded",
+    )
+    assert fields["status"] == "done"
+
+
+def test_set_fields_leaves_text_without_frontmatter_unchanged():
+    assert (
+        transition._set_fields("no frontmatter\n", {"closed_reason": "evidence"})
+        == "no frontmatter\n"
+    )

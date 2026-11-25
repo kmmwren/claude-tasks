@@ -88,7 +88,11 @@ class InboxBrief:
         return dataclasses.replace(self, text=text).with_field("generated-by", GENERATED_BY)
 
 
-def load_inbox(root: pathlib.Path) -> list[InboxBrief]:
-    """Every structured brief in root/inbox, in id order; raw captures are left for the enrich skill."""
-    briefs = (InboxBrief(f, f.read_text()) for f in sorted((root / "inbox").glob("*.md")))
+def load_folder(root: pathlib.Path, folder: str) -> list[InboxBrief]:
+    """Every structured brief in root/folder, in id order; raw captures are left for the enrich skill."""
+    briefs = (InboxBrief(f, f.read_text()) for f in sorted((root / folder).glob("*.md")))
     return [b for b in briefs if b.structured]
+
+
+def load_inbox(root: pathlib.Path) -> list[InboxBrief]:
+    return load_folder(root, "inbox")

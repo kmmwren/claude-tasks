@@ -93,15 +93,22 @@ def inbox_text(
     parent: str = "",
     importance: str = "3",
     blocked_by: str | None = None,
+    status: str = "inbox",
+    extra: str = "",
+    ticked: bool = False,
 ) -> str:
-    """An inbox brief as add_task files it: stub fields unless given, no dependency line unless `blocked_by`."""
+    """An inbox brief as add_task files it: stub fields unless given, no dependency line unless `blocked_by`.
+
+    `extra` is frontmatter lines, each ending in a newline (`updated: 2026-10-01`), added verbatim.
+    """
     title = title or f"Title of {bid}"
     declaration = "" if blocked_by is None else f"blocked_by: {blocked_by}\n"
-    checks = "\n".join(f"- [ ] {c}" for c in criteria) or f"- [ ] {title} is done."
+    mark = "x" if ticked else " "
+    checks = "\n".join(f"- [{mark}] {c}" for c in criteria) or f"- [{mark}] {title} is done."
     return f"""---
 id: {bid}
 title: {title}
-status: inbox
+status: {status}
 type: todo
 importance: {importance}
 autonomy: full
@@ -109,7 +116,7 @@ domain: work
 tags: {tags}
 parent: {parent}
 source: claude
-{declaration}---
+{declaration}{extra}---
 
 ## Goal
 

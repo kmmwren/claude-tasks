@@ -350,6 +350,17 @@ def _require_probes(brief_id: str, text: str, blocked_by: list[str]) -> None:
         )
 
 
+def _set_fields(text: str, fields: Mapping[str, str]) -> str:
+    """Set each `key: value` in the frontmatter block; a value is flattened onto one line."""
+    m = re.match(r"(---\n)(.*?)(\n---)", text, re.DOTALL)
+    if not m or not fields:
+        return text
+    block = m.group(2)
+    for key, value in fields.items():
+        block = set_field(block, key, " ".join(value.split()))
+    return text[: m.start(2)] + block + text[m.end(2) :]
+
+
 def _append_log(text: str, today: str, message: str) -> str:
     """Append a dated line to the Execution log (creating the section if it is missing)."""
     line = f"{today}: {message}"
@@ -390,6 +401,8 @@ def _check_blockers(brief_id: str, blocked_by: list[str], root: pathlib.Path) ->
     bad_dates = [b for b in blocked_by if is_date(b) and date_of(b) is None]
     if bad_dates:
         raise ValueError(f"malformed date blocker(s) {bad_dates}; write date:YYYY-MM-DD")
+    if not blocked_by:
+        return  # nothing to look up; reading the whole queue per move would make a bulk sweep quadratic
     known = {b.id for b in load_queue(root)}
     refs = [ref for item in blocked_by if (ref := QueueRef.parse(item))]
     unknown = [
@@ -427,8 +440,9 @@ def move_brief(
     no_deps: bool = False,
     settle_with: str | None = None,
     superseded_by: list[str] | None = None,
+    fields: Mapping[str, str] | None = None,
 ) -> pathlib.Path:
-    """Transition a brief to `new_status`: update frontmatter, log it, move the file.
+    """Move a brief to `new_status`, updating its frontmatter and log, atomically under repo_lock.
 
     The read-modify-write-rename is wrapped in repo_lock so two concurrent actors moving
     the same brief serialize: whichever acquires the lock first moves the file; the second
@@ -447,7 +461,7 @@ def move_brief(
     left alone and ValueError is raised. Moving to done refuses while a Success criteria line is
     unticked: `settle_with` ticks each with that note (the evidence the caller already holds), and
     `superseded_by` ticks them once a successor brief carries each. Callers commit separately via sync_commit.
-    Returns the new path.
+    `fields` sets extra frontmatter keys. Returns the new path.
     """
     if new_status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {new_status!r} (one of {VALID_STATUSES})")
@@ -511,6 +525,7 @@ def move_brief(
         )
         if new_status == "blocked":
             _require_probes(brief_id, text, blocked_by)
+        text = _set_fields(text, fields or {})
         text = _append_log(text, today, message)
         new_path = root / new_status / path.name
         atomic_write(new_path, text)

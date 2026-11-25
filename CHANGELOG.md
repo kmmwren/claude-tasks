@@ -139,6 +139,22 @@
   instead of stopping.
 - **One shared `warn` in `_paths.py`** replaces the copies in `project_view`, `seed_profile`, `headless`
   and `fleet_blockers`; each keeps its output prefix.
+- **Triage closes on evidence and alerts on judgement.** `triage.py promote --apply` closes a brief in
+  `inbox/` or `ready/` whose own evidence says it is finished (`closed_reason: evidence`,
+  `closed_evidence`), and a fingerprinted duplicate (`closed_reason: duplicate`, `duplicate_of`) once its
+  body is appended to the survivor under `## Merged from <id>`. A PR closes a brief only when every cited
+  PR is merged or closed, the title or goal names it as the deliverable, and nothing looks past the merge;
+  all success criteria ticked also counts. A needs-info brief idle past `[triage] stale_days` (default
+  21) and a model-called drop are never moved: one aggregated alert per run goes to the session-alerts
+  channel (stderr warning when `~/.claude/scripts/session_alerts.py` is absent), and
+  `.triage-alerts.json` in the queue stops the same brief being raised again for `stale_days`. Every
+  close is a line in `closed.jsonl`, written as the move lands, and the brief records `closed_from` itself, so
+  `triage.py reopen <id>` puts it back in the folder it came from and clears its closing fields even when the log row is missing;
+  a duplicate merges only into a survivor still in `inbox/` or `ready/` and unclaimed, a brief edited since the run read it
+  (criterion unticked, assignee set) is not closed, and a move that times out on the queue lock is skipped while the run goes on;
+  an alert that could not be delivered shows in the report's `alert_notice`;
+  a reopened brief, or one carrying a closing reason or an `assignee`, is never closed again. A run closes at most `[triage] max_moves`
+  (default 200), evidence first. `--dry-run` prints the planned closes and alerts.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by

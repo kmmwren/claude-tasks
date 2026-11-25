@@ -80,3 +80,22 @@ def test_add_task_defaults_all_count_as_missing_whatever_the_title(tmp_path, tit
 def test_stub_and_comment_only_fields_count_as_missing(goal, context, criteria):
     text = f"## Goal\n\n{goal}\n\n## Context\n\n{context}\n\n## Success criteria\n\n{criteria}\n"
     assert len(readiness.brief_missing_fields(text)) == 1
+
+
+def test_criteria_marks_pairs_each_real_criterion_with_its_tick():
+    assert readiness.criteria_marks(BRIEF) == [
+        ("The thing is done well.", False),
+        ("A second check.", True),
+    ]
+
+
+def test_all_criteria_ticked_needs_every_one_ticked():
+    assert not readiness.all_criteria_ticked(BRIEF)
+    assert readiness.all_criteria_ticked(BRIEF.replace("[ ]", "[x]"))
+
+
+def test_all_criteria_ticked_is_false_with_no_real_criterion():
+    assert not readiness.all_criteria_ticked(
+        "---\ntitle: T\n---\n\n## Success criteria\n\n- [x] T is done.\n"
+    )
+    assert not readiness.all_criteria_ticked("## Goal\n\ng\n")

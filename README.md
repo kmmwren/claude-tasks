@@ -411,7 +411,20 @@ name = "My Queue"           # shown in the board title
 domains = ["work", "home"]  # the allowed set for a brief's `domain:`
 timezone = "UTC"
 # milestones = "docs/milestones.toml"   # optional, project-owned; see Blocked state above
+
+[triage]                    # optional; what the scheduled inbox triage may move out of the queue
+stale_days = 21             # a needs-info inbox brief idle longer than this raises an alert
+max_moves = 200             # most briefs one run closes; 0 turns closing off
 ```
+
+Triage moves briefs, never deletes them. A brief whose own evidence says it is finished (every referenced
+PR merged or closed and named as the deliverable, or every success criterion ticked) goes to `done/` with
+`closed_reason` set, and so does a duplicate once its body is appended to the surviving brief. Judgement
+never moves a brief: a stale needs-info brief or a model-called drop stays put and is raised in one
+aggregated alert per run, then again only after `stale_days` more. Each move is one line in `closed.jsonl`
+in the queue, and `python3 scripts/triage.py reopen <id>` puts the brief back in its folder, clears its closing fields and
+marks it `reopened` so triage leaves it alone.
+`python3 scripts/triage.py promote --dry-run` prints the planned moves and alerts without writing anything.
 
 The engine (scripts, skills, board) is identical for everyone; only the config differs.
 

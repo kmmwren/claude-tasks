@@ -17,7 +17,7 @@ READY_FIELDS = ("goal", "criteria", "context")
 PLACEHOLDER_CONTEXT = "_none recorded_"
 # The whole `## Execution log` section, heading included, up to the next `##` heading.
 EXECUTION_LOG = re.compile(r"^##[ \t]+Execution log\b.*?(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
-_CRITERION = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s*(.+?)\s*$", re.MULTILINE)
+_CRITERION = re.compile(r"^\s*[-*]\s*\[(?P<mark>[ xX])\]\s*(?P<text>.+?)\s*$", re.MULTILINE)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # Templates write these where a field is still to be filled in.
 _STUB = re.compile(r"#*\s*(?:todo|tbd)\.?", re.IGNORECASE)
@@ -51,22 +51,34 @@ def missing_ready_fields(goal: str, criteria: Sequence[str], context: str) -> li
     return [name for name in READY_FIELDS if not present[name]]
 
 
-def brief_missing_fields(text: str) -> list[str]:
-    """READY_FIELDS a brief's text leaves empty or at add_task's placeholder.
+def criteria_marks(text: str) -> list[tuple[str, bool]]:
+    """Each real success criterion of a brief as (text, ticked); add_task's placeholder and stubs are no criterion.
 
     HTML comments are prompts to the enricher, so a criterion like `<!-- define when enriching -->` is no criterion;
     a `# TODO` or `TBD` stub is no value either.
     """
     text = _HTML_COMMENT.sub("", text)
-    title = raw_title(text)
-    criteria = [
-        c
-        for c in _CRITERION.findall(section(text, "Success criteria"))
-        if c != placeholder_criterion(title) and not _STUB.fullmatch(c)
+    placeholder = placeholder_criterion(raw_title(text))
+    return [
+        (m["text"], m["mark"] != " ")
+        for m in _CRITERION.finditer(section(text, "Success criteria"))
+        if m["text"] != placeholder and not _STUB.fullmatch(m["text"])
     ]
+
+
+def all_criteria_ticked(text: str) -> bool:
+    """At least one real success criterion, and every one of them ticked."""
+    marks = criteria_marks(text)
+    return bool(marks) and all(ticked for _, ticked in marks)
+
+
+def brief_missing_fields(text: str) -> list[str]:
+    """READY_FIELDS a brief's text leaves empty or at add_task's placeholder."""
+    text = _HTML_COMMENT.sub("", text)
+    title = raw_title(text)
     goal, context = section(text, "Goal"), section(text, "Context")
     return missing_ready_fields(
         "" if goal == placeholder_goal(title) or _STUB.fullmatch(goal) else goal,
-        criteria,
+        [c for c, _ in criteria_marks(text)],
         "" if context == PLACEHOLDER_CONTEXT or _STUB.fullmatch(context) else context,
     )
