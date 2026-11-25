@@ -129,7 +129,8 @@ def test_server_sends_a_content_security_policy_on_every_answer(listening):
 def test_the_policy_forbids_framing_and_every_remote_load_but_https_media():
     assert rv.HTML_CSP == CSP and "frame-ancestors 'none'" in CSP
     page = rv.HTML.render(rv.VIEWS["project"], hostile_notes())
-    assert f'content="{CSP.replace(chr(39), "&#x27;")}"' in page
+    assert f'content="{rv.PAGE_CSP.replace(chr(39), "&#x27;")}"' in page
+    assert "frame-ancestors" not in page
 
 
 @pytest.mark.parametrize(

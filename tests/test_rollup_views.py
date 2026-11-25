@@ -648,6 +648,7 @@ def test_the_page_csp_allows_only_what_evidence_needs_and_forbids_framing() -> N
         "default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; "
         "frame-ancestors 'none'"
     )
+    assert rv.HTML_CSP == f"{rv.PAGE_CSP}; frame-ancestors 'none'"
 
 
 def test_the_plural_helper_and_blank_dates() -> None:

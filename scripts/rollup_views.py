@@ -60,10 +60,9 @@ CALENDAR = (
     '<path d="M2.5 8.5h15M6.5 2v4M13.5 2v4"/></svg>'
 )
 NO_SHIPPED = f"Nothing shipped in the last {rm.SHIPPED_DAYS} days."
-HTML_CSP = (
-    "default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:; "
-    "frame-ancestors 'none'"
-)
+# A browser ignores frame-ancestors in a <meta> policy, so only the served header carries it.
+PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src https:; media-src https:"
+HTML_CSP = f"{PAGE_CSP}; frame-ancestors 'none'"
 
 # --- what the model leaves out ---------------------------------------------------------------
 
@@ -1039,7 +1038,7 @@ class HtmlFormat(Markup):
         return (
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<meta http-equiv="Content-Security-Policy" content="{html.escape(HTML_CSP)}">'
+            f'<meta http-equiv="Content-Security-Policy" content="{html.escape(PAGE_CSP)}">'
             f"<title>{html.escape(title)}</title><style>{STYLE}</style></head><body>"
             f"{self._cover(title, generated, sources)}{self._nav(nav)}"
             f"<main>{''.join(body)}</main></body></html>\n"
