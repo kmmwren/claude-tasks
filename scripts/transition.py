@@ -104,9 +104,17 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
         f
         for d in folders
         for f in sorted(d.glob("*.md"))
-        if identity_of(fm(f.read_text()), f.stem) == brief_id
+        if (text := _text_if_present(f)) is not None and identity_of(fm(text), f.stem) == brief_id
     )
     return next((p for p in chain(by_stem, by_id) if p.exists()), None)
+
+
+def _text_if_present(path: pathlib.Path) -> str | None:
+    """None for a brief another process moved between the folder listing and the read."""
+    try:
+        return path.read_text()
+    except FileNotFoundError:
+        return None
 
 
 def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
@@ -357,8 +365,13 @@ def _carry_criteria(brief_id: str, text: str, successor_ids: list[str], root: pa
     return settle_criteria(text, f"superseded: carried to {', '.join(successors.ids)}")
 
 
-def _closed_text(brief_id: str, text: str, settle_with: str | None, superseded_by: list[str] | None,
-                 root: pathlib.Path) -> str:
+def _closed_text(
+    brief_id: str,
+    text: str,
+    settle_with: str | None,
+    superseded_by: list[str] | None,
+    root: pathlib.Path,
+) -> str:
     """The brief's text ready for done/: open criteria ticked on evidence or by supersession, else refused."""
     if superseded_by and unticked_criteria(text):
         text = _carry_criteria(brief_id, text, superseded_by, root)
