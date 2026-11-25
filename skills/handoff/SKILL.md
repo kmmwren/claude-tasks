@@ -217,7 +217,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resume_prompt.py"
 
 It rebuilds the prompt from the live ledger and its session registry every time, listing
 each item's running agents and background tasks beneath it; never write it by hand. It lists
-open items only, so it serves sessions recorded as long-running, whose items stay open.
+open items, plus a `/claude-tasks:action-task <brief-id>` line for every item this handoff closed
+into a still-open brief (its `metadata.handed_to`, else `metadata.brief`), so the successor starts
+that work instead of seeding from nothing.
 
 One short line, never the whole pile. Name the direction if one was given. e.g.
 *"Parked 6 open items + 2 follow-ups under '<note>'; resume with `/tasks-next` when ready."*

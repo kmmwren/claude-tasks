@@ -3,9 +3,10 @@
 resume_prompt.py: print the prompt that resumes a long-running session in its next session.
 
 Reads the session's open ledger items (with the queue brief each handoff recorded in
-metadata.brief and the background agents or tasks still running for it in metadata.agents)
-and its mission from the long-running registry, so the prompt is rebuilt from live state at
-every handoff rather than written by hand.
+metadata.brief and the background agents or tasks still running for it in metadata.agents),
+the closed items whose work a handoff moved into a still-open queue brief, and its mission
+from the long-running registry, so the prompt is rebuilt from live state at every handoff
+rather than written by hand.
 
 Usage:
   python scripts/resume_prompt.py [SESSION_ID]     # defaults to $CLAUDE_CODE_SESSION_ID
@@ -17,6 +18,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -33,6 +35,11 @@ INSTRUCTIONS = (
     "When you hand off, run /claude-tasks:handoff, which prints the next copy of this prompt."
 )
 
+HANDOFF_INSTRUCTIONS = (
+    "These items were closed into queue briefs at the handoff. Start each with its command, "
+    "which moves the brief to in-progress and works it to done:"
+)
+
 
 def _home() -> pathlib.Path:
     return pathlib.Path.home()
@@ -45,6 +52,10 @@ def ledger_root() -> pathlib.Path:
 def registry_path() -> pathlib.Path:
     default = _home() / ".claude" / "long-running-sessions.json"
     return pathlib.Path(os.environ.get("LONG_RUNNING_REGISTRY") or default)
+
+
+def projects_root() -> pathlib.Path:
+    return pathlib.Path(os.environ.get("CLAUDE_PROJECTS_ROOT") or _home() / ".claude" / "projects")
 
 
 def jobs_root() -> pathlib.Path:
@@ -110,6 +121,7 @@ class Item:
     brief: str | None
     blocker: str | None
     agents: tuple[Background, ...] = ()
+    handed_to: str | None = None
 
     @classmethod
     def from_json(cls, row: Mapping[str, object]) -> Item:
@@ -122,6 +134,7 @@ class Item:
             _text(meta, "brief"),
             _text(meta, "blocker"),
             _backgrounds(meta),
+            _text(meta, "handed_to"),
         )
 
     @property
@@ -147,6 +160,37 @@ class Item:
     def lines(self) -> list[str]:
         """The item's line, then one indented line per background agent or task it waits on."""
         return [self.line(), *(a.line() for a in self.agents)]
+
+
+def _is_done(path: pathlib.Path) -> bool:
+    """In done/ already, or an absolute brief that has since moved there."""
+    moved = (
+        path.is_absolute()
+        and not path.exists()
+        and (path.parent.parent / "done" / path.name).exists()
+    )
+    return "done" in path.parts or moved
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """A completed ledger item whose work now lives in an open queue brief."""
+
+    brief: pathlib.Path
+    subject: str
+
+    @classmethod
+    def from_item(cls, item: Item) -> Handoff | None:
+        target = item.handed_to or item.brief
+        if item.status != "completed" or not target or not target.endswith(".md"):
+            return None
+        path = pathlib.Path(target)
+        return None if _is_done(path) else cls(path, item.subject)
+
+    def line(self) -> str:
+        return (
+            f"- /claude-tasks:action-task {self.brief.stem}  ({self.subject}; brief {self.brief})"
+        )
 
 
 @dataclass(frozen=True)
@@ -183,10 +227,68 @@ class Mission:
         ) or (entry.get("job") == session_id[:8])
 
 
+def _items(session_id: str, root: pathlib.Path) -> list[Item]:
+    rows = (_read_json(p) for p in sorted((root / session_id).glob("*.json")))
+    return [Item.from_json(r) for r in rows if r]
+
+
 def open_items(session_id: str, root: pathlib.Path) -> list[Item]:
-    rows = (_read_json(p) for p in (root / session_id).glob("*.json"))
-    items = (Item.from_json(r) for r in rows if r)
-    return sorted((i for i in items if i.is_open), key=lambda i: i.order)
+    return sorted((i for i in _items(session_id, root) if i.is_open), key=lambda i: i.order)
+
+
+def _blocks(line: str) -> list[Mapping[str, object]]:
+    try:
+        content = json.loads(line).get("message", {}).get("content")
+    except (ValueError, AttributeError):
+        return []
+    return [b for b in content if isinstance(b, Mapping)] if isinstance(content, list) else []
+
+
+def _accepted(
+    call: Mapping[str, object], result: Mapping[str, object]
+) -> Mapping[str, object] | None:
+    """The call's input with its task id, or None when a gate refused it."""
+    created = re.search(r"Task #(\d+) created", str(result.get("content")))
+    if result.get("is_error") or ("taskId" not in call and not created):
+        return None
+    return {**call, "taskId": call.get("taskId") or created.group(1)}
+
+
+def _accepted_updates(transcript: pathlib.Path) -> list[Mapping[str, object]]:
+    """TaskCreate and TaskUpdate inputs the harness accepted, in order."""
+    sent: dict[object, Mapping[str, object]] = {}
+    accepted: list[Mapping[str, object]] = []
+    for line in transcript.read_text(errors="replace").splitlines():
+        if "TaskUpdate" not in line and "TaskCreate" not in line and "tool_result" not in line:
+            continue
+        for b in _blocks(line):
+            if b.get("type") == "tool_use" and b.get("name") in ("TaskCreate", "TaskUpdate"):
+                sent[b.get("id")] = b.get("input") if isinstance(b.get("input"), Mapping) else {}
+            elif b.get("type") == "tool_result" and b.get("tool_use_id") in sent:
+                accepted.append(_accepted(sent.pop(b.get("tool_use_id")), b))
+    return [a for a in accepted if a]
+
+
+def closed_items(session_id: str, projects: pathlib.Path) -> list[Item]:
+    """Ledger items as the transcript last set them: Claude Code deletes a completed item's file."""
+    transcript = next(iter(sorted(projects.glob(f"*/{session_id}.jsonl"))), None)
+    rows: dict[str, dict[str, object]] = {}
+    for update in _accepted_updates(transcript) if transcript else []:
+        row = rows.setdefault(
+            str(update.get("taskId")), {"id": str(update.get("taskId")), "metadata": {}}
+        )
+        row.update({k: update[k] for k in ("subject", "status") if isinstance(update.get(k), str)})
+        meta = update.get("metadata")
+        row["metadata"].update(meta if isinstance(meta, Mapping) else {})
+    return [Item.from_json(r) for r in rows.values()]
+
+
+def handoffs(
+    session_id: str, root: pathlib.Path, projects: pathlib.Path | None = None
+) -> list[Handoff]:
+    items = [*_items(session_id, root), *closed_items(session_id, projects or projects_root())]
+    found = {h.brief: h for h in (Handoff.from_item(i) for i in items) if h}
+    return list(found.values())
 
 
 def header(session_id: str, mission: Mission | None) -> str:
@@ -196,11 +298,16 @@ def header(session_id: str, mission: Mission | None) -> str:
     return f"{named} Mission: {mission.statement}" if mission.statement else named
 
 
-def render(session_id: str, mission: Mission | None, items: list[Item]) -> str:
-    body = (
-        "\n".join(line for i in items for line in i.lines())
-        or "- (no open items: seed the next one from the mission)"
-    )
+def _handoff_section(handed: list[Handoff]) -> str:
+    return "\n".join([HANDOFF_INSTRUCTIONS, *(h.line() for h in handed)]) if handed else ""
+
+
+def render(
+    session_id: str, mission: Mission | None, items: list[Item], handed: list[Handoff] | None = None
+) -> str:
+    open_lines = "\n".join(line for i in items for line in i.lines())
+    sections = [s for s in (open_lines, _handoff_section(handed or [])) if s]
+    body = "\n\n".join(sections) or "- (no open items: seed the next one from the mission)"
     return f"{header(session_id, mission)}\n\n{INSTRUCTIONS}\n\n{body}\n"
 
 
@@ -213,7 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.session_id:
         parser.error("no SESSION_ID given and $CLAUDE_CODE_SESSION_ID is unset")
     mission = Mission.lookup(args.session_id, registry_path(), jobs_root())
-    print(render(args.session_id, mission, open_items(args.session_id, ledger_root())), end="")
+    root = ledger_root()
+    items, handed = open_items(args.session_id, root), handoffs(args.session_id, root)
+    print(render(args.session_id, mission, items, handed), end="")
     return 0
 
 

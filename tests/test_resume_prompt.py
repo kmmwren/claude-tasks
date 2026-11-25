@@ -159,3 +159,70 @@ def test_main_without_a_session_id_exits_with_a_usage_error(
     with pytest.raises(SystemExit) as raised:
         resume_prompt.main([])
     assert raised.value.code == 2
+
+
+def test_an_item_closed_into_an_open_brief_prints_its_action_task_command(
+    tmp_path: pathlib.Path,
+) -> None:
+    queue = tmp_path / "q"
+    (queue / "ready").mkdir(parents=True)
+    (queue / "ready" / "rel-dbt.md").write_text("x")
+    (queue / "done").mkdir()
+    (queue / "done" / "moved.md").write_text("x")
+    rows = ledger(
+        tmp_path / "tasks",
+        item("1", "completed", handed_to=str(queue / "ready" / "rel-dbt.md")),
+        item("2", "completed", handed_to=str(queue / "ready" / "moved.md")),
+        item("3", "completed", brief="done/a.md"),
+        item("4", "completed", handed_to="session_01AbCdEfGh"),
+        item("5", "completed", evidence="https://example.com"),
+    )
+    handed = resume_prompt.handoffs(SID, rows)
+    prompt = resume_prompt.render(SID, None, resume_prompt.open_items(SID, rows), handed)
+    assert [h.brief.stem for h in handed] == ["rel-dbt"]
+    assert "- /claude-tasks:action-task rel-dbt  (task 1; brief " in prompt
+    assert "seed the next one" not in prompt
+
+
+def test_open_items_print_before_handoffs(rows: pathlib.Path) -> None:
+    handed = [resume_prompt.Handoff(pathlib.Path("ready/x.md"), "task x")]
+    prompt = resume_prompt.render(SID, None, resume_prompt.open_items(SID, rows), handed)
+    assert prompt.index("- #10 [in_progress]") < prompt.index("/claude-tasks:action-task x")
+
+
+def _turn(role: str, block: dict[str, object]) -> str:
+    return json.dumps({"type": role, "message": {"role": role, "content": [block]}})
+
+
+def test_a_completed_item_whose_file_is_gone_is_read_back_from_the_transcript(
+    tmp_path: pathlib.Path,
+) -> None:
+    brief = tmp_path / "q" / "ready" / "rel-dbt.md"
+    brief.parent.mkdir(parents=True)
+    brief.write_text("x")
+    refused = {
+        "taskId": "29",
+        "status": "completed",
+        "metadata": {"handed_to": str(tmp_path / "q/ready/nope.md")},
+    }
+    accepted = {"taskId": "29", "status": "completed", "metadata": {"handed_to": str(brief)}}
+    lines = [
+        _turn("assistant", {"type": "tool_use", "id": "a", "name": "TaskUpdate", "input": refused}),
+        _turn(
+            "user",
+            {"type": "tool_result", "tool_use_id": "a", "is_error": True, "content": "BLOCKED"},
+        ),
+        _turn(
+            "assistant", {"type": "tool_use", "id": "b", "name": "TaskUpdate", "input": accepted}
+        ),
+        _turn("user", {"type": "tool_result", "tool_use_id": "b", "content": "Updated task #29"}),
+    ]
+    projects = tmp_path / "projects"
+    (projects / "-cwd").mkdir(parents=True)
+    (projects / "-cwd" / f"{SID}.jsonl").write_text("\n".join(lines) + "\nnot json\n")
+    handed = resume_prompt.handoffs(SID, tmp_path / "tasks", projects)
+    assert [str(h.brief) for h in handed] == [str(brief)]
+
+
+def test_no_transcript_means_no_handoffs(tmp_path: pathlib.Path) -> None:
+    assert resume_prompt.handoffs(SID, tmp_path / "tasks", tmp_path / "projects") == []
