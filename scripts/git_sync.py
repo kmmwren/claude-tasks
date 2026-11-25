@@ -564,10 +564,12 @@ class Scan:
 def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]) -> bool:
     """Scan, then stage and commit what the caller names under the queue lock; False if the lock timed out.
 
-    The scans read every changed brief, so they run before the lock and the queue's other writers
-    wait only for the staging and the commit.
+    A path-scoped commit (the sweep) reads every changed brief, so it scans before the lock and the
+    queue's other writers wait only for the staging and the commit. A commit that names only ids
+    scans under the lock: its checks are a few git calls, and in a burst every other writer's commit
+    makes a lock-free scan stale, so it would be paid for twice.
     """
-    scan = Scan.take(root, paths)
+    scan = Scan.take(root, paths) if paths else None
     with repo_lock(root) as acquired:
         if not acquired:
             print(
