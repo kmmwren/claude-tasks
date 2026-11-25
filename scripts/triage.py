@@ -38,7 +38,6 @@ from triage_alerts import (
     alert_text,
     alerts_plan,
     refusal_alerts,
-    routing_alerts,
     session_alert_notifier,
     undelivered,
     undelivered_text,
@@ -318,7 +317,7 @@ def _route(opts: Options, report: Report, standing: Standing) -> list[Decision]:
 
 
 def _apply_routes(opts: Options, report: Report, decisions: Sequence[Decision]) -> None:
-    """Hand the router the briefs bound for direct-mode queues, after triage's own commit."""
+    """Hand the router the briefs bound for projects after triage's own commit, then start the land."""
     if not (opts.apply and opts.router):
         return
     for project, ids in routes_by_project(decisions).items():
@@ -326,6 +325,8 @@ def _apply_routes(opts: Options, report: Report, decisions: Sequence[Decision]) 
             report.routed += ids
         else:
             report.route_notice = f"router could not route to {project}; {len(ids)} stay in ready"
+    if report.routed:
+        opts.router.land()
 
 
 def _promote_and_record(
@@ -360,12 +361,10 @@ def _alert_and_commit(
     touched: list[str],
     applied: Applied,
     standing: Standing,
-    routing: Sequence[Decision],
 ) -> None:
     today = datetime.date.fromisoformat(opts.today)
     flagged = verdict_alerts(standing.verdicts, standing.inbox, opts.rules, today)
     flagged += refusal_alerts(applied.refused)
-    flagged += routing_alerts(routing)
     alerted = _alert(opts, report, flagged)
     report.committed = (bool(touched) or alerted) and (
         sync_commit(
@@ -397,7 +396,7 @@ def run(opts: Options) -> Report:
     touched += applied.touched
     touched += _check_ready(opts, report, planned)
     routing = _route(opts, report, standing)
-    _alert_and_commit(opts, report, touched, applied, standing, routing)
+    _alert_and_commit(opts, report, touched, applied, standing)
     _apply_routes(opts, report, routing)
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report

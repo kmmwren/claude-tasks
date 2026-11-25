@@ -1,12 +1,12 @@
 """Tests for routing at promotion: triage asks the router about each brief it promotes and loses none."""
 
 import dataclasses
-import json
 
 import pytest
 import triage
+import triage_route
 from git_sync import SyncResult
-from triage_route import Placement, RouterPlan
+from triage_route import Placement, RouterCli, RouterPlan
 
 from tests.queue_helpers import inbox_text, make_inbox
 
@@ -25,6 +25,7 @@ class FakeRouter:
     def __init__(self, events, plan, applies=True):
         self.events, self._plan, self.applies = events, plan, applies
         self.asked = 0
+        self.landed = 0
 
     def plan(self):
         self.asked += 1
@@ -33,6 +34,9 @@ class FakeRouter:
     def apply(self, project, ids):
         self.events.append(("apply", project, list(ids)))
         return self.applies
+
+    def land(self):
+        self.landed += 1
 
 
 class Bell:
@@ -77,23 +81,52 @@ def test_a_promoted_brief_that_clearly_belongs_to_a_project_is_routed_after_tria
     assert (root / "ready" / "filed.md").exists()
 
 
-def test_a_brief_the_router_is_unsure_of_stays_in_ready_and_raises_an_alert(tmp_path, events):
-    root, report, _, bell = _run(tmp_path, events, TORN)
+def test_a_brief_the_router_is_unsure_of_stays_in_ready_and_is_left_to_the_routers_judge(
+    tmp_path, events
+):
+    root, report, router, bell = _run(tmp_path, events, TORN)
     assert report.routed == [] and [e[0] for e in events] == ["commit"]
     assert (root / "ready" / "filed.md").exists()
-    [text] = bell.texts
-    assert (
-        "routing unsure (1):" in text
-        and "- filed: Title of filed (could belong to alpha, beta)" in text
-    )
-    assert json.loads((root / ".triage-alerts.json").read_text()) == {"filed": "2026-11-25"}
+    assert report.alerts == [] and bell.texts == [] and router.landed == 0
+    assert not (root / ".triage-alerts.json").exists()
 
 
-def test_a_brief_for_a_pr_only_queue_stays_in_ready_and_the_alert_names_the_gap(tmp_path, events):
-    root, report, _, bell = _run(tmp_path, events, BY_PR)
-    assert report.routed == [] and [e[0] for e in events] == ["commit"]
-    assert (root / "ready" / "filed.md").exists()
-    assert "route needs a PR (1):" in bell.texts[0] and "no PR is opened here" in bell.texts[0]
+def test_a_brief_for_a_pr_queue_is_routed_like_any_other_and_the_land_is_started(tmp_path, events):
+    _, report, router, _ = _run(tmp_path, events, BY_PR)
+    assert report.routed == ["filed"] and events[1] == ("apply", "beta", ["filed"])
+    assert router.landed == 1
+
+
+def test_no_needs_a_pr_alert_is_raised(tmp_path, events):
+    _, report, _, bell = _run(tmp_path, events, BY_PR)
+    assert report.alerts == [] and bell.texts == []
+
+
+def test_a_routed_brief_starts_a_detached_land(tmp_path, events, monkeypatch):
+    log = tmp_path / "router.log"
+    started = []
+
+    def fake_spawn(launch, args, reason, log_path, cwd, env=None):
+        started.append((launch.argv(args), log_path, cwd))
+        return 1
+
+    monkeypatch.setattr(triage_route, "spawn_detached", fake_spawn)
+    monkeypatch.setattr(triage_route, "ROUTER_LOG", log)
+    script = tmp_path / "router.py"
+    script.write_text("")
+    root = make_inbox(tmp_path, {"filed": FILED})
+    base = triage.Options(root, True, GATE, None, 5, 1, None, "2026-11-25")
+    router = RouterCli(script)
+    monkeypatch.setattr(RouterCli, "plan", lambda self: DIRECT)
+    monkeypatch.setattr(RouterCli, "apply", lambda self, project, ids: True)
+    report = triage.run(dataclasses.replace(base, router=router, notify=Bell()))
+    assert report.routed == ["filed"]
+    assert started == [([triage_route.sys.executable, str(script), "land"], log, tmp_path)]
+
+
+def test_nothing_is_landed_when_nothing_was_routed(tmp_path, events):
+    _, _, router, _ = _run(tmp_path, events, DIRECT, applies=False)
+    assert router.landed == 0
 
 
 def test_a_brief_already_in_a_project_or_judged_generic_is_promoted_with_no_route_or_alert(
@@ -123,7 +156,7 @@ def test_a_route_the_router_could_not_make_leaves_the_brief_and_says_so(tmp_path
 
 def test_a_dry_run_shows_the_decisions_and_alerts_but_moves_and_sends_nothing(tmp_path, events):
     root, report, _, bell = _run(tmp_path, events, TORN, apply=False)
-    assert [d.brief_id for d in report.routes] == ["filed"] and len(report.alerts) == 1
+    assert [d.brief_id for d in report.routes] == ["filed"] and report.alerts == []
     assert events == [] and bell.texts == [] and (root / "inbox" / "filed.md").exists()
 
 

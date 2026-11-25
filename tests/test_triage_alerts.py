@@ -13,14 +13,12 @@ from triage_alerts import (
     AlertReason,
     alert_text,
     alerts_plan,
-    routing_alerts,
     session_alert_notifier,
     undelivered,
     verdict_alerts,
 )
 from triage_brief import InboxBrief
 from triage_close import CloseRules
-from triage_route import Decision, Outcome
 
 from tests.queue_helpers import inbox_text
 
@@ -202,18 +200,3 @@ def test_a_broken_alert_script_warns_instead_of_raising(tmp_path, capsys, body):
 def test_the_default_notifier_warns_and_delivers_nothing(capsys):
     assert undelivered("hello") is False
     assert "no notifier configured" in capsys.readouterr().err
-
-
-def test_a_brief_the_router_left_in_the_general_queue_is_flagged_by_why():
-    unsure = Decision("a", "Title of a", Outcome.UNSURE, ("alpha", "beta"))
-    needs_pr = Decision("b", "Title of b", Outcome.NEEDS_PR, ("beta",))
-    routed = Decision("c", "Title of c", Outcome.ROUTE, ("alpha",))
-    assert routing_alerts([unsure, needs_pr, routed]) == [
-        Alert("a", "Title of a", AlertReason.ROUTE_UNSURE, "could belong to alpha, beta"),
-        Alert(
-            "b",
-            "Title of b",
-            AlertReason.ROUTE_NEEDS_PR,
-            "belongs to beta, whose queue takes briefs by PR; no PR is opened here",
-        ),
-    ]

@@ -41,9 +41,9 @@ def test_a_move_into_a_direct_queue_is_a_route():
     )
 
 
-def test_a_move_into_a_pr_queue_needs_a_pr_and_is_not_a_route():
+def test_a_move_into_a_pr_queue_is_a_route():
     decision = RouterPlan.parse(PLAN).decide(_brief("by-pr"))
-    assert decision == Decision("by-pr", "Title of by-pr", Outcome.NEEDS_PR, ("beta",))
+    assert decision == Decision("by-pr", "Title of by-pr", Outcome.ROUTE, ("beta",))
 
 
 def test_an_ambiguous_brief_is_unsure_between_the_projects_it_scored_in():
@@ -59,13 +59,13 @@ def test_a_brief_the_router_has_no_view_on_gets_no_decision():
     assert [d.brief_id for d in found] == ["direct"]
 
 
-def test_only_direct_routes_are_grouped_for_apply():
+def test_routes_are_grouped_for_apply_in_any_mode():
     decisions = RouterPlan.parse(PLAN).decide_all([_brief(b) for b in ("direct", "by-pr", "torn")])
-    assert routes_by_project(decisions) == {"alpha": ["direct"]}
+    assert routes_by_project(decisions) == {"alpha": ["direct"], "beta": ["by-pr"]}
     assert routes_plan(decisions).splitlines() == [
         "3 promoted briefs the router has a view on",
         "  direct: route alpha",
-        "  by-pr: needs a PR beta",
+        "  by-pr: route beta",
         "  torn: unsure alpha, beta",
     ]
 

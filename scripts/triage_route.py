@@ -7,11 +7,12 @@ going from inbox to ready and ideally also routing for inbox". Routing therefore
 async triage at promotion, and never in the capture path. The router owns the scoring, the registry
 and the move; this module only reads its `plan` and calls its `apply`, so there is one router.
 
-A brief the router places in a direct-mode queue is routed. One bound for a queue that takes
-briefs only by PR is left in the general queue with an alert, because opening that PR is not
-triage's job; one the router cannot place is left there with an alert too. Triage never loses
-work (2026-11-17): nothing is dropped or parked silently, and a router that is absent or fails
-leaves every brief where it is.
+A brief the router places in a project queue is routed, whatever the queue's mode: a pr-mode
+queue lands by `make ship`, which `router.py land` runs, so no pull request is opened or waited
+on. Triage starts the land detached and returns while it runs. A brief the router cannot place
+stays in the general queue, where the router's own judge decides and alerts on it. Triage never
+loses work (2026-11-17): nothing is dropped or parked silently, and a router that is absent or
+fails leaves every brief where it is.
 
 Stdlib only.
 """
@@ -27,17 +28,17 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Protocol
 
 from _paths import warn
+from headless import spawn_detached
 from triage_brief import InboxBrief
 
 ROUTER_ENV = "CLAUDE_TASKS_ROUTER"
 ROUTER_SCRIPT = pathlib.Path.home() / ".claude" / "tools" / "project-coordinator" / "router.py"
+ROUTER_LOG = pathlib.Path.home() / ".claude" / "logs" / "claude-tasks-router.log"
 ROUTER_TIMEOUT_S = 300
-DIRECT = "direct"
 
 
 class Outcome(enum.StrEnum):
     ROUTE = "route"
-    NEEDS_PR = "needs a PR"
     UNSURE = "unsure"
 
 
@@ -79,8 +80,7 @@ class RouterPlan:
         """None when the router has no view: the brief is already routed, judged, or belongs nowhere."""
         move = self.moves.get(brief.id)
         if move:
-            outcome = Outcome.ROUTE if move.queue_mode == DIRECT else Outcome.NEEDS_PR
-            return Decision(brief.id, brief.title, outcome, (move.project,))
+            return Decision(brief.id, brief.title, Outcome.ROUTE, (move.project,))
         if brief.id in self.ambiguous:
             return Decision(brief.id, brief.title, Outcome.UNSURE, self.ambiguous[brief.id])
         return None
@@ -94,6 +94,21 @@ class Router(Protocol):
     def plan(self) -> RouterPlan | None: ...
 
     def apply(self, project: str, ids: Sequence[str]) -> bool: ...
+
+    def land(self) -> None: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class RouterLaunch:
+    """Starts the router script under the current interpreter, in the shape `spawn_detached` takes."""
+
+    script: pathlib.Path
+
+    def argv(self, args: Sequence[str]) -> list[str]:
+        return [sys.executable, str(self.script), *args]
+
+    def env(self, reason: str) -> dict[str, str] | None:
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -134,13 +149,21 @@ class RouterCli:
     def apply(self, project: str, ids: Sequence[str]) -> bool:
         return self._run("apply", project, *ids) is not None
 
+    def land(self) -> None:
+        """Start `router.py land` detached, so triage returns while `make ship` runs."""
+        launch = RouterLaunch(self.script)
+        try:
+            spawn_detached(launch, ["land"], "router land", ROUTER_LOG, self.script.parent)
+        except OSError as err:
+            _unrouted(f"router land did not start: {err}")
+
 
 def _unrouted(why: str) -> None:
     warn(f"{why}; promoted briefs stay in the general queue", prefix="triage")
 
 
 def routes_by_project(decisions: Iterable[Decision]) -> dict[str, list[str]]:
-    """The briefs to hand the router, grouped by the direct-mode project each belongs to."""
+    """The briefs to hand the router, grouped by the project each belongs to."""
     grouped: dict[str, list[str]] = {}
     for d in decisions:
         if d.outcome is Outcome.ROUTE:

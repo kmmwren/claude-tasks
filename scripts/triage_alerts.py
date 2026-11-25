@@ -2,8 +2,7 @@
 """
 triage_alerts.py: tell the owner about briefs that need a human call, and leave them where they are.
 
-A stale needs-info brief, a model-called drop, or a promoted brief the router cannot place is
-flagged, never moved. One aggregated alert goes out per run; <queue>/.triage-alerts.json holds when each brief was last alerted.
+A stale needs-info brief or a model-called drop is flagged, never moved. One aggregated alert goes out per run; <queue>/.triage-alerts.json holds when each brief was last alerted.
 """
 
 import dataclasses
@@ -19,7 +18,6 @@ from _concurrency import atomic_write
 from class_log import BriefClass, Verdict
 from triage_brief import InboxBrief
 from triage_close import Attempt, CloseRules, eligible, idle_days
-from triage_route import Decision, Outcome
 
 ALERT_STATE = ".triage-alerts.json"
 CHANNEL = "triage"
@@ -34,8 +32,6 @@ class AlertReason(enum.StrEnum):
     STALE = "stale needs-info"
     DROP = "model-suggested drop"
     UNCLOSABLE = "close refused"
-    ROUTE_UNSURE = "routing unsure"
-    ROUTE_NEEDS_PR = "route needs a PR"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,25 +69,6 @@ def refusal_alerts(refused: Sequence[Attempt]) -> list[Alert]:
     return [
         Alert(a.move.brief_id, a.move.title, AlertReason.UNCLOSABLE, a.refusal) for a in refused
     ]
-
-
-_ROUTE_ALERTS = {
-    Outcome.UNSURE: (AlertReason.ROUTE_UNSURE, "could belong to {}"),
-    Outcome.NEEDS_PR: (
-        AlertReason.ROUTE_NEEDS_PR,
-        "belongs to {}, whose queue takes briefs by PR; no PR is opened here",
-    ),
-}
-
-
-def routing_alerts(decisions: Sequence[Decision]) -> list[Alert]:
-    """An alert for each promoted brief the router left in the general queue, so none waits unseen."""
-    return [_route_alert(d) for d in decisions if d.outcome in _ROUTE_ALERTS]
-
-
-def _route_alert(d: Decision) -> Alert:
-    reason, template = _ROUTE_ALERTS[d.outcome]
-    return Alert(d.brief_id, d.title, reason, template.format(d.named))
 
 
 class AlertLedger:
