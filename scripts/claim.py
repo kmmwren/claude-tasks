@@ -22,13 +22,14 @@ import pathlib
 import subprocess
 from collections.abc import Callable, Mapping
 
-from _concurrency import NETWORK_TIMEOUT, atomic_write
+from _concurrency import NETWORK_TIMEOUT, atomic_write, repo_lock
 from _dates import parse_moment
 from _default_branch import default_branch
 from _paths import warn
 from deps import fm
 from git_sync import scratch_worktree
 from maintain_state import RunLedger
+from origin_push import lost_race
 from transition import find_brief, move_brief, set_frontmatter_fields
 from wake import RunKey, Wake
 
@@ -37,8 +38,10 @@ LEASE_EXPIRES = "lease_expires"
 LEASE_ATTEMPTS = "lease_attempts"
 WAKE_KEY = "wake_key"
 IN_PROGRESS = "in-progress"
-# What git says when a push lost a race; a hook's "[remote rejected]" is a refusal, not a race.
-LOST_RACE_MARKERS = ("[rejected]", "(fetch first)", "(non-fast-forward)")
+# A laptop clock can drift or jump ahead by minutes; a lease promising more time than this has not
+# been taken yet and is treated as lapsed.
+HOLDER_CLOCK_AHEAD = dt.timedelta(minutes=10)
+REFRESH_LOCK_WAIT = 5.0
 EPOCH = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
 
 Fetch = Callable[[pathlib.Path, str], bool]
@@ -68,6 +71,10 @@ class Lease:
 
     def expired(self, now: dt.datetime) -> bool:
         return self.expires <= now
+
+    def live(self, now: dt.datetime, ttl: dt.timedelta) -> bool:
+        """Unexpired and no further ahead than a ttl plus a holder's clock drift; an absurd promise is not live."""
+        return now < self.expires <= now + ttl + HOLDER_CLOCK_AHEAD
 
     def fields(self) -> dict[str, str]:
         return {
@@ -101,6 +108,7 @@ class Target:
 class Outcome(enum.Enum):
     CLAIMED = "claimed"
     LOST = "lost"  # another runner published first, or the brief changed under us
+    REFUSED = "refused"  # the remote declined the push (permissions, protection, a hook); retrying cannot help
     FAILED = "failed"  # nothing was published for another reason
 
 
@@ -189,7 +197,7 @@ class Claimer:
         """The new lease, after checking that origin still shows what this claim was decided on."""
         held = Lease.from_fields(fm(text))
         if target.reclaim:
-            if held is None or not held.expired(now):
+            if held is None or held.live(now, self.ttl):
                 raise ClaimLost(f"{target.brief_id} holds a live lease on origin")
             return held.renewed(self.holder, now, self.ttl)
         wake = Wake.parse(target.brief_id, text)
@@ -209,9 +217,9 @@ class Claimer:
         pushed = _git(wt, "push", "-q", "origin", f"HEAD:{branch}")
         if pushed.returncode == 0:
             return Claim(Outcome.CLAIMED, "published")
-        lost = any(marker in pushed.stderr for marker in LOST_RACE_MARKERS)
         why = " ".join(pushed.stderr.split())[:240]
-        return Claim(Outcome.LOST if lost else Outcome.FAILED, f"push refused: {why}")
+        outcome = Outcome.LOST if lost_race(pushed.stderr) else Outcome.REFUSED
+        return Claim(outcome, f"push refused: {why}")
 
     def _owns_repo(self) -> bool:
         """A claim edits the repo's tree, so the queue's folders must sit at its top level."""
@@ -223,7 +231,11 @@ class Claimer:
         branch = default_branch(self.root)
         if not self.fetch(self.root, branch):
             return False
-        return _git(self.root, "merge", "--ff-only", "-q", f"origin/{branch}").returncode == 0
+        with repo_lock(self.root, REFRESH_LOCK_WAIT) as held:
+            if not held:
+                warn("the queue lock is busy; the checkout was not advanced to origin", "maintain")
+                return False
+            return _git(self.root, "merge", "--ff-only", "-q", f"origin/{branch}").returncode == 0
 
     def _advance_checkout(self) -> None:
         if not self.refresh():

@@ -22,7 +22,6 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 import argparse
 import dataclasses
 import datetime as dt
-import enum
 import functools
 import os
 import pathlib
@@ -34,7 +33,10 @@ from _paths import require_queue, resolve_root, warn
 from claim import IN_PROGRESS, Claim, Claimer, Lease, Target
 from deps import Brief, brief_id, done_ids, fm, unmet
 from headless import Launch, ScriptLaunch, launcher_script, rank_table, spawn_detached
+from hygiene import Engine, Hygiene
+from hygiene_lease import HygieneLeaser
 from maintain_config import MaintainSettings, Tier
+from maintain_report import Report, ReportKind
 from maintain_state import LastRun, RunLedger
 from picks import state_dir
 from wake import Due, MalformedWake, ProbeRunner, Reading, Wake
@@ -48,29 +50,6 @@ RUN_LOG_DIR = "maintain-runs"
 Clock = Callable[[], dt.datetime]
 Spawn = Callable[..., int]
 Probe = Callable[[str], Reading]
-
-
-class ReportKind(enum.Enum):
-    OVERDUE = "overdue"
-    OVERDUE_NEEDS = "overdue-needs"
-    EXHAUSTED = "exhausted"
-    CLAIMED = "claimed"
-    NOT_CLAIMED = "not-claimed"
-    SPAWN_FAILED = "spawn-failed"
-
-
-@dataclasses.dataclass(frozen=True)
-class Report:
-    """One line about one brief; the capability makes `overdue-needs` into `overdue-needs-<cap>`."""
-
-    kind: ReportKind
-    brief_id: str
-    detail: str = ""
-    capability: str = ""
-
-    def __str__(self) -> str:
-        label = f"{self.kind.value}-{self.capability}" if self.capability else self.kind.value
-        return f"{label} {self.brief_id}" + (f": {self.detail}" if self.detail else "")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -163,7 +142,7 @@ class Scanner:
 
     def _reclaimable(self, text: str, wake: Wake, now: dt.datetime) -> bool:
         lease = Lease.from_fields(fm(text))
-        if lease is None or not lease.expired(now):
+        if lease is None or lease.live(now, self.settings.lease_ttl):
             return False
         if lease.attempts >= self.settings.max_attempts:
             self.reports.append(
@@ -190,19 +169,34 @@ class Maintainer:
     probe: Probe | None = None
     claimer: Claimer | None = None
     launch: Launch | None = None
+    engine: Engine | None = None
 
     def tick(self) -> TickResult:
-        """Run one tick; returns at once, touching nothing, while the tier's last run is fresh."""
+        """Run one tick, wake step then hygiene; returns at once, touching nothing, while the tier's last run is fresh."""
         now = self.clock()
         interval = self.settings.tiers[self.tier].interval
         last = LastRun.read(self.root, self.tier.value)
         if last is not None and last.fresh(now, interval):
             return TickResult(ran=False)
         result = self._work(now)
-        LastRun(self.tier.value, now, result.claimed, tuple(map(str, result.reports))).write(
-            self.root
-        )
+        try:
+            result = dataclasses.replace(result, reports=(*result.reports, *self._hygiene(now)))
+        finally:
+            LastRun(self.tier.value, now, result.claimed, tuple(map(str, result.reports))).write(
+                self.root
+            )
         return result
+
+    def _claimer(self) -> Claimer:
+        return self.claimer or Claimer(
+            self.root, self.holder or default_holder(self.tier), self.settings.lease_ttl
+        )
+
+    def _hygiene(self, now: dt.datetime) -> tuple[Report, ...]:
+        """The tidy-up steps after the wake step, under their own lease; a crash there never unrecords the wake step."""
+        engine = self.engine or Engine.for_queue(self.root, self.clock)
+        leaser = HygieneLeaser(self._claimer())
+        return Hygiene(self.root, self.settings.hygiene_interval, engine, leaser).run(now)
 
     def _work(self, now: dt.datetime) -> TickResult:
         launch = self.launch or _launcher(self.root)
@@ -212,9 +206,7 @@ class Maintainer:
                 "maintain",
             )
             return TickResult(ran=True)
-        claimer = self.claimer or Claimer(
-            self.root, self.holder or default_holder(self.tier), self.settings.lease_ttl
-        )
+        claimer = self._claimer()
         if not claimer.refresh():
             warn(
                 "could not bring the queue up to date with origin; working from the checkout as it is",

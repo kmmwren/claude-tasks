@@ -6,6 +6,7 @@ import threading
 
 import claim as claim_mod
 import pytest
+from _concurrency import repo_lock
 from claim import Claim, Lease, Outcome, Target
 from deps import fm
 from wake import RunKey, Wake
@@ -187,14 +188,15 @@ def test_a_queue_that_is_a_subfolder_of_its_repo_is_not_claimed(tmp_path):
     assert result.outcome is Outcome.FAILED and "not the root" in result.detail
 
 
-def test_a_push_refused_for_another_reason_is_failed_not_lost(tmp_path):
+def test_a_push_refused_for_another_reason_is_refused_not_lost(tmp_path):
     clone = queue_repo(tmp_path)
     add_brief(clone, "b1", not_before=PAST)
     hook = tmp_path / "remote" / "hooks" / "pre-receive"
     hook.write_text("#!/bin/sh\necho 'policy says no' >&2\nexit 1\n")
     hook.chmod(0o755)
     result = claimer_for(clone, "a").claim(target_of(clone), NOW)
-    assert result.outcome is Outcome.FAILED and "policy says no" in result.detail
+    assert result.outcome is Outcome.REFUSED and "policy says no" in result.detail
+    assert not result.won
 
 
 def test_a_commit_that_fails_is_reported_as_failed(tmp_path, monkeypatch):
@@ -277,3 +279,41 @@ def test_a_lease_round_trips_through_frontmatter_fields():
 )
 def test_only_an_in_progress_target_is_a_reclaim(folder, reclaim):
     assert Target("b", folder, RunKey("b", "probe", 0)).reclaim is reclaim
+
+
+def test_a_lease_is_live_until_it_expires_and_never_beyond_a_ttl_plus_a_clocks_drift():
+    drift = claim_mod.HOLDER_CLOCK_AHEAD
+    assert Lease("h", NOW + HOUR, 1).live(NOW, TTL)
+    assert not Lease("h", NOW, 1).live(NOW, TTL)
+    assert Lease("h", NOW + TTL + drift, 1).live(NOW, TTL)
+    assert not Lease("h", NOW + TTL + drift + dt.timedelta(seconds=1), 1).live(NOW, TTL)
+
+
+def test_a_lease_stamped_far_ahead_by_a_runaway_clock_is_reclaimable(tmp_path):
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "b1", not_before=PAST)
+    target = target_of(clone)
+    claimer_for(clone, "laptop@h:1").claim(target, NOW + dt.timedelta(days=1))
+    again = claimer_for(clone, "cloud@h:2").claim(Target("b1", "in-progress", target.key), NOW)
+    assert again.won and claimed_fields(clone)["lease_holder"] == "cloud@h:2"
+
+
+def test_a_claim_that_loses_a_ref_lock_race_on_the_remote_is_lost_not_refused(tmp_path):
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "b1", not_before=PAST)
+    (tmp_path / "remote" / "refs" / "heads" / "main.lock").write_text("")
+    result = claimer_for(clone, "a").claim(target_of(clone), NOW)
+    assert result.outcome is Outcome.LOST and not result.won
+
+
+def test_a_busy_queue_lock_warns_and_leaves_the_checkout_where_it_was(
+    tmp_path, monkeypatch, capsys
+):
+    clone_a, clone_b = queue_repo(tmp_path), second_clone(tmp_path)
+    add_brief(clone_a, "b1", not_before=PAST)
+    monkeypatch.setattr(claim_mod, "REFRESH_LOCK_WAIT", 0.2)
+    with repo_lock(clone_b, 5) as held:
+        assert held and not claimer_for(clone_b, "b").refresh()
+    assert "queue lock is busy" in capsys.readouterr().err
+    assert not (clone_b / "ready" / "b1.md").exists()
+    assert claimer_for(clone_b, "b").refresh() and (clone_b / "ready" / "b1.md").exists()

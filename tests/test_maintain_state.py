@@ -106,3 +106,17 @@ def test_an_invalid_value_warns_and_takes_the_default(tmp_path, capsys, toml):
     assert settings.lease_ttl == dt.timedelta(hours=2) and settings.max_claims == 3
     assert settings.tiers[Tier.LAPTOP].interval == FIVE
     assert "using the default" in capsys.readouterr().err
+
+
+def test_a_record_a_peers_clock_stamped_slightly_ahead_is_fresh_but_one_far_ahead_is_ignored():
+    assert LastRun("laptop", AT).fresh(AT - dt.timedelta(seconds=10), FIVE)
+    assert not LastRun("laptop", AT).fresh(AT - dt.timedelta(days=3), FIVE)
+
+
+def test_hygiene_runs_every_four_hours_unless_the_queue_says_otherwise(tmp_path):
+    (tmp_path / "tasks.toml").write_text("")
+    assert MaintainSettings.load(tmp_path).hygiene_interval == dt.timedelta(hours=4)
+    (tmp_path / "tasks.toml").write_text("[maintain]\nhygiene_interval_minutes = 90\n")
+    assert MaintainSettings.load(tmp_path).hygiene_interval == dt.timedelta(minutes=90)
+    (tmp_path / "tasks.toml").write_text("[maintain]\nhygiene_interval_minutes = -1\n")
+    assert MaintainSettings.load(tmp_path).hygiene_interval == dt.timedelta(hours=4)

@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 
 from claim import Claimer
 from headless import Launch, ScriptLaunch
+from hygiene import Engine, Environment
 from maintain import Maintainer
 from maintain_config import MaintainSettings, Tier
 
@@ -91,6 +92,12 @@ def recording_spawn(spawned: Spawned) -> Callable[..., int]:
     return spawn
 
 
+def idle_engine(clone: pathlib.Path, now: dt.datetime = NOW) -> Engine:
+    """An engine with no steps: no hygiene phase is due, so a tick makes no hygiene commit."""
+    where = Environment(clone, clone / "none-a", clone / "none-b", clone / "none-c")
+    return Engine(where, (), clock=lambda: now)
+
+
 def maintainer(
     clone: pathlib.Path,
     spawned: Spawned,
@@ -104,6 +111,7 @@ def maintainer(
         "clock": lambda: now,
         "spawn": recording_spawn(spawned),
         "launch": ScriptLaunch("/stub/claude-any.sh"),
+        "engine": idle_engine(clone, now),
         **overrides,
     }
     settings = wiring.pop("settings", None) or settings_for(clone)

@@ -27,6 +27,8 @@ from wake import RunKey
 STATE_DIR = "maintain"
 LAST_RUN_DIR = f"{STATE_DIR}/last-run"
 RUNS_DIR = f"{STATE_DIR}/runs"
+# A peer's clock may run this far ahead; a record stamped beyond it has not happened yet.
+CLOCK_SKEW = dt.timedelta(seconds=30)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,8 +67,8 @@ class LastRun:
         atomic_write(self.path(root, self.tier), json.dumps(body, indent=2) + "\n")
 
     def fresh(self, now: dt.datetime, interval: dt.timedelta) -> bool:
-        """True while the record is younger than `interval`; a clock that ran backwards is stale, not fresh."""
-        return dt.timedelta(0) <= now - self.at < interval
+        """True while the record is younger than `interval`; one stamped beyond the clock skew ahead is ignored."""
+        return -CLOCK_SKEW <= now - self.at < interval
 
 
 @dataclasses.dataclass(frozen=True)

@@ -47,3 +47,11 @@ def _no_ambient_router(tmp_path_factory, monkeypatch):
     from triage_route import ROUTER_ENV
 
     monkeypatch.setenv(ROUTER_ENV, str(tmp_path_factory.mktemp("no-router") / "router.py"))
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_hygiene(monkeypatch):
+    """A tick's tidy-up runs real scripts and may call headless Claude; a test that wants steps passes its own."""
+    import hygiene
+
+    monkeypatch.setattr(hygiene, "STEPS", ())

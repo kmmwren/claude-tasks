@@ -20,6 +20,7 @@ from tests.maintain_helpers import (
     NOW,
     PAST,
     add_brief,
+    idle_engine,
     maintainer,
     origin_files,
     origin_head,
@@ -435,3 +436,55 @@ def test_never_due_readings_are_not_claimed(tmp_path):
     ).tick()
     assert seen == ["x"] and result.claimed == ()
     assert claim_mod.IN_PROGRESS == "in-progress"
+
+
+def hygiene_engine(clone, runner, *steps):
+    from hygiene import Engine
+
+    return Engine(idle_engine(clone).where, steps, runner, lambda: NOW)
+
+
+def test_the_tick_runs_the_tidy_up_after_the_wake_step_and_records_both(tmp_path):
+    from tests.test_hygiene import A, Runner
+
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "b1", not_before=PAST)
+    runner = Runner()
+    result = maintainer(clone, [], engine=hygiene_engine(clone, runner, A)).tick()
+    assert result.claimed == ("b1",) and runner.calls == ["a.py"]
+    files = origin_files(clone)
+    assert {"in-progress/b1.md", "maintain/last-run/deterministic.json"} <= files
+    assert LastRun.read(clone, "laptop").claimed == ("b1",)
+
+
+def test_what_the_tidy_up_needs_a_person_for_joins_the_tick_reports_and_its_record(tmp_path):
+    from tests.test_hygiene import A, Runner
+
+    clone = queue_repo(tmp_path)
+    result = maintainer(
+        clone, [], engine=hygiene_engine(clone, Runner(codes={"a.py": 2}), A)
+    ).tick()
+    assert [r.kind for r in result.reports] == [ReportKind.HYGIENE_FAILED]
+    assert LastRun.read(clone, "laptop").reports[0].startswith("hygiene-failed deterministic:")
+
+
+def test_a_crash_in_the_tidy_up_never_unrecords_the_wake_step(tmp_path):
+    from tests.test_hygiene import A, Runner
+
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "b1", not_before=PAST)
+
+    def crash(name):
+        raise RuntimeError("tidy-up exploded")
+
+    engine = hygiene_engine(clone, Runner(on_call=crash), A)
+    with pytest.raises(RuntimeError, match="tidy-up exploded"):
+        maintainer(clone, [], engine=engine).tick()
+    assert LastRun.read(clone, "laptop").claimed == ("b1",) and "in-progress/b1.md" in origin_files(
+        clone
+    )
+
+
+def test_with_no_engine_given_the_tick_uses_the_production_wiring(tmp_path):
+    clone = queue_repo(tmp_path)
+    assert maintainer(clone, [], engine=None).tick().ran

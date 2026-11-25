@@ -6,6 +6,7 @@ maintain_config.py: the `[maintain]` table of tasks.toml, read into typed settin
   lease_ttl_minutes = 120
   max_claims_per_tick = 3
   max_attempts = 3
+  hygiene_interval_minutes = 240
   run_args = ["--dangerously-skip-permissions"]
   [maintain.laptop]
   interval_minutes = 5
@@ -44,6 +45,7 @@ DEFAULT_CAPABILITIES = {Tier.LAPTOP: frozenset({EVERYTHING}), Tier.CLOUD: frozen
 DEFAULT_LEASE_TTL_MINUTES = 120.0
 DEFAULT_MAX_CLAIMS = 3
 DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_HYGIENE_INTERVAL_MINUTES = 240.0
 # The coordinator's own headless runs of action-task use the same flag.
 DEFAULT_RUN_ARGS = ("--dangerously-skip-permissions",)
 
@@ -61,6 +63,7 @@ class MaintainSettings:
     max_claims: int
     max_attempts: int
     run_args: tuple[str, ...]
+    hygiene_interval: dt.timedelta = dt.timedelta(minutes=DEFAULT_HYGIENE_INTERVAL_MINUTES)
 
     @classmethod
     def load(cls, root: str | os.PathLike[str]) -> "MaintainSettings":
@@ -72,6 +75,11 @@ class MaintainSettings:
             int(_positive(table, "max_claims_per_tick", DEFAULT_MAX_CLAIMS)),
             int(_positive(table, "max_attempts", DEFAULT_MAX_ATTEMPTS)),
             _words(table, "run_args", DEFAULT_RUN_ARGS),
+            dt.timedelta(
+                minutes=_positive(
+                    table, "hygiene_interval_minutes", DEFAULT_HYGIENE_INTERVAL_MINUTES
+                )
+            ),
         )
 
 
