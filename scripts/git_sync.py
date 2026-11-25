@@ -7,6 +7,7 @@ for the whole burst. `--sweep` is the timer's net: it commits what no writer nam
 """
 
 import contextlib
+import dataclasses
 import datetime
 import enum
 import os
@@ -27,10 +28,11 @@ from _advance import advance_to_origin  # noqa: E402
 from _concurrency import NETWORK_TIMEOUT, Deadline, HeldLock, repo_lock  # noqa: E402
 from _credentials import carries_credential  # noqa: E402
 from _default_branch import default_branch  # noqa: E402
-from done_guard import DoneBackstop, scope_of  # noqa: E402
 from _log_conflict import Rebase  # noqa: E402
 from _paths import is_brief, resolve_root  # noqa: E402
 from _push_state import PushState  # noqa: E402
+from _tree_state import TreeState  # noqa: E402
+from done_guard import DoneBackstop, scope_of  # noqa: E402
 from host_land import land_host_queue  # noqa: E402
 
 
@@ -537,8 +539,35 @@ def push_now(root: pathlib.Path, wait: float = PUSH_WAIT) -> bool:
     return pushed
 
 
+@dataclasses.dataclass(frozen=True)
+class Scan:
+    """What the read-only checks found over the changed briefs, and the tree they looked at."""
+
+    state: TreeState
+    shadows: tuple[str, ...]
+    leaks: tuple[str, ...]
+
+    @classmethod
+    def take(cls, root: pathlib.Path, paths: Sequence[str]) -> "Scan":
+        """Run the slow checks; the state is read first, so a write during the scan shows as a difference."""
+        state = TreeState.read(root, f"origin/{default_branch(root)}")
+        leaks = _secret_bearing(root, paths) if paths else []
+        return cls(state, tuple(_shadowing_briefs(root)), tuple(leaks))
+
+    def current(self, root: pathlib.Path, paths: Sequence[str]) -> "Scan":
+        """This scan while the tree is as it was scanned; otherwise a fresh one, as a lock-held scan always was."""
+        if TreeState.read(root, f"origin/{default_branch(root)}") == self.state:
+            return self
+        return Scan.take(root, paths)
+
+
 def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]) -> bool:
-    """Stage what the caller names and commit it under the queue lock; False if the lock timed out."""
+    """Scan, then stage and commit what the caller names under the queue lock; False if the lock timed out.
+
+    The scans read every changed brief, so they run before the lock and the queue's other writers
+    wait only for the staging and the commit.
+    """
+    scan = Scan.take(root, paths)
     with repo_lock(root) as acquired:
         if not acquired:
             print(
@@ -546,30 +575,38 @@ def _commit(message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequenc
                 "Re-run git_sync.py with the same message and ids to commit them.)"
             )
             return False
-        _commit_locked(message, root, ids, paths)
+        _commit_locked(message, root, ids, paths, scan)
     return True
 
 
 def _commit_locked(
-    message: str, root: pathlib.Path, ids: Sequence[str], paths: Sequence[str]
+    message: str,
+    root: pathlib.Path,
+    ids: Sequence[str],
+    paths: Sequence[str],
+    scan: Scan | None = None,
 ) -> None:
-    """Stage and commit what the caller names; the caller holds the queue lock."""
-    shadows = _shadowing_briefs(root)
-    for path in shadows:
+    """Stage and commit what the caller names; the caller holds the queue lock.
+
+    A `scan` taken before the lock stands while the tree still matches it; without one, or once
+    it is stale, the checks run here, so no commit carries content a check has not read.
+    """
+    scan = Scan.take(root, paths) if scan is None else scan.current(root, paths)
+    for path in scan.shadows:
         print(
             f"  (refused: {path} would re-create an id already filed in another state; "
             "sharpen the existing brief instead. Left untracked.)"
         )
     staged_leaks = _staged_secret_bearing(root)
     _unstage(root, staged_leaks)
-    leaks = list(dict.fromkeys([*staged_leaks, *(_secret_bearing(root, paths) if paths else [])]))
+    leaks = list(dict.fromkeys([*staged_leaks, *scan.leaks]))
     if leaks:  # a count, not names: the paths come from scanning credential-bearing files
         print(
             f"  (refused: {len(leaks)} held back for looking like a credential. "
             "Left uncommitted; `git status` lists them. Remove the secret, then re-sync.)"
         )
     DoneBackstop(root).run(scope_of(ids, paths))
-    refused = [f":(exclude){p}" for p in (*shadows, *leaks)]
+    refused = [f":(exclude){p}" for p in (*scan.shadows, *leaks)]
     _stage_named_briefs(root, ids, refused)
     if paths:
         _git(root, "add", "--all", "--", *paths, *refused)
