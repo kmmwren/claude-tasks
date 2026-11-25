@@ -20,6 +20,7 @@ from transition import set_field
 from triage_sources import cited_sources
 
 GENERATED_BY = "inbox-triage"
+UNCHECKED = "unchecked"
 FRONTMATTER = re.compile(r"(---\n)(.*?)(\n---)", re.DOTALL)
 
 
@@ -35,6 +36,11 @@ class InboxBrief:
     @functools.cached_property
     def fields(self) -> dict[str, str]:
         return fm(self.text)
+
+    @property
+    def unchecked(self) -> bool:
+        """Filed straight to ready/ by a capture, so the dedup and done checks have not yet run on it."""
+        return bool(self.fields.get(UNCHECKED))
 
     @functools.cached_property
     def digest(self) -> str:
@@ -73,6 +79,14 @@ class InboxBrief:
             lambda m: m.group(1) + set_field(m.group(2), key, value) + m.group(3),
             self.text,
             count=1,
+        )
+        return dataclasses.replace(self, text=text)
+
+    def without_field(self, key: str) -> "InboxBrief":
+        """This brief with the frontmatter line for `key` removed."""
+        line = re.compile(rf"(?m)^{re.escape(key)}:.*\n?")
+        text = FRONTMATTER.sub(
+            lambda m: m.group(1) + line.sub("", m.group(2)) + m.group(3), self.text, count=1
         )
         return dataclasses.replace(self, text=text)
 

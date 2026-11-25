@@ -13,7 +13,9 @@ A ready/ or blocked/ brief is refused without one of them; an inbox/ brief may l
 A capture whose fingerprint (normalised title plus the sources it cites) matches a brief already
 in the queue is a repeat: --on-duplicate merge (default) adds it to that brief as a log line and,
 when it carries new context, a note; refuse files nothing and exits 1; file captures it anyway.
-Either way the output says which brief it matched. Stdlib only.
+Either way the output says which brief it matched. A ready/ brief is a plain write too, so it carries
+`unchecked: <date>`: the next triage run merges it into an earlier brief it repeats and closes it on
+evidence it is finished, as it does a brief it promotes, then drops the mark. Stdlib only.
 
 Examples:
   python scripts/add_task.py --title "Rotate the leaked API key" \
@@ -59,6 +61,7 @@ from readiness import (
     placeholder_criterion,
     placeholder_goal,
 )
+from triage_brief import UNCHECKED
 
 # The CLI flag that supplies each field a ready brief needs.
 FLAGS = {"goal": "--goal", "criteria": "--criteria/--success", "context": "--context"}
@@ -176,6 +179,7 @@ def filing_status(a: argparse.Namespace) -> str:
 def render_brief(nid: str, a: argparse.Namespace, status: str, context: str, today: str) -> str:
     tags = flow_list(a.tags)
     reqs = flow_list(a.requirements)
+    unchecked = f"{UNCHECKED}: {today}\n" if status == "ready" else ""
     crit = (
         "\n".join(f"- [ ] {c}" for c in a.criteria)
         if a.criteria
@@ -197,7 +201,7 @@ tags: {tags}
 parent: {a.parent}
 source: {a.provenance.source}
 source_ref: {a.provenance.ref}
-blockers: []
+{unchecked}blockers: []
 {a.deps.frontmatter()}blocks: {flow_list(a.blocks)}
 related: []
 requirements: {reqs}

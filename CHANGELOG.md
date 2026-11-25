@@ -155,6 +155,12 @@
   an alert that could not be delivered shows in the report's `alert_notice`;
   a reopened brief, or one carrying a closing reason or an `assignee`, is never closed again. A run closes at most `[triage] max_moves`
   (default 200), evidence first. `--dry-run` prints the planned closes and alerts.
+- **A brief filed with `add_task.py --ready` gets the same dedup and done checks as a promoted one.**
+  The capture stays a plain write and marks the brief `unchecked: <date>`; the next
+  `triage.py promote --apply` merges one that repeats an earlier brief into it (body kept, same
+  `closed_reason: duplicate` close), closes one whose evidence says it is finished, and drops the mark
+  from the rest. A brief whose close is capped or refused keeps the mark and is retried. Briefs
+  already in `ready/` without the mark are left alone.
 - **`prioritise.py` weights typed work signals per scope.** `--scope all|tag:<t>|project:<slug>|session:<id>`
   filters and weights the ranking; the scope parser moved from `rank.py` to a shared `scope.py`, and
   `rank.py` passes its scope through. Signals `multiplier`, `ships-pr` and `clears-blocker` are matched by

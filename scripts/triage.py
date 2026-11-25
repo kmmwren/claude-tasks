@@ -54,6 +54,7 @@ from triage_classify import (
     duplicate_map,
     fixed_calls,
     reconcile,
+    unchecked_duplicate_map,
 )
 from triage_close import (
     MOVE_LOG,
@@ -74,6 +75,7 @@ from triage_evidence import PrStates, cited_pulls
 from triage_promote import Gate, Promotion, promote
 from triage_route import Decision, Router, RouterCli, routes_by_project, routes_plan
 from triage_sources import LiveSources
+from triage_unchecked import clear_checked, load_unchecked, repeat_moves
 
 
 @dataclasses.dataclass
@@ -87,6 +89,7 @@ class Report:
     promoted_enriched: int = 0
     changed_underfoot: int = 0
     duplicates: int = 0
+    ready_checked: int = 0
     corrections_logged: int = 0
     unclassified: int = 0
     classes: dict[str, int] = dataclasses.field(default_factory=dict)
@@ -256,6 +259,7 @@ class Standing:
     dupes: Mapping[str, str]
     promoted: list[str]
     routable: list[InboxBrief]
+    ready_repeats: Mapping[str, str]
 
 
 def _declare(opts: Options, report: Report) -> list[str]:
@@ -278,7 +282,8 @@ def _classify_and_promote(
     opts: Options, report: Report, log: ClassLog, retired: Collection[str], finished: Sequence[Move]
 ) -> Standing:
     finished_inbox = {m.brief_id for m in finished if m.source == "inbox"}
-    dupes = duplicate_map(index(opts.root))
+    groups = index(opts.root)
+    dupes = duplicate_map(groups)
     fixed = fixed_calls(dupes, log.sent_back())
     report.duplicates = len(dupes)
     filed, filled = _candidates(opts, report, {*fixed, *finished_inbox})
@@ -287,7 +292,8 @@ def _classify_and_promote(
     promoted = _promote_and_record(opts, report, log, verdicts, [*filed, *filled])
     standing = [v for v in verdicts if v.brief_id not in retired]
     routable = _routable([*filed, *filled], promoted, opts.apply)
-    return Standing(standing, {b.id: b for b in inbox}, dupes, promoted, routable)
+    ready_repeats = unchecked_duplicate_map(groups)
+    return Standing(standing, {b.id: b for b in inbox}, dupes, promoted, routable, ready_repeats)
 
 
 def _routable(
@@ -335,6 +341,17 @@ def _promote_and_record(
     return promoted
 
 
+def _check_ready(opts: Options, report: Report, planned: Sequence[Move]) -> list[str]:
+    """Mark the capture-filed ready briefs with no move pending as checked; a dry run marks none.
+
+    Read afresh, since a merge in this run may have added to a survivor.
+    """
+    pending = {m.brief_id for m in planned}
+    cleared = clear_checked(load_unchecked(opts.root), pending) if opts.apply else []
+    report.ready_checked = len(cleared)
+    return cleared
+
+
 def _alert_and_commit(
     opts: Options,
     report: Report,
@@ -371,8 +388,12 @@ def run(opts: Options) -> Report:
     standing = _classify_and_promote(opts, report, log, retired, finished)
     touched += standing.promoted
     dupe_moves = verdict_moves(standing.verdicts, standing.inbox, standing.dupes)
-    applied = _close(opts, report, [*finished, *dupe_moves])
+    unchecked = load_unchecked(opts.root)
+    ready_moves = repeat_moves(unchecked, standing.ready_repeats, {m.brief_id for m in finished})
+    planned = [*finished, *dupe_moves, *ready_moves]
+    applied = _close(opts, report, planned)
     touched += applied.touched
+    touched += _check_ready(opts, report, planned)
     routing = _route(opts, report, standing)
     _alert_and_commit(opts, report, touched, applied, standing, routing)
     _apply_routes(opts, report, routing)

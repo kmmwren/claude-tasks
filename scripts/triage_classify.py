@@ -69,18 +69,30 @@ class Call:
 ClassifyFn = Callable[[Sequence[InboxBrief], Sequence[Example]], Mapping[str, Call]]
 
 
+def _repeats(
+    groups: Mapping[Fingerprint, Sequence[Located]], counts: Callable[[Located], bool]
+) -> dict[str, str]:
+    return {m.id: keep.id for keep, *rest in groups.values() for m in rest if counts(m)}
+
+
 def duplicate_map(groups: Mapping[Fingerprint, Sequence[Located]]) -> dict[str, str]:
     """Each inbox brief that repeats an earlier one, mapped to the brief it repeats."""
-    return {m.id: keep.id for keep, *rest in groups.values() for m in rest if m.folder == "inbox"}
+    return _repeats(groups, lambda m: m.folder == "inbox")
+
+
+def unchecked_duplicate_map(groups: Mapping[Fingerprint, Sequence[Located]]) -> dict[str, str]:
+    """Each ready/ brief a capture filed there that repeats an earlier one, mapped to the brief it repeats."""
+    return _repeats(groups, lambda m: m.awaiting_check)
+
+
+def repeat_reason(survivor: str) -> str:
+    return f"same title and sources as {survivor}"
 
 
 def fixed_calls(dupes: Mapping[str, str], held: Collection[str]) -> dict[str, Call]:
     """Calls no model or gate may change: a repeat stays a duplicate, a brief sent back stays unpromoted."""
     sent_back = {bid: Call(BriefClass.NEEDS_INFO, SENT_BACK) for bid in held}
-    repeats = {
-        bid: Call(BriefClass.DUPLICATE, f"same title and sources as {keep}")
-        for bid, keep in dupes.items()
-    }
+    repeats = {bid: Call(BriefClass.DUPLICATE, repeat_reason(keep)) for bid, keep in dupes.items()}
     return {**sent_back, **repeats}
 
 

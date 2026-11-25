@@ -17,7 +17,7 @@ import re
 from deps import fm
 from readiness import EXECUTION_LOG, raw_title
 from slack_links import permalink_key
-from triage_brief import FRONTMATTER
+from triage_brief import FRONTMATTER, UNCHECKED
 from triage_sources import GH_ISSUE, cited_sources
 
 ACTIVE_FOLDERS = ("inbox", "ready", "in-progress", "blocked", "parked")
@@ -60,11 +60,17 @@ class Located:
     folder: str
     path: pathlib.Path
     created: str
+    unchecked: bool = False
 
     @property
-    def rank(self) -> tuple[bool, str, str]:
-        """Briefs already past the inbox come first, then the earliest filed."""
-        return self.folder == "inbox", self.created, self.id
+    def awaiting_check(self) -> bool:
+        """A ready/ brief a capture filed there, whose dedup has not yet run."""
+        return self.folder == "ready" and self.unchecked
+
+    @property
+    def rank(self) -> tuple[bool, bool, str, str]:
+        """Briefs past the inbox come first, checked ones ahead of unchecked, then the earliest filed."""
+        return self.folder == "inbox", self.unchecked, self.created, self.id
 
 
 def index(root: pathlib.Path) -> dict[Fingerprint, list[Located]]:
@@ -73,7 +79,10 @@ def index(root: pathlib.Path) -> dict[Fingerprint, list[Located]]:
     for folder in ACTIVE_FOLDERS:
         for path in sorted((root / folder).glob("*.md")):
             text = path.read_text()
-            where = Located(path.stem, folder, path, fm(text).get("created", ""))
+            fields = fm(text)
+            where = Located(
+                path.stem, folder, path, fields.get("created", ""), bool(fields.get(UNCHECKED))
+            )
             groups.setdefault(Fingerprint.of_text(text), []).append(where)
     return {fp: sorted(members, key=lambda m: m.rank) for fp, members in groups.items()}
 
