@@ -39,3 +39,11 @@ def _isolated_snapshot_cache(tmp_path_factory, monkeypatch):
     from queue_snapshot import CACHE_ENV
 
     monkeypatch.setenv(CACHE_ENV, str(tmp_path_factory.mktemp("snapshot-cache")))
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_router(tmp_path_factory, monkeypatch):
+    """The real router scores the whole live queue; a test that wants one names it through the env."""
+    from triage_route import ROUTER_ENV
+
+    monkeypatch.setenv(ROUTER_ENV, str(tmp_path_factory.mktemp("no-router") / "router.py"))

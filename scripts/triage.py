@@ -38,6 +38,7 @@ from triage_alerts import (
     alert_text,
     alerts_plan,
     refusal_alerts,
+    routing_alerts,
     session_alert_notifier,
     undelivered,
     undelivered_text,
@@ -71,6 +72,7 @@ from triage_declare import declare_empty
 from triage_enrich import Fill, PredictFn, claude_predict
 from triage_evidence import PrStates, cited_pulls
 from triage_promote import Gate, Promotion, promote
+from triage_route import Decision, Router, RouterCli, routes_by_project, routes_plan
 from triage_sources import LiveSources
 
 
@@ -95,6 +97,9 @@ class Report:
     alerts_held: int = 0
     alerts_delivered: bool = False
     alert_notice: str = ""
+    routes: list[Decision] = dataclasses.field(default_factory=list)
+    routed: list[str] = dataclasses.field(default_factory=list)
+    route_notice: str = ""
     closes_deferred: int = 0
     closes_changed_underfoot: int = 0
     closes_refused: int = 0
@@ -123,6 +128,7 @@ class Options:
     rules: CloseRules = CloseRules()
     states: PrStates = dataclasses.field(default_factory=PrStates.offline)
     notify: Notifier = undelivered
+    router: Router | None = None
 
 
 def _count(root: pathlib.Path, folder: str) -> int:
@@ -249,6 +255,7 @@ class Standing:
     inbox: dict[str, InboxBrief]
     dupes: Mapping[str, str]
     promoted: list[str]
+    routable: list[InboxBrief]
 
 
 def _declare(opts: Options, report: Report) -> list[str]:
@@ -279,7 +286,38 @@ def _classify_and_promote(
     verdicts = _classify(opts, report, log, fixed, [*filed, *filled], inbox)
     promoted = _promote_and_record(opts, report, log, verdicts, [*filed, *filled])
     standing = [v for v in verdicts if v.brief_id not in retired]
-    return Standing(standing, {b.id: b for b in inbox}, dupes, promoted)
+    routable = _routable([*filed, *filled], promoted, opts.apply)
+    return Standing(standing, {b.id: b for b in inbox}, dupes, promoted, routable)
+
+
+def _routable(
+    candidates: Sequence[Promotion], promoted: Collection[str], apply: bool
+) -> list[InboxBrief]:
+    """The briefs to ask the router about: those promoted, or on a dry run those that would be."""
+    return [p.candidate for p in candidates if not apply or p.original.id in promoted]
+
+
+def _route(opts: Options, report: Report, standing: Standing) -> list[Decision]:
+    """Ask the router about the promoted briefs; this decides and moves nothing."""
+    if not (opts.router and standing.routable):
+        return []
+    plan = opts.router.plan()
+    if plan is None:
+        report.route_notice = "router unavailable; promoted briefs stay in the general queue"
+        return []
+    report.routes = plan.decide_all(standing.routable)
+    return report.routes
+
+
+def _apply_routes(opts: Options, report: Report, decisions: Sequence[Decision]) -> None:
+    """Hand the router the briefs bound for direct-mode queues, after triage's own commit."""
+    if not (opts.apply and opts.router):
+        return
+    for project, ids in routes_by_project(decisions).items():
+        if opts.router.apply(project, ids):
+            report.routed += ids
+        else:
+            report.route_notice = f"router could not route to {project}; {len(ids)} stay in ready"
 
 
 def _promote_and_record(
@@ -298,11 +336,17 @@ def _promote_and_record(
 
 
 def _alert_and_commit(
-    opts: Options, report: Report, touched: list[str], applied: Applied, standing: Standing
+    opts: Options,
+    report: Report,
+    touched: list[str],
+    applied: Applied,
+    standing: Standing,
+    routing: Sequence[Decision],
 ) -> None:
     today = datetime.date.fromisoformat(opts.today)
     flagged = verdict_alerts(standing.verdicts, standing.inbox, opts.rules, today)
     flagged += refusal_alerts(applied.refused)
+    flagged += routing_alerts(routing)
     alerted = _alert(opts, report, flagged)
     report.committed = (bool(touched) or alerted) and (
         sync_commit(
@@ -329,7 +373,9 @@ def run(opts: Options) -> Report:
     dupe_moves = verdict_moves(standing.verdicts, standing.inbox, standing.dupes)
     applied = _close(opts, report, [*finished, *dupe_moves])
     touched += applied.touched
-    _alert_and_commit(opts, report, touched, applied, standing)
+    routing = _route(opts, report, standing)
+    _alert_and_commit(opts, report, touched, applied, standing, routing)
+    _apply_routes(opts, report, routing)
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report
 
@@ -406,6 +452,7 @@ def _options(args: argparse.Namespace, root: pathlib.Path) -> Options:
         rules=CloseRules.load(root),
         states=states,
         notify=session_alert_notifier(),
+        router=RouterCli.configured(),
     )
 
 
@@ -432,6 +479,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.dry_run:
         print(plan_text(report.moves, report.closes_deferred, opts.rules.max_moves))
         print(alerts_plan(report.alerts, report.alerts_held))
+        print(routes_plan(report.routes))
     else:
         print(json.dumps(dataclasses.asdict(report), indent=2))
     if TALLY.all_failed:
