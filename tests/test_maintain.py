@@ -6,10 +6,13 @@ import subprocess
 import time
 
 import claim as claim_mod
+import hygiene as hy
 import maintain as maintain_mod
 import pytest
 from claim import Claim, Claimer, Outcome
 from headless import ScriptLaunch
+from hygiene import Home, Phase, Step
+from hygiene_lease import HygieneLeaser
 from maintain import Candidate, Maintainer, Report, ReportKind, default_holder, now_utc
 from maintain_config import Tier, TierSettings
 from maintain_state import LastRun
@@ -413,7 +416,7 @@ def test_main_never_crashes_a_scheduled_tick(tmp_path, monkeypatch, capsys):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(Maintainer, "tick", explode)
-    assert maintain_mod.main(["--tier", "cloud", "--root", str(clone)]) == 0
+    assert maintain_mod.main(["--tier", "cloud", "--root", str(clone)]) == 1
     assert "tick failed: RuntimeError: kaboom" in capsys.readouterr().err
 
 
@@ -485,6 +488,83 @@ def test_a_crash_in_the_tidy_up_never_unrecords_the_wake_step(tmp_path):
     )
 
 
-def test_with_no_engine_given_the_tick_uses_the_production_wiring(tmp_path):
+def test_with_no_engine_given_the_tick_runs_the_production_steps_as_subprocesses(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        hy, "STEPS", (Step("unblock", Phase.DETERMINISTIC, Home.PLUGIN, "unblock.py"),)
+    )
     clone = queue_repo(tmp_path)
-    assert maintainer(clone, [], engine=None).tick().ran
+    assert maintainer(clone, [], engine=None).tick().reports == ()
+    assert "maintain/last-run/deterministic.json" in origin_files(clone)
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        (ReportKind.HYGIENE_FAILED, 1),
+        (ReportKind.HYGIENE_LAPSED, 1),
+        (ReportKind.HYGIENE_REFUSED, 1),
+        (ReportKind.OVERDUE, 0),
+    ],
+)
+def test_a_hygiene_report_that_needs_a_person_fails_the_exit_status(kind, status):
+    assert maintain_mod.TickResult(True, reports=(Report(kind, "x"),)).exit_status == status
+
+
+def test_a_deferred_phase_is_a_retry_later_status_and_a_failure_outranks_it():
+    deferred = maintain_mod.TickResult(True, deferred=("judgement",))
+    failed = dataclasses.replace(deferred, reports=(Report(ReportKind.HYGIENE_FAILED, "x"),))
+    assert deferred.exit_status == maintain_mod.EX_TEMPFAIL == 75
+    assert failed.exit_status == 1
+    assert maintain_mod.TickResult(ran=False).exit_status == 0
+
+
+def step_script(tmp_path, code):
+    """A hygiene step that is a real script exiting with `code`."""
+    script = tmp_path / f"step{code}.py"
+    script.write_text(f"raise SystemExit({code})\n")
+    return Step("probe", Phase.DETERMINISTIC, Home.PLUGIN, str(script))
+
+
+def run_main(clone, monkeypatch, *steps):
+    monkeypatch.setattr(hy, "STEPS", steps)
+    monkeypatch.setattr(maintain_mod, "_launcher", lambda root: ScriptLaunch("/stub"))
+    return maintain_mod.main(["--tier", "laptop", "--root", str(clone)])
+
+
+def test_main_exits_zero_after_a_clean_tick_and_when_the_next_is_skipped_as_fresh(
+    tmp_path, monkeypatch
+):
+    clone = queue_repo(tmp_path)
+    assert run_main(clone, monkeypatch, step_script(tmp_path, 0)) == 0
+    assert run_main(clone, monkeypatch, step_script(tmp_path, 3)) == 0
+
+
+def test_main_exits_non_zero_and_prints_the_report_when_a_hygiene_step_fails(
+    tmp_path, monkeypatch, capsys
+):
+    clone = queue_repo(tmp_path)
+    assert run_main(clone, monkeypatch, step_script(tmp_path, 3)) == 1
+    assert capsys.readouterr().out.startswith("hygiene-failed deterministic:")
+
+
+def test_main_exits_zero_when_another_runner_holds_the_hygiene_lease(tmp_path, monkeypatch):
+    clone = queue_repo(tmp_path)
+    HygieneLeaser(Claimer(second_clone(tmp_path), "cloud@h:2", TTL)).acquire(now_utc())
+    assert run_main(clone, monkeypatch, step_script(tmp_path, 0)) == 0
+    assert "maintain/last-run/deterministic.json" not in origin_files(clone)
+
+
+def test_main_exits_75_when_the_judgement_phase_is_deferred_for_want_of_credits(
+    tmp_path, monkeypatch
+):
+    from tests.test_hygiene import NO_CAPACITY
+
+    switch = tmp_path / "switch"
+    switch.mkdir()
+    (switch / "limit_state.py").write_text(NO_CAPACITY)
+    monkeypatch.setenv("CLAUDE_SWITCH_HOME", str(switch))
+    judge = dataclasses.replace(step_script(tmp_path, 0), phase=Phase.JUDGEMENT)
+    clone = queue_repo(tmp_path)
+    assert run_main(clone, monkeypatch, step_script(tmp_path, 0), judge) == 75

@@ -13,11 +13,13 @@ Progress goes to stderr; stdout stays the tick's report lines. Stdlib only.
 import _compat  # noqa: F401  - version guard; must run before the imports and annotations below
 
 # isort: split
+import contextlib
 import dataclasses
 import datetime as dt
 import enum
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -140,11 +142,23 @@ STEPS: tuple[Step, ...] = (
 StepRunner = Callable[[Sequence[str], Mapping[str, str], float], int]
 
 
+def _kill_group(proc: "subprocess.Popen[bytes]") -> None:
+    """Kill the step and everything it started, which share the process group it leads."""
+    with contextlib.suppress(ProcessLookupError):  # it exited between the poll and the kill
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
 def subprocess_runner(argv: Sequence[str], env: Mapping[str, str], timeout: float) -> int:
+    """Run a step in its own session, so a timeout (or an interrupt) takes its children down with it."""
+    proc = subprocess.Popen(argv, env=dict(env), start_new_session=True)
     try:
-        return subprocess.run(argv, env=dict(env), timeout=timeout).returncode
+        return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         return TIMED_OUT
+    finally:
+        if proc.poll() is None:
+            _kill_group(proc)
 
 
 def utc_now() -> dt.datetime:
@@ -275,6 +289,14 @@ def run_phase(phase: Phase, engine: Engine, lease: Lease) -> PhaseRun:
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class HygieneResult:
+    """What a hygiene run leaves for the tick: the reports, and the phases deferred for want of credits."""
+
+    reports: tuple[Report, ...] = ()
+    deferred: tuple[Phase, ...] = ()
+
+
 def skipped_in(last: LastRun) -> tuple[str, ...]:
     return tuple(
         r.removeprefix(SKIPPED_PREFIX) for r in last.reports if r.startswith(SKIPPED_PREFIX)
@@ -290,17 +312,29 @@ class Hygiene:
     engine: Engine
     leaser: HygieneLeaser
 
-    def run(self, now: dt.datetime) -> tuple[Report, ...]:
-        """Run the due phases that can run now; the reports name what needs a person."""
-        runnable = self._with_capacity(self._due(now), now)
+    def run(self, now: dt.datetime) -> HygieneResult:
+        """Run the due phases that can run now; the reports name what needs a person.
+
+        What is due is read again once the queue is current and again once the lease is held, so a
+        phase another runner has just recorded is not run twice.
+        """
+        if not self._due(now):
+            return HygieneResult()
+        self._refresh()
+        runnable, deferred = self._split_by_capacity(self._due(now), now)
         if not runnable:
-            return ()
-        if not self.leaser.refresh():
-            warn("could not bring the queue up to date with origin; working as it is", "maintain")
+            return HygieneResult((), deferred)
         claim = self.leaser.acquire(now)
         if claim.lease is None:
-            return self._not_taken(claim)
-        return self._under_lease(runnable, claim.lease)
+            return HygieneResult(self._not_taken(claim), deferred)
+        self._refresh()
+        still_due = self._due(now)
+        reports = self._under_lease([p for p in runnable if p in still_due], claim.lease)
+        return HygieneResult(reports, deferred)
+
+    def _refresh(self) -> None:
+        if not self.leaser.refresh():
+            warn("could not bring the queue up to date with origin; working as it is", "maintain")
 
     def _due(self, now: dt.datetime) -> list[Phase]:
         return [p for p in Phase if self.engine.steps_of(p) and self._is_due(p, now)]
@@ -312,14 +346,17 @@ class Hygiene:
             return True
         return self.engine.can_run_skipped(phase, skipped_in(last))
 
-    def _with_capacity(self, due: Sequence[Phase], now: dt.datetime) -> list[Phase]:
-        """The due phases that can run now; a credit-hungry one with none to spend is deferred untouched."""
+    def _split_by_capacity(
+        self, due: Sequence[Phase], now: dt.datetime
+    ) -> tuple[list[Phase], tuple[Phase, ...]]:
+        """The due phases that can run now, and the credit-hungry ones deferred untouched for want of credits."""
         usable = not any(p.needs_capacity for p in due) or has_capacity(
             self.engine.where.switch_home, now
         )
-        for phase in (p for p in due if p.needs_capacity and not usable):
+        deferred = tuple(p for p in due if p.needs_capacity and not usable)
+        for phase in deferred:
             say(f"{phase.value}: deferred, no capacity")
-        return [p for p in due if usable or not p.needs_capacity]
+        return [p for p in due if p not in deferred], deferred
 
     def _not_taken(self, claim: Claim) -> tuple[Report, ...]:
         if claim.outcome is Outcome.REFUSED:
@@ -359,14 +396,15 @@ class Hygiene:
         if released.won:
             self.leaser.refresh()
             return ()
-        return self._not_released(released)
+        return self._not_released(released, lease)
 
-    def _not_released(self, released: Claim) -> tuple[Report, ...]:
+    def _not_released(self, released: Claim, lease: Lease) -> tuple[Report, ...]:
         if released.outcome is Outcome.REFUSED:
             say(f"ERROR: hygiene results not published, {released.detail}")
             return (Report(ReportKind.HYGIENE_REFUSED, SUBJECT, released.detail),)
         warn(
-            f"hygiene results not published ({released.detail}); the next tick runs them again",
+            f"hygiene results not published ({released.detail}); any lease of ours stays on origin "
+            f"until it lapses at {lease.expires:%H:%M}Z, and the phases run again after that",
             "maintain",
         )
         return ()

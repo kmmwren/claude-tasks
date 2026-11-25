@@ -120,3 +120,21 @@ def test_hygiene_runs_every_four_hours_unless_the_queue_says_otherwise(tmp_path)
     assert MaintainSettings.load(tmp_path).hygiene_interval == dt.timedelta(minutes=90)
     (tmp_path / "tasks.toml").write_text("[maintain]\nhygiene_interval_minutes = -1\n")
     assert MaintainSettings.load(tmp_path).hygiene_interval == dt.timedelta(hours=4)
+
+
+def test_a_write_from_a_slow_run_does_not_regress_a_newer_record(tmp_path):
+    LastRun("laptop", AT + 10 * FIVE, ("new",)).write(tmp_path)
+    LastRun("laptop", AT, ("old",)).write(tmp_path, now=AT + 12 * FIVE)
+    assert LastRun.read(tmp_path, "laptop") == LastRun("laptop", AT + 10 * FIVE, ("new",))
+
+
+def test_a_newer_write_replaces_an_older_record(tmp_path):
+    LastRun("laptop", AT, ("old",)).write(tmp_path)
+    LastRun("laptop", AT + FIVE, ("new",)).write(tmp_path)
+    assert LastRun.read(tmp_path, "laptop").claimed == ("new",)
+
+
+def test_a_record_stamped_beyond_the_clock_skew_ahead_is_replaced_not_kept(tmp_path):
+    LastRun("laptop", AT + dt.timedelta(days=3)).write(tmp_path)
+    LastRun("laptop", AT).write(tmp_path, now=AT)
+    assert LastRun.read(tmp_path, "laptop").at == AT

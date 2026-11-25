@@ -62,7 +62,11 @@ class LastRun:
             warn(f"ignoring unreadable {path} ({e})", "maintain")
             return None
 
-    def write(self, root: pathlib.Path) -> None:
+    def write(self, root: pathlib.Path, now: dt.datetime | None = None) -> None:
+        """Newest wins: a newer record already there stays, unless it is stamped beyond `now` plus the clock skew."""
+        held = self.read(root, self.tier)
+        if held is not None and self.at < held.at <= (now or self.at) + CLOCK_SKEW:
+            return
         body = {"at": self.at.isoformat(), "claimed": self.claimed, "reports": self.reports}
         atomic_write(self.path(root, self.tier), json.dumps(body, indent=2) + "\n")
 

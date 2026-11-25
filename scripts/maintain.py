@@ -11,7 +11,9 @@ brief to a detached headless run through the launcher, and records the tick. A L
 routine or a person can call it; nothing here assumes the laptop.
 
 Report lines go to stdout, one per brief that needs a person: `overdue`, `overdue-needs-<cap>`.
-A malformed brief or a failing probe warns and is skipped; the exit status is 0 apart from usage errors.
+A malformed brief or a failing probe warns and is skipped. The exit status is 0 for a clean tick or one
+skipped because a run is fresh or another runner holds the lease, 75 (EX_TEMPFAIL) when the judgement
+phase was deferred for want of credits, and 1 when hygiene failed, lapsed or was refused or the tick crashed.
 
 Stdlib only.
 """
@@ -33,7 +35,7 @@ from _paths import require_queue, resolve_root, warn
 from claim import IN_PROGRESS, Claim, Claimer, Lease, Target
 from deps import Brief, brief_id, done_ids, fm, unmet
 from headless import Launch, ScriptLaunch, launcher_script, rank_table, spawn_detached
-from hygiene import Engine, Hygiene
+from hygiene import Engine, Hygiene, HygieneResult
 from hygiene_lease import HygieneLeaser
 from maintain_config import MaintainSettings, Tier
 from maintain_report import Report, ReportKind
@@ -46,6 +48,11 @@ CALLER = "claude-tasks-maintain"
 ACTION_SKILL = "/claude-tasks:action-task"
 SPAWN_REASON = "scheduled-wake"
 RUN_LOG_DIR = "maintain-runs"
+EX_TEMPFAIL = 75  # sysexits.h: skipped, the caller should retry later
+EX_FAILED = 1
+FAILING_REPORTS = frozenset(
+    {ReportKind.HYGIENE_FAILED, ReportKind.HYGIENE_LAPSED, ReportKind.HYGIENE_REFUSED}
+)
 
 Clock = Callable[[], dt.datetime]
 Spawn = Callable[..., int]
@@ -65,6 +72,14 @@ class TickResult:
     ran: bool
     claimed: tuple[str, ...] = ()
     reports: tuple[Report, ...] = ()
+    deferred: tuple[str, ...] = ()
+
+    @property
+    def exit_status(self) -> int:
+        """What a scheduler sees: failed, skipped to retry later, or fine (including skipped as fresh)."""
+        if any(r.kind in FAILING_REPORTS for r in self.reports):
+            return EX_FAILED
+        return EX_TEMPFAIL if self.deferred else 0
 
 
 def default_holder(tier: Tier) -> str:
@@ -180,19 +195,26 @@ class Maintainer:
             return TickResult(ran=False)
         result = self._work(now)
         try:
-            result = dataclasses.replace(result, reports=(*result.reports, *self._hygiene(now)))
+            result = self._with_hygiene(result, self._hygiene(now))
         finally:
-            LastRun(self.tier.value, now, result.claimed, tuple(map(str, result.reports))).write(
-                self.root
-            )
+            record = LastRun(self.tier.value, now, result.claimed, tuple(map(str, result.reports)))
+            record.write(self.root, self.clock())
         return result
+
+    @staticmethod
+    def _with_hygiene(result: TickResult, hygiene: HygieneResult) -> TickResult:
+        return dataclasses.replace(
+            result,
+            reports=(*result.reports, *hygiene.reports),
+            deferred=tuple(p.value for p in hygiene.deferred),
+        )
 
     def _claimer(self) -> Claimer:
         return self.claimer or Claimer(
             self.root, self.holder or default_holder(self.tier), self.settings.lease_ttl
         )
 
-    def _hygiene(self, now: dt.datetime) -> tuple[Report, ...]:
+    def _hygiene(self, now: dt.datetime) -> HygieneResult:
         """The tidy-up steps after the wake step, under their own lease; a crash there never unrecords the wake step."""
         engine = self.engine or Engine.for_queue(self.root, self.clock)
         leaser = HygieneLeaser(self._claimer())
@@ -278,10 +300,10 @@ def main(argv: list[str] | None = None) -> int:
         result = Maintainer(root, Tier(a.tier), MaintainSettings.load(root)).tick()
     except Exception as e:  # noqa: BLE001  - a scheduled tick reports and retries next time; it never crashes
         warn(f"tick failed: {type(e).__name__}: {e}", "maintain")
-        return 0
+        return EX_FAILED
     for report in result.reports:
         print(report)
-    return 0
+    return result.exit_status
 
 
 if __name__ == "__main__":  # pragma: no cover

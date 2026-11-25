@@ -15,9 +15,12 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 # isort: split
 import dataclasses
 import datetime as dt
+import enum
+import functools
 import json
 import pathlib
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 
 from _concurrency import atomic_write
 from _paths import warn
@@ -26,6 +29,8 @@ from maintain_state import LastRun
 from origin_push import Edit, OriginBusy, PushError, PushRefused, push_from_fresh_origin
 
 HYGIENE_LEASE = "maintain/hygiene-lease.json"
+RELEASE_ATTEMPTS = 3
+RELEASE_PAUSE = 2.0
 
 
 class LeaseHeld(Exception):
@@ -79,23 +84,66 @@ class ReleaseLease:
         return True
 
 
+class Standing(enum.Enum):
+    """Whether a lease can be published for the queue, which decides where records live."""
+
+    SHARED = "shared"  # the lease and the records are published to origin
+    LOCAL = "local"  # no origin: records stay in this checkout and there is no one to race
+    NESTED = (
+        "nested"  # below its repo root, a published lease would sit where the records are not read
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class HygieneLeaser:
     """Takes and releases the hygiene lease of one queue for one holder."""
 
     claimer: Claimer
+    pause: Callable[[float], None] = time.sleep
+
+    @functools.cached_property
+    def standing(self) -> Standing:
+        if not self.claimer.has_origin():
+            return Standing.LOCAL
+        return Standing.SHARED if self.claimer.owns_repo() else Standing.NESTED
 
     def acquire(self, now: dt.datetime) -> Claim:
+        if self.standing is Standing.NESTED:
+            return Claim(
+                Outcome.REFUSED,
+                "the queue is not the root of its git repo, so it cannot hold the hygiene lease",
+            )
+        if self.standing is Standing.LOCAL:
+            warn(
+                "the queue has no origin; tidying up under a local record, without a lease",
+                "maintain",
+            )
+            return Claim(
+                Outcome.CLAIMED, "local", Lease.first(self.claimer.holder, now, self.claimer.ttl)
+            )
         edit = TakeLease(self.claimer.holder, now, self.claimer.ttl)
         claim = self._publish(edit, f"maintain: {self.claimer.holder} takes the hygiene lease")
         return dataclasses.replace(claim, lease=edit.taken) if claim.won else claim
 
     def release(self, lease: Lease, records: Sequence[LastRun]) -> Claim:
+        """Publish the records and let the lease go; a failed publish is tried again a few times."""
+        if self.standing is Standing.LOCAL:
+            for record in records:
+                record.write(self.claimer.root)
+            return Claim(Outcome.CLAIMED, "recorded locally")
         edit = ReleaseLease(lease, tuple(records))
-        return self._publish(edit, f"maintain: {self.claimer.holder} finishes hygiene")
+        message = f"maintain: {self.claimer.holder} finishes hygiene"
+        released = self._publish(edit, message)
+        for attempt in range(1, RELEASE_ATTEMPTS):
+            if released.outcome is not Outcome.FAILED:
+                break
+            self.pause(RELEASE_PAUSE * attempt)
+            released = self._publish(edit, message)
+        return released
 
     def refresh(self) -> bool:
-        return self.claimer.refresh()
+        """Bring the checkout up to date with origin; True too when there is no origin to bring it up to."""
+        return self.standing is not Standing.SHARED or self.claimer.refresh()
 
     def _publish(self, edit: Edit, message: str) -> Claim:
         """The outcome of publishing `edit`; never raises, because hygiene must not end a tick."""

@@ -15,6 +15,7 @@ from tests.maintain_helpers import (
     claimer_for,
     origin_files,
     origin_head,
+    push_all,
     queue_repo,
     second_clone,
 )
@@ -144,7 +145,90 @@ def test_an_os_error_while_publishing_is_a_failure_not_a_crash(tmp_path, monkeyp
     assert leaser(clone).acquire(NOW) == Claim(Outcome.FAILED, "OSError: disk full")
 
 
-def test_refresh_is_the_claimers_refresh(tmp_path):
+def test_refresh_fast_forwards_the_checkout_to_origin(tmp_path):
     clone = queue_repo(tmp_path)
+    other = second_clone(tmp_path)
+    (other / "marker.txt").write_text("x")
+    push_all(other, "marker")
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() != origin_head(clone)
     assert leaser(clone).refresh()
+    assert git(clone, "rev-parse", "HEAD").stdout.strip() == origin_head(clone)
+    assert (clone / "marker.txt").exists()
+
+
+def test_a_refresh_that_cannot_fetch_leaves_the_checkout_where_it_was(tmp_path):
+    clone = queue_repo(tmp_path)
+    other = second_clone(tmp_path)
+    (other / "marker.txt").write_text("x")
+    push_all(other, "marker")
+    before = git(clone, "rev-parse", "HEAD").stdout
     assert not leaser(clone, fetch=lambda root, branch: False).refresh()
+    assert git(clone, "rev-parse", "HEAD").stdout == before
+
+
+def test_a_queue_is_shared_nested_or_local_by_its_origin_and_its_place_in_the_repo(tmp_path):
+    clone = queue_repo(tmp_path)
+    (clone / "queue").mkdir()
+    assert leaser(clone).standing is hl.Standing.SHARED
+    assert leaser(clone / "queue").standing is hl.Standing.NESTED
+    assert leaser(tmp_path).standing is hl.Standing.LOCAL
+
+
+def test_a_nested_queue_cannot_take_the_lease_and_a_local_one_is_given_one_unpublished(tmp_path):
+    clone = queue_repo(tmp_path)
+    (clone / "queue").mkdir()
+    before = origin_head(clone)
+    refused = leaser(clone / "queue").acquire(NOW)
+    assert refused.outcome is Outcome.REFUSED and refused.lease is None
+    local = leaser(tmp_path).acquire(NOW)
+    assert local.won and local.lease == Lease("laptop@h:1", NOW + TTL, 1)
+    assert origin_head(clone) == before
+
+
+def test_a_local_release_writes_the_records_beside_the_queue(tmp_path):
+    runner = leaser(tmp_path)
+    released = runner.release(runner.acquire(NOW).lease, [LastRun("deterministic", NOW)])
+    assert released.won and LastRun.read(tmp_path, "deterministic").at == NOW
+
+
+def test_a_nested_or_local_queue_has_nothing_to_refresh(tmp_path):
+    clone = queue_repo(tmp_path)
+    (clone / "queue").mkdir()
+    refuse = dict(fetch=lambda root, branch: False)
+    assert leaser(clone / "queue", **refuse).refresh() and leaser(tmp_path, **refuse).refresh()
+
+
+class FlakyPush:
+    """A stand-in for the push that fails `failures` times, then publishes for real."""
+
+    def __init__(self, failures: int):
+        self.calls = 0
+        self.failures = failures
+
+    def __call__(self, root, edit, message):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise origin_push.PushError("origin hiccup")
+        return origin_push.push_from_fresh_origin(root, edit, message)
+
+
+def test_a_release_that_fails_is_tried_again_until_it_publishes(tmp_path, monkeypatch):
+    clone = queue_repo(tmp_path)
+    pauses: list[float] = []
+    runner = hl.HygieneLeaser(claimer_for(clone, "laptop@h:1"), pauses.append)
+    lease = runner.acquire(NOW).lease
+    flaky = FlakyPush(failures=2)
+    monkeypatch.setattr(hl, "push_from_fresh_origin", flaky)
+    assert runner.release(lease, [LastRun("deterministic", NOW)]).won
+    assert flaky.calls == 3 and pauses == [hl.RELEASE_PAUSE, 2 * hl.RELEASE_PAUSE]
+    assert hl.HYGIENE_LEASE not in origin_files(clone)
+
+
+def test_a_release_gives_up_after_a_bounded_number_of_attempts(tmp_path, monkeypatch):
+    clone = queue_repo(tmp_path)
+    runner = hl.HygieneLeaser(claimer_for(clone, "laptop@h:1"), lambda seconds: None)
+    lease = runner.acquire(NOW).lease
+    flaky = FlakyPush(failures=99)
+    monkeypatch.setattr(hl, "push_from_fresh_origin", flaky)
+    assert runner.release(lease, []).outcome is Outcome.FAILED
+    assert flaky.calls == hl.RELEASE_ATTEMPTS

@@ -151,7 +151,7 @@ class Claimer:
 
     def claim(self, target: Target, now: dt.datetime) -> Claim:
         """Publish a claim on `target`; never raises, because one bad brief must not end a tick."""
-        if not self._owns_repo():
+        if not self.owns_repo():
             return Claim(
                 Outcome.FAILED, "the queue is not the root of its git repo, so it cannot be claimed"
             )
@@ -221,10 +221,13 @@ class Claimer:
         outcome = Outcome.LOST if lost_race(pushed.stderr) else Outcome.REFUSED
         return Claim(outcome, f"push refused: {why}")
 
-    def _owns_repo(self) -> bool:
+    def owns_repo(self) -> bool:
         """A claim edits the repo's tree, so the queue's folders must sit at its top level."""
         top = _git(self.root, "rev-parse", "--show-toplevel").stdout.strip()
         return bool(top) and pathlib.Path(top).resolve() == self.root.resolve()
+
+    def has_origin(self) -> bool:
+        return _git(self.root, "remote", "get-url", "origin").returncode == 0
 
     def refresh(self) -> bool:
         """Fast-forward the checkout to origin; a diverged or dirty one is left for the sweep."""
