@@ -11,7 +11,7 @@ from tests.queue_helpers import installed_launcher, make_inbox
 
 def _triage_launch(root, monkeypatch, capsys):
     seen = []
-    monkeypatch.setattr(triage, "LiveSources", lambda root: set().__contains__)
+    monkeypatch.setattr(triage, "LiveSources", lambda root, prs=None: set().__contains__)
     monkeypatch.setattr(triage, "claude_predict", lambda model, launch: seen.append(launch))
     monkeypatch.setattr(triage, "claude_classify", lambda model, launch: seen.append(launch))
     monkeypatch.setattr(triage, "_progress", lambda predict: predict)
