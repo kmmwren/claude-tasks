@@ -88,9 +88,13 @@ def test_a_brief_landing_in_done_with_an_open_criterion_ships_from_where_it_came
     repo = make_repo(tmp_path)
     queue = repo / "project" / ".tasks"
     (queue / "done").mkdir(parents=True)
-    (queue / "done" / "z.md").write_text("---\nid: z\nstatus: done\n---\n\n## Success criteria\n\n- [ ] findings fixed\n")
+    (queue / "done" / "z.md").write_text(
+        "---\nid: z\nstatus: done\n---\n\n## Success criteria\n\n- [ ] findings fixed\n"
+    )
 
     assert host_land.land_host_queue(queue)
 
-    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project").stdout.split()
+    wip = git(
+        tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project"
+    ).stdout.split()
     assert "project/.tasks/ready/z.md" in wip and "project/.tasks/done/z.md" not in wip

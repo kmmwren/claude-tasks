@@ -3,6 +3,7 @@ supersession.py: decide whether the briefs that replace a closing brief already 
 
 The check is lexical so it needs no model, and it fails towards refusing the close. Stdlib only.
 """
+
 import pathlib
 import re
 from collections.abc import Callable
@@ -13,11 +14,43 @@ SUPERSEDED_NOTE = re.compile(r"supersed|duplicate|replaced by|folded into", re.I
 # A criterion counts as carried when this share of its significant words appear in the successors.
 CARRY_THRESHOLD = 0.6
 MIN_TOKEN_LEN = 4
-STOPWORDS = frozenset({
-    "with", "that", "this", "from", "have", "been", "will", "into", "when", "then", "than",
-    "them", "they", "their", "there", "which", "while", "what", "where", "were", "does", "your",
-    "also", "each", "must", "should", "would", "could", "only", "ever", "just", "such", "both",
-})
+STOPWORDS = frozenset(
+    {
+        "with",
+        "that",
+        "this",
+        "from",
+        "have",
+        "been",
+        "will",
+        "into",
+        "when",
+        "then",
+        "than",
+        "them",
+        "they",
+        "their",
+        "there",
+        "which",
+        "while",
+        "what",
+        "where",
+        "were",
+        "does",
+        "your",
+        "also",
+        "each",
+        "must",
+        "should",
+        "would",
+        "could",
+        "only",
+        "ever",
+        "just",
+        "such",
+        "both",
+    }
+)
 
 
 class UncarriedCriteriaError(ValueError):
@@ -47,8 +80,9 @@ class Successors:
     paths: tuple[pathlib.Path, ...]
 
     @classmethod
-    def resolve(cls, brief_id: str, successor_ids: list[str],
-                find: Callable[[str], pathlib.Path | None]) -> "Successors":
+    def resolve(
+        cls, brief_id: str, successor_ids: list[str], find: Callable[[str], pathlib.Path | None]
+    ) -> "Successors":
         """Locate each successor; a missing, finished or self-referencing one cannot carry the work."""
         paths = []
         for sid in dict.fromkeys(successor_ids):

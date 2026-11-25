@@ -249,9 +249,10 @@ def _accepted(
 ) -> Mapping[str, object] | None:
     """The call's input with its task id, or None when a gate refused it."""
     created = re.search(r"Task #(\d+) created", str(result.get("content")))
-    if result.get("is_error") or ("taskId" not in call and not created):
+    task_id = call.get("taskId") or (created.group(1) if created else None)
+    if result.get("is_error") or not task_id:
         return None
-    return {**call, "taskId": call.get("taskId") or created.group(1)}
+    return {**call, "taskId": task_id}
 
 
 def _accepted_updates(transcript: pathlib.Path) -> list[Mapping[str, object]]:
@@ -263,24 +264,26 @@ def _accepted_updates(transcript: pathlib.Path) -> list[Mapping[str, object]]:
             continue
         for b in _blocks(line):
             if b.get("type") == "tool_use" and b.get("name") in ("TaskCreate", "TaskUpdate"):
-                sent[b.get("id")] = b.get("input") if isinstance(b.get("input"), Mapping) else {}
+                call = b.get("input")
+                sent[b.get("id")] = call if isinstance(call, Mapping) else {}
             elif b.get("type") == "tool_result" and b.get("tool_use_id") in sent:
-                accepted.append(_accepted(sent.pop(b.get("tool_use_id")), b))
-    return [a for a in accepted if a]
+                if update := _accepted(sent.pop(b.get("tool_use_id")), b):
+                    accepted.append(update)
+    return accepted
 
 
 def closed_items(session_id: str, projects: pathlib.Path) -> list[Item]:
     """Ledger items as the transcript last set them: Claude Code deletes a completed item's file."""
     transcript = next(iter(sorted(projects.glob(f"*/{session_id}.jsonl"))), None)
     rows: dict[str, dict[str, object]] = {}
+    metadata: dict[str, dict[str, object]] = {}
     for update in _accepted_updates(transcript) if transcript else []:
-        row = rows.setdefault(
-            str(update.get("taskId")), {"id": str(update.get("taskId")), "metadata": {}}
-        )
+        task_id = str(update.get("taskId"))
+        row = rows.setdefault(task_id, {"id": task_id})
         row.update({k: update[k] for k in ("subject", "status") if isinstance(update.get(k), str)})
         meta = update.get("metadata")
-        row["metadata"].update(meta if isinstance(meta, Mapping) else {})
-    return [Item.from_json(r) for r in rows.values()]
+        metadata.setdefault(task_id, {}).update(meta if isinstance(meta, Mapping) else {})
+    return [Item.from_json({**row, "metadata": metadata[tid]}) for tid, row in rows.items()]
 
 
 def handoffs(

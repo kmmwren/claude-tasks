@@ -93,4 +93,7 @@ def test_apply_leaves_no_open_criterion_in_done_and_records_who_carries_it(tmp_p
     [plan] = plan_collapses(load_inbox(root), root)
     apply_collapse(plan, root, "2026-11-11")
     children = [(root / "done" / f"{bid}.md").read_text() for bid in PEERS]
-    assert all("- [ ]" not in text and "superseded: carried to peer-memory-batch" in text for text in children)
+    assert all(
+        "- [ ]" not in text and "superseded: carried to peer-memory-batch" in text
+        for text in children
+    )

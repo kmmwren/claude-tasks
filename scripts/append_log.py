@@ -29,9 +29,9 @@ import time
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _concurrency import repo_lock  # noqa: E402
+from _concurrency import NETWORK_TIMEOUT, repo_lock  # noqa: E402
 from _paths import resolve_root  # noqa: E402
-from git_sync import NETWORK_TIMEOUT, _git, push_now, sync_commit_and_push  # noqa: E402
+from git_sync import _git, push_now, sync_commit_and_push  # noqa: E402
 from transition import BRIEF_DIRS, _append_log  # noqa: E402
 
 PUSH_ATTEMPTS = 8

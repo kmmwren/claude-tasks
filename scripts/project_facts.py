@@ -29,6 +29,7 @@ from typing import Any, ClassVar, NoReturn
 
 import _toml
 from _concurrency import atomic_write, repo_lock
+from _credentials import carries_credential
 from _dates import parse_date
 from _paths import warn
 from facts import (
@@ -48,7 +49,7 @@ from facts import (
     HealthRow,
     facts_path,
 )
-from git_sync import SyncResult, carries_credential, host_repo_name, sync_commit
+from git_sync import SyncResult, host_repo_name, sync_commit
 from host_land import HostQueue
 
 PROG = "project_facts"

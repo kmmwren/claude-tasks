@@ -72,7 +72,18 @@ def test_superseded_by_refuses_an_uncarried_criterion(queue):
 
 def test_cli_exposes_settle_with(queue):
     put(queue, "ready", "cli-one", OPEN)
-    transition.main(["move", "cli-one", "done", "--root", str(queue), "--no-sync", "--settle-with", "PR 3 merged"])
+    transition.main(
+        [
+            "move",
+            "cli-one",
+            "done",
+            "--root",
+            str(queue),
+            "--no-sync",
+            "--settle-with",
+            "PR 3 merged",
+        ]
+    )
     assert "(PR 3 merged)" in (queue / "done" / "cli-one.md").read_text()
 
 

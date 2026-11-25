@@ -102,7 +102,9 @@ class DoneBackstop:
     def _new_in_done(self) -> list[str]:
         """Briefs added or renamed into done/ that HEAD does not hold: untracked, or staged as an add or rename."""
         untracked = self._git("ls-files", "-z", "--others", "--exclude-standard", "--", "done")
-        staged = self._git("diff", "-z", "--cached", "--relative", "--name-only", "--diff-filter=AR", "--", "done")
+        staged = self._git(
+            "diff", "-z", "--cached", "--relative", "--name-only", "--diff-filter=AR", "--", "done"
+        )
         return sorted(p for p in {*untracked, *staged} if p.endswith(".md") and p.count("/") == 1)
 
     def _vacated(self, name: str) -> str:
@@ -121,7 +123,10 @@ class DoneBackstop:
             return None
         reverted = Reverted(path.stem, self._vacated(path.name), tuple(open_lines))
         back = _with_status(text, reverted.folder)
-        atomic_write(self.root / reverted.folder / path.name, _log_line(back, f"{self.today}: {reverted.log_line}"))
+        atomic_write(
+            self.root / reverted.folder / path.name,
+            _log_line(back, f"{self.today}: {reverted.log_line}"),
+        )
         path.unlink()
         self._git("reset", "-q", "HEAD", "--", rel)
         return reverted
