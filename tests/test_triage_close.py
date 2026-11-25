@@ -644,7 +644,9 @@ def test_a_repeated_refused_duplicate_merges_its_body_once(tmp_path):
     root, move = _thin_twin(tmp_path)
     settle_moves([move], root, "2026-11-11")
     settle_moves([move], root, "2026-11-12")
-    assert (root / "inbox" / "keep.md").read_text().count("## Merged from a") == 1
+    survivor = (root / "inbox" / "keep.md").read_text()
+    assert survivor.count("## Merged from a") == 1
+    assert survivor.count("merged a:") == 1
 
 
 def test_a_close_refused_over_unticked_criteria_is_reported_not_swallowed(

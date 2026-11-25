@@ -282,9 +282,11 @@ def _merge_into_survivor(move: Move, root: pathlib.Path, today: str, states: PrS
         duplicate = root / move.source / f"{move.brief_id}.md"
         if survivor is None or not _closable(move, root, states):
             return False
-        merged = _with_merged(survivor.read_text(), move.brief_id, duplicate.read_text())
-        line = f"merged {move.brief_id}: {move.title}"
-        atomic_write(survivor, _append_log(merged, today, line))
+        text = survivor.read_text()
+        merged = _with_merged(text, move.brief_id, duplicate.read_text())
+        if merged != text:
+            line = f"merged {move.brief_id}: {move.title}"
+            atomic_write(survivor, _append_log(merged, today, line))
     return True
 
 
