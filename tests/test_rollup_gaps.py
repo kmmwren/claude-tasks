@@ -94,14 +94,20 @@ def test_every_level_carries_the_gaps_in_its_json(tmp_path: pathlib.Path) -> Non
         assert [g["subject"] for g in project["gaps"]] == ["m2"]
 
 
-def test_each_gap_labels_itself_as_its_project_row_says_it(tmp_path: pathlib.Path) -> None:
+def test_gaps_of_one_kind_read_as_one_clause(tmp_path: pathlib.Path) -> None:
     project = demo(tmp_path, project_toml(head="", m2=""))
-    assert rg.missing_note(rg.gaps(project)) == "Missing initiative, m2 due date"
+    assert rg.missing_note(rg.gaps(project)) == "Missing initiative; due date on m2"
     assert rg.missing_note(()) == ""
 
 
 def test_a_project_row_carries_what_the_project_lacks(tmp_path: pathlib.Path) -> None:
     report = rollup_of(tmp_path, with_project_toml(project_toml(m2="")))
     (entry,) = report.entries
-    assert rollup.rv.project_row(entry, "Next: Two").note == "Next: Two; Missing m2 due date"
-    assert rollup.rv.project_row(entry, "").note == "Missing m2 due date"
+    assert rollup.rv.project_row(entry, "Next: Two").note == "Next: Two; Missing due date on m2"
+    assert rollup.rv.project_row(entry, "").note == "Missing due date on m2"
+
+
+def test_a_long_run_of_one_gap_names_three_and_counts_the_rest() -> None:
+    gaps = [rg.Gap("demo", f"m{n}", "due date", "") for n in range(1, 6)]
+    assert rg.missing_note(gaps) == "Missing due date on m1, m2, m3 and 2 more"
+    assert rg.missing_note(gaps[:3]) == "Missing due date on m1, m2, m3"

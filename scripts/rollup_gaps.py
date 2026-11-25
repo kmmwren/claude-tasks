@@ -20,14 +20,25 @@ class Gap:
     def table(self) -> dict[str, str]:
         return dataclasses.asdict(self)
 
-    def label(self) -> str:
-        """The gap as a project's own row names it: `initiative`, or `m2 due date`."""
-        return self.missing if self.subject == "project" else f"{self.subject} {self.missing}"
+
+SHOWN = 3
+
+
+def kind_label(missing: str, subjects: list[str]) -> str:
+    """One kind of gap as a row names it: `initiative`, or `due date on m2, m3 and 4 more`."""
+    named = [s for s in subjects if s != "project"]
+    if not named:
+        return missing
+    more = f" and {len(named) - SHOWN} more" if len(named) > SHOWN else ""
+    return f"{missing} on {', '.join(named[:SHOWN])}{more}"
 
 
 def missing_note(gaps: Iterable[Gap]) -> str:
-    labels = [g.label() for g in gaps]
-    return f"Missing {', '.join(labels)}" if labels else ""
+    kinds: dict[str, list[str]] = {}
+    for g in gaps:
+        kinds.setdefault(g.missing, []).append(g.subject)
+    labels = [kind_label(missing, subjects) for missing, subjects in kinds.items()]
+    return f"Missing {'; '.join(labels)}" if labels else ""
 
 
 class Expectation(ABC):

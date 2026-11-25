@@ -8,12 +8,12 @@
 
 | # | Project | Due | Progress | Status | Note |
 |---|---|---|---|---|---|
-| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | 3 ready briefs, 1 open bug; Missing m3 due date, m4 due date |
+| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | 3 ready briefs, 1 open bug; Missing due date on m3, m4 |
 | 1.1 | ↳ **B4 title** b4 | 2026-11-12 `late` | Not counted | `Overdue` | Not estimated |
 | 1.2 | ↳ **B5 title** b5 | 2026-11-25 | Not counted | `Due soon` | Effort l |
 | 1.3 | ↳ **B10 title** b10 | 2027-01-15 | Not counted | `Waiting` | Waits on b5 |
 | 2 | **Beta** Beta works. | No date | 1/1 | `Green` | No ready briefs; Missing initiative |
-| 3 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | 1 ready brief, 0 open bugs; Missing m1 due date |
+| 3 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | 1 ready brief, 0 open bugs; Missing due date on m1 |
 | 3.1 | ↳ **G1 title** g1 | No date | Not counted | `Ready` | Not estimated |
 
 3 projects, 4 ready briefs. Key: `Red` 1, `Overdue` 1, `Due soon` 1, `Waiting` 1, `Green` 1, `Not set by owner` 1, `Ready` 1

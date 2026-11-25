@@ -8,12 +8,12 @@
 
 | # | Project | Due | Progress | Status | Note |
 |---|---|---|---|---|---|
-| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10); Missing m3 due date, m4 due date |
+| 1 | **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10); Missing due date on m3, m4 |
 | 1.1 | ↳ **Shipping is done** 2 done | 2026-11-05 | 2/2 | `Done` | No slip |
 | 1.2 | ↳ **The active thing** 1 active, 1 queued, 1 unverified | 2026-11-30 `late` | 0/3 | `Missed` | Slipped 20 days; b3 waits on b4 |
 | 1.3 | ↳ **Later** 1 parked, 1 queued | No date | 0/2 | `Now` | No first date |
 | 1.4 | ↳ **Empty** No briefs | No date | 0/0 | `Next` | No first date |
-| 2 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date; Missing m1 due date |
+| 2 | **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date; Missing due date on m1 |
 | 2.1 | ↳ **Only** 1 queued | No date | 0/1 | `Now` | No first date |
 | 3 | **Beta** Beta works. | No date | 1/1 | `Green` | No open milestone has a date; Missing initiative |
 | 3.1 | ↳ **Only** 1 done | No date | 1/1 | `Done` | No first date |

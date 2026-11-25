@@ -9,9 +9,9 @@
 | # | Initiative | Due | Progress | Status | Note |
 |---|---|---|---|---|---|
 | 1 | **Platform** 1 project | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10) |
-| 1.1 | ↳ **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10); Missing m3 due date, m4 due date |
+| 1.1 | ↳ **Atlas** Teams see what shipped. | 2026-11-30 `late` | 1/4 | `Red` | The active thing due 2026-11-30 (slipped 20 days from 2026-11-10); Missing due date on m3, m4 |
 | 2 | **Growth** 1 project | No date | 0/1 | `Not set by owner` | No open milestone has a date. |
-| 2.1 | ↳ **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date; Missing m1 due date |
+| 2.1 | ↳ **Gamma** Gamma works. | No date | 0/1 | `Not set by owner` | No open milestone has a date; Missing due date on m1 |
 | 3 | **No initiative** 1 project | No date | 1/1 | `Green` | No open milestone has a date. |
 | 3.1 | ↳ **Beta** Beta works. | No date | 1/1 | `Green` | No open milestone has a date; Missing initiative |
 

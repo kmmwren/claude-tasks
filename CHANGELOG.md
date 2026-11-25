@@ -5,7 +5,8 @@
 ### Added
 - **`rollup.py gaps` names what a project has not recorded.** Each project is checked against
   `rollup_gaps.EXPECTATIONS` (an initiative; a due date on every milestone in flight or queued); each gap names
-  its fix, the command exits 1 while any remain, and every view's JSON lists them as `gaps`.
+  its fix, the command exits 1 while any remain, every view's JSON lists them as `gaps`, and each
+  project's grid row ends with one clause per kind ("Missing due date on m1, m2, m3 and 2 more").
 - **Shipped work leaves out conversations.** A done brief of `type: question`, or tagged `peer`, no
   longer appears under shipped or in a release.
 - **A project owner can park a milestone.** A `[[milestones]]` row with `parked = true` (optional
