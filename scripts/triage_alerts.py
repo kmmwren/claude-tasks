@@ -18,7 +18,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from _concurrency import atomic_write
 from class_log import BriefClass, Verdict
 from triage_brief import InboxBrief
-from triage_close import CloseRules, eligible, idle_days
+from triage_close import Attempt, CloseRules, eligible, idle_days
 
 ALERT_STATE = ".triage-alerts.json"
 CHANNEL = "triage"
@@ -32,6 +32,7 @@ Notifier = Callable[[str], bool]
 class AlertReason(enum.StrEnum):
     STALE = "stale needs-info"
     DROP = "model-suggested drop"
+    UNCLOSABLE = "close refused"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -62,6 +63,13 @@ def verdict_alerts(
     """The briefs this run's verdicts want a human to look at: stale needs-info and drops."""
     flags = (_flag(v, inbox[v.brief_id], rules, today) for v in verdicts)
     return [a for a in flags if a]
+
+
+def refusal_alerts(refused: Sequence[Attempt]) -> list[Alert]:
+    """An alert for each close the move refused, so a brief that cannot close is never silent."""
+    return [
+        Alert(a.move.brief_id, a.move.title, AlertReason.UNCLOSABLE, a.refusal) for a in refused
+    ]
 
 
 class AlertLedger:

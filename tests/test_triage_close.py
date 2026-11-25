@@ -8,6 +8,7 @@ import pytest
 import triage_close
 from class_log import BriefClass, Verdict
 from deps import fm
+from done_guard import UntickedCriteriaError
 from triage_brief import InboxBrief, load_inbox
 from triage_close import (
     CLOSING_FIELDS,
@@ -26,6 +27,7 @@ from triage_close import (
     idle_days,
     plan_text,
     reopen,
+    settle_moves,
     touched_ids,
     verdict_moves,
 )
@@ -616,3 +618,46 @@ def test_a_closed_reason_the_brief_carries_but_no_event_knows_is_not_reopened(tm
     path.write_text(path.read_text().replace("closed_reason: evidence", "closed_reason: odd"))
     with pytest.raises(ValueError, match="has not closed"):
         reopen("a", root, "2026-11-12")
+
+
+def _thin_twin(tmp_path):
+    root = make_inbox(tmp_path, {"a": inbox_text("a", criteria=("Fix it",), **DUP_BODY)})
+    (root / "inbox" / "keep.md").write_text(inbox_text("keep", goal="Survivor goal."))
+    return root, Move("a", "Title of a", "inbox", Reason.DUPLICATE, "same as keep", "keep")
+
+
+def test_a_duplicate_with_a_criterion_no_survivor_can_carry_stays_open_but_its_merge_counts(
+    tmp_path, capsys
+):
+    root, move = _thin_twin(tmp_path)
+    applied = settle_moves([move], root, "2026-11-11")
+    [attempt] = applied.attempts
+    assert (attempt.landed, attempt.merged) == (False, True)
+    assert "keep does not carry" in attempt.refusal and applied.touched == ["keep"]
+    assert applied.refused == [attempt] and applied.landed == []
+    assert (root / "inbox" / "a.md").exists() and not (root / MOVE_LOG).exists()
+    assert "## Merged from a" in (root / "inbox" / "keep.md").read_text()
+    assert "a not closed" in capsys.readouterr().err
+
+
+def test_a_repeated_refused_duplicate_merges_its_body_once(tmp_path):
+    root, move = _thin_twin(tmp_path)
+    settle_moves([move], root, "2026-11-11")
+    settle_moves([move], root, "2026-11-12")
+    assert (root / "inbox" / "keep.md").read_text().count("## Merged from a") == 1
+
+
+def test_a_close_refused_over_unticked_criteria_is_reported_not_swallowed(
+    tmp_path, monkeypatch, capsys
+):
+    root = make_inbox(tmp_path, {"a": inbox_text("a", criteria=("Ship it.",))})
+    refused = UntickedCriteriaError("a", ["- [ ] Ship it."])
+    monkeypatch.setattr(triage_close, "_to_done", lambda *args: (_ for _ in ()).throw(refused))
+    move = Move("a", "Title of a", "inbox", Reason.EVIDENCE, "x")
+    [attempt] = settle_moves([move], root, "2026-11-11").attempts
+    assert (attempt.landed, attempt.merged, attempt.refusal) == (
+        False,
+        False,
+        "success criteria still unticked",
+    )
+    assert "a not closed" in capsys.readouterr().err

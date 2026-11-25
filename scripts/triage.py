@@ -37,6 +37,7 @@ from triage_alerts import (
     Notifier,
     alert_text,
     alerts_plan,
+    refusal_alerts,
     session_alert_notifier,
     undelivered,
     undelivered_text,
@@ -55,14 +56,14 @@ from triage_classify import (
 )
 from triage_close import (
     MOVE_LOG,
+    Applied,
     CloseRules,
     Move,
-    apply_moves,
     capped,
     evidence_moves,
     plan_text,
     reopen,
-    touched_ids,
+    settle_moves,
     verdict_moves,
 )
 from triage_collapse import Collapse, apply_collapse, plan_collapses
@@ -96,6 +97,7 @@ class Report:
     alert_notice: str = ""
     closes_deferred: int = 0
     closes_changed_underfoot: int = 0
+    closes_refused: int = 0
     inbox_after: int = 0
     ready_after: int = 0
     committed: bool = False
@@ -209,15 +211,18 @@ def _record(log: ClassLog, verdicts: Sequence[Verdict], moved: Collection[str]) 
             log.record_verdict(v)
 
 
-def _close(opts: Options, report: Report, planned: Sequence[Move]) -> list[Move]:
-    """Make up to the cap's worth of `planned` moves and return those made; a dry run makes none."""
+def _close(opts: Options, report: Report, planned: Sequence[Move]) -> Applied:
+    """Make up to the cap's worth of `planned` moves and return the attempts; a dry run makes none."""
     selected, report.closes_deferred = capped(planned, opts.rules.max_moves)
-    made = apply_moves(selected, opts.root, opts.today, opts.states) if opts.apply else []
-    shown = made if opts.apply else selected
+    applied = (
+        settle_moves(selected, opts.root, opts.today, opts.states) if opts.apply else Applied(())
+    )
+    shown = applied.landed if opts.apply else selected
     report.moves = list(shown)
     report.closed = dict(collections.Counter(str(m.reason) for m in shown))
     report.closes_changed_underfoot = len(selected) - len(shown)
-    return made
+    report.closes_refused = len(applied.refused)
+    return applied
 
 
 def _alert(opts: Options, report: Report, flagged: Sequence[Alert]) -> bool:
@@ -293,19 +298,20 @@ def _promote_and_record(
 
 
 def _alert_and_commit(
-    opts: Options, report: Report, touched: list[str], closed: Sequence[Move], standing: Standing
+    opts: Options, report: Report, touched: list[str], applied: Applied, standing: Standing
 ) -> None:
     today = datetime.date.fromisoformat(opts.today)
     flagged = verdict_alerts(standing.verdicts, standing.inbox, opts.rules, today)
+    flagged += refusal_alerts(applied.refused)
     alerted = _alert(opts, report, flagged)
     report.committed = (bool(touched) or alerted) and (
         sync_commit(
             f"triage: collapse {report.collapsed_children} into {report.collapsed_groups}, "
             f"promote {report.promoted_as_filed + report.promoted_enriched} inbox briefs to ready, "
-            f"close {len(closed)}, alert {len(report.alerts) if alerted else 0}",
+            f"close {len(applied.landed)}, alert {len(report.alerts) if alerted else 0}",
             opts.root,
             ids=sorted(set(touched)),
-            paths=[*([MOVE_LOG] if closed else []), *([ALERT_STATE] if alerted else [])],
+            paths=[*([MOVE_LOG] if applied.landed else []), *([ALERT_STATE] if alerted else [])],
         )
         is not SyncResult.DEFERRED
     )
@@ -321,9 +327,9 @@ def run(opts: Options) -> Report:
     standing = _classify_and_promote(opts, report, log, retired, finished)
     touched += standing.promoted
     dupe_moves = verdict_moves(standing.verdicts, standing.inbox, standing.dupes)
-    closed = _close(opts, report, [*finished, *dupe_moves])
-    touched += touched_ids(closed)
-    _alert_and_commit(opts, report, touched, closed, standing)
+    applied = _close(opts, report, [*finished, *dupe_moves])
+    touched += applied.touched
+    _alert_and_commit(opts, report, touched, applied, standing)
     report.inbox_after, report.ready_after = _count(opts.root, "inbox"), _count(opts.root, "ready")
     return report
 

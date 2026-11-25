@@ -21,7 +21,9 @@ from _concurrency import atomic_write, require_lock
 from class_log import BriefClass, Verdict
 from config import load_config
 from deps import fm
+from done_guard import UntickedCriteriaError
 from readiness import EXECUTION_LOG
+from supersession import UncarriedCriteriaError
 from transition import _append_log, find_brief, move_brief
 from triage_brief import InboxBrief
 from triage_evidence import PrStates, closing_evidence
@@ -308,10 +310,47 @@ def _frontmatter_missing(move: Move, root: pathlib.Path) -> bool:
     return path.exists() and not _FRONTMATTER.match(path.read_text())
 
 
-def _land(move: Move, root: pathlib.Path, today: str, states: PrStates) -> bool:
-    """Merge a duplicate into its survivor, then move it to done/; False when the merge refused."""
-    if move.survivor and not _merge_into_survivor(move, root, today, states):
-        return False
+@dataclasses.dataclass(frozen=True)
+class Attempt:
+    """What one move achieved: closed or not, whether a duplicate's body reached its survivor, and
+    why a refused close needs a human."""
+
+    move: Move
+    landed: bool = False
+    merged: bool = False
+    refusal: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class Applied:
+    """The attempts of one run, so work done before a refused close is never left uncommitted."""
+
+    attempts: tuple[Attempt, ...]
+
+    @property
+    def landed(self) -> list[Move]:
+        return [a.move for a in self.attempts if a.landed]
+
+    @property
+    def refused(self) -> list[Attempt]:
+        return [a for a in self.attempts if a.refusal]
+
+    @property
+    def touched(self) -> list[str]:
+        """The briefs written: each closed one, and every survivor that gained a body."""
+        stranded = [a.move.survivor for a in self.attempts if a.merged and not a.landed]
+        return [*touched_ids(self.landed), *stranded]
+
+
+def _refusal(move: Move, err: UntickedCriteriaError | UncarriedCriteriaError) -> str:
+    """Why a close was refused over its criteria, for the alert; the full list goes to stderr."""
+    _skip(move, err)
+    if isinstance(err, UncarriedCriteriaError):
+        return f"open criteria that {move.survivor} does not carry"
+    return "success criteria still unticked"
+
+
+def _to_done(move: Move, root: pathlib.Path, today: str, states: PrStates) -> None:
     move_brief(
         move.brief_id,
         DONE,
@@ -323,30 +362,50 @@ def _land(move: Move, root: pathlib.Path, today: str, states: PrStates) -> bool:
         settle_with=move.settled_by,
         superseded_by=move.carried_by,
     )
-    return True
 
 
-def _apply(move: Move, root: pathlib.Path, today: str, states: PrStates, log: MoveLog) -> bool:
+def _settle(move: Move, root: pathlib.Path, today: str, states: PrStates) -> Attempt:
+    """Merge a duplicate into its survivor, then close it; the attempt records how far it got."""
+    merged = False
+    try:
+        merged = bool(move.survivor) and _merge_into_survivor(move, root, today, states)
+        if move.survivor and not merged:
+            return Attempt(move)
+        _to_done(move, root, today, states)
+    except (UntickedCriteriaError, UncarriedCriteriaError) as err:
+        return Attempt(move, merged=merged, refusal=_refusal(move, err))
+    except ValueError:
+        return Attempt(move, merged=merged)
+    except (RuntimeError, TimeoutError) as err:
+        _skip(move, err)
+        return Attempt(move, merged=merged)
+    return Attempt(move, landed=True, merged=merged)
+
+
+def _apply(move: Move, root: pathlib.Path, today: str, states: PrStates, log: MoveLog) -> Attempt:
     """Make one move and log it at once, so a later failure never leaves a move unlogged."""
     if _frontmatter_missing(move, root):
-        return _skip(move, ValueError("it has no frontmatter to record the closure in"))
-    try:
-        landed = _land(move, root, today, states)
-    except ValueError:
-        return False
-    except (RuntimeError, TimeoutError) as err:
-        return _skip(move, err)
-    if landed:
+        _skip(move, ValueError("it has no frontmatter to record the closure in"))
+        return Attempt(move)
+    attempt = _settle(move, root, today, states)
+    if attempt.landed:
         log.append(move)
-    return landed
+    return attempt
+
+
+def settle_moves(
+    moves: Sequence[Move], root: pathlib.Path, today: str, states: PrStates | None = None
+) -> Applied:
+    """Make each move, logging each as it lands; a move that cannot be made safely is skipped."""
+    log, states = MoveLog(root), states or PrStates.offline()
+    return Applied(tuple(_apply(m, root, today, states, log) for m in moves))
 
 
 def apply_moves(
     moves: Sequence[Move], root: pathlib.Path, today: str, states: PrStates | None = None
 ) -> list[Move]:
-    """Make each move, logging each as it lands; a move that cannot be made safely is skipped."""
-    log, states = MoveLog(root), states or PrStates.offline()
-    return [m for m in moves if _apply(m, root, today, states, log)]
+    """The moves `settle_moves` closed."""
+    return settle_moves(moves, root, today, states).landed
 
 
 def _recorded_on_brief(brief_id: str, root: pathlib.Path) -> MoveRecord | None:

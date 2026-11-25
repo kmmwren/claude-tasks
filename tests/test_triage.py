@@ -418,7 +418,7 @@ def test_a_brief_restored_by_the_owner_is_not_closed_again(tmp_path, committed):
 
 def test_a_close_refused_by_the_move_is_counted_and_not_logged(tmp_path, committed, monkeypatch):
     root = make_inbox(tmp_path, {"d": inbox_text("d", **FINISHED)})
-    monkeypatch.setattr(triage, "apply_moves", lambda *args: [])
+    monkeypatch.setattr(triage, "settle_moves", lambda *args: triage.Applied(()))
     report = triage.run(_opts(root, apply=True))
     assert (report.closes_changed_underfoot, report.committed) == (1, False)
 
@@ -499,3 +499,23 @@ def test_reopen_of_a_brief_triage_never_closed_exits_with_the_reason(tmp_path, c
         triage.main(["reopen", "b", "--root", str(root)])
     assert exit_info.value.code == 1 and "has not closed 'b'" in capsys.readouterr().err
     assert committed == []
+
+
+def test_a_duplicate_whose_criteria_its_survivor_cannot_carry_alerts_and_commits_the_merge(
+    tmp_path, committed, capsys
+):
+    thin = {**READY, "criteria": ("Fix it",)}
+    twin = inbox_text("filed-again", title="Title of filed", context="Per o/r#2.", **thin)
+    root = make_inbox(tmp_path, {"filed-again": twin})
+    keep = inbox_text(
+        "filed", status="ready", title="Title of filed", context="Per o/r#2.", **READY
+    )
+    (root / "ready" / "filed.md").write_text(keep)
+    bell = Bell()
+    report = triage.run(dataclasses.replace(_opts(root, apply=True), notify=bell))
+    assert (report.closes_refused, report.alerts_delivered) == (1, True)
+    assert "close refused (1):" in bell.texts[0] and "- filed-again:" in bell.texts[0]
+    assert (root / "inbox" / "filed-again.md").exists() and not list((root / "done").glob("*.md"))
+    assert "## Merged from filed-again" in (root / "ready" / "filed.md").read_text()
+    assert "filed-again not closed" in capsys.readouterr().err
+    assert any("filed" in ids for _, ids, _ in committed)
