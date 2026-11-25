@@ -78,9 +78,10 @@ across clones.
 ### Waking due briefs (`maintain.py`)
 
 `maintain.py --tier laptop|cloud` is the one trigger-agnostic entry point; a LaunchAgent
-(`launchd/`) calls it every five minutes and a cloud routine can call it hourly. Each tier keeps
-a last-run record in the queue (`maintain/last-run/<tier>.json`); a tick younger than the tier's
-interval exits at once without touching git.
+(`launchd/`) calls it every four hours and a cloud routine calls it with
+`--skip-if-succeeded-within 4h` (`docs/maintain-triggers.md`). Each tier keeps a last-run record in
+the queue (`maintain/last-run/<tier>.json`); a tick younger than the tier's interval exits at once
+without touching git.
 
 A `ready/` or `inbox/` brief is due when `not_before` has passed or `wake_probe` exits 0
 (10 = not yet, anything else is logged and not due). A due brief still waits for its unmet

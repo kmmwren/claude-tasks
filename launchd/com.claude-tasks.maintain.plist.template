@@ -14,7 +14,7 @@
         <string>@QUEUE@</string>
     </array>
     <key>StartInterval</key>
-    <integer>300</integer>
+    <integer>@INTERVAL@</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>AbandonProcessGroup</key>

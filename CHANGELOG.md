@@ -11,6 +11,11 @@
   `overdue-needs-<cap>` report lines. A run record per wake stops a second tick or the other tier
   running it twice. `launchd/` holds a LaunchAgent template and an install script that renders it
   without loading it. A due brief still waits for its unmet `blocked_by` entries, including `date:` days.
+- **`maintain.py --skip-if-succeeded-within DURATION`** fetches origin and exits 0 with nothing run when
+  every hygiene phase was recorded there within the duration (`30m`, `4h`, `2d`); a missing or older
+  record, or a phase that failed or was deferred, runs a normal tick. The LaunchAgent now wakes every
+  `[maintain] hygiene_interval_minutes` (4 hours by default) instead of every five minutes.
+  `docs/maintain-triggers.md` describes both triggers and how to verify each fired.
 
 ### Changed
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or

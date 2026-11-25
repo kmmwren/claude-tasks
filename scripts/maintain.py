@@ -2,10 +2,12 @@
 """
 maintain.py: the one entry point that wakes due briefs, whatever triggers it.
 
-  python scripts/maintain.py --tier laptop|cloud [--root PATH]
+  python scripts/maintain.py --tier laptop|cloud [--root PATH] [--skip-if-succeeded-within DURATION]
 
 A tick reads its tier's last-run record and exits at once while it is younger than the tier's
-interval. Otherwise it finds the briefs that are due (`not_before` passed or `wake_probe` clear),
+interval. With `--skip-if-succeeded-within 4h` it also exits at once when origin holds a hygiene
+record younger than that for every phase, which is how a cloud routine leaves the work to a laptop
+that has just run it. Otherwise it finds the briefs that are due (`not_before` passed or `wake_probe` clear),
 skips those its tier cannot serve (`needs:`), claims each with a git-pushed lease, hands the claimed
 brief to a detached headless run through the launcher, and records the tick. A LaunchAgent, a cloud
 routine or a person can call it; nothing here assumes the laptop.
@@ -31,11 +33,12 @@ import socket
 import sys
 from collections.abc import Callable, Iterator
 
+from _dates import parse_duration
 from _paths import require_queue, resolve_root, warn
 from claim import IN_PROGRESS, Claim, Claimer, Lease, Target
 from deps import Brief, brief_id, done_ids, fm, unmet
 from headless import Launch, ScriptLaunch, launcher_script, rank_table, spawn_detached
-from hygiene import Engine, Hygiene, HygieneResult
+from hygiene import Engine, Hygiene, HygieneResult, succeeded_within
 from hygiene_lease import HygieneLeaser
 from maintain_config import MaintainSettings, Tier
 from maintain_report import Report, ReportKind
@@ -185,13 +188,16 @@ class Maintainer:
     claimer: Claimer | None = None
     launch: Launch | None = None
     engine: Engine | None = None
+    skip_if_succeeded_within: dt.timedelta | None = None
 
     def tick(self) -> TickResult:
-        """Run one tick, wake step then hygiene; returns at once, touching nothing, while the tier's last run is fresh."""
+        """Run one tick, wake step then hygiene; returns at once while the tier's last run is fresh or a success on origin is recent enough."""
         now = self.clock()
         interval = self.settings.tiers[self.tier].interval
         last = LastRun.read(self.root, self.tier.value)
         if last is not None and last.fresh(now, interval):
+            return TickResult(ran=False)
+        if self._succeeded_recently(now):
             return TickResult(ran=False)
         result = self._work(now)
         try:
@@ -200,6 +206,17 @@ class Maintainer:
             record = LastRun(self.tier.value, now, result.claimed, tuple(map(str, result.reports)))
             record.write(self.root, self.clock())
         return result
+
+    def _succeeded_recently(self, now: dt.datetime) -> bool:
+        """Whether origin, not only this checkout, holds a recent success; a failed refresh reads the checkout."""
+        window = self.skip_if_succeeded_within
+        if window is None:
+            return False
+        if not HygieneLeaser(self._claimer()).refresh():
+            warn(
+                "could not bring the queue up to date with origin; reading the checkout", "maintain"
+            )
+        return succeeded_within(self.root, now, window)
 
     @staticmethod
     def _with_hygiene(result: TickResult, hygiene: HygieneResult) -> TickResult:
@@ -290,14 +307,34 @@ def _launcher(root: pathlib.Path) -> Launch | None:
     return ScriptLaunch(str(script)) if script else None
 
 
+def _duration(text: str) -> dt.timedelta:
+    try:
+        return parse_duration(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Wake the briefs that are due, then record the tick.")
     ap.add_argument("--tier", required=True, choices=[t.value for t in Tier])
     ap.add_argument("--root", help="queue directory (default: the resolved queue)")
+    ap.add_argument(
+        "--skip-if-succeeded-within",
+        type=_duration,
+        metavar="DURATION",
+        help="exit 0 with nothing run when every hygiene phase was recorded on origin within this "
+        "span, such as 30m, 4h or 2d",
+    )
     a = ap.parse_args(argv)
     root = require_queue(pathlib.Path(a.root) if a.root else resolve_root())
     try:
-        result = Maintainer(root, Tier(a.tier), MaintainSettings.load(root)).tick()
+        maintainer = Maintainer(
+            root,
+            Tier(a.tier),
+            MaintainSettings.load(root),
+            skip_if_succeeded_within=a.skip_if_succeeded_within,
+        )
+        result = maintainer.tick()
     except Exception as e:  # noqa: BLE001  - a scheduled tick reports and retries next time; it never crashes
         warn(f"tick failed: {type(e).__name__}: {e}", "maintain")
         return EX_FAILED

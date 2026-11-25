@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from maintain_config import DEFAULT_HYGIENE_INTERVAL_MINUTES
 
 LAUNCHD = pathlib.Path(__file__).resolve().parent.parent / "launchd"
 INSTALL = LAUNCHD / "install.sh"
@@ -27,10 +28,10 @@ def render(tmp_path, **env):
     return run, (plistlib.loads(run.stdout.encode()) if run.returncode == 0 else None)
 
 
-def test_the_agent_runs_the_laptop_tick_every_five_minutes(tmp_path):
+def test_the_agent_runs_the_laptop_tick_at_the_default_hygiene_interval(tmp_path):
     run, plist = render(tmp_path, QUEUE="/q")
     assert run.returncode == 0
-    assert plist["StartInterval"] == 300
+    assert plist["StartInterval"] == DEFAULT_HYGIENE_INTERVAL_MINUTES * 60 == 4 * 60 * 60
     assert plist["ProgramArguments"][1:] == [
         str(LAUNCHD.parent / "scripts" / "maintain.py"),
         "--tier",
@@ -38,6 +39,13 @@ def test_the_agent_runs_the_laptop_tick_every_five_minutes(tmp_path):
         "--root",
         "/q",
     ]
+
+
+def test_the_interval_follows_the_queues_configured_hygiene_interval(tmp_path):
+    queue = tmp_path / "queue"
+    queue.mkdir()
+    (queue / "tasks.toml").write_text("[maintain]\nhygiene_interval_minutes = 90\n")
+    assert render(tmp_path, QUEUE=str(queue))[1]["StartInterval"] == 90 * 60
 
 
 def test_the_agent_logs_to_the_library_and_lets_the_run_outlive_the_tick(tmp_path):

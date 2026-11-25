@@ -303,6 +303,18 @@ def skipped_in(last: LastRun) -> tuple[str, ...]:
     )
 
 
+def succeeded_within(root: pathlib.Path, now: dt.datetime, window: dt.timedelta) -> bool:
+    """True when every phase has a record younger than `window`.
+
+    A phase is recorded only when all its steps succeeded, so a failed, lapsed or deferred phase
+    leaves no fresh record and counts as not having succeeded.
+    """
+    return all(
+        (last := LastRun.read(root, phase.value)) is not None and last.fresh(now, window)
+        for phase in Phase
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class Hygiene:
     """The tidy-up of one queue: what is due, whether credits allow it, and the lease it runs under."""

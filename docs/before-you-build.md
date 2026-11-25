@@ -39,3 +39,16 @@
 8. **Cost.** One `git ls-files --others` and one `git hash-object` per untracked file at each advance.
 9. **Risk.** Low. A file is removed only when its blob equals the incoming one, so the advance restores it. Full autonomy.
 10. **Capture.** The tests.
+
+## 2026-11-25 maintain triggers: laptop every few hours, cloud skips a recent success
+
+1. **Outcome check.** `maintain.py --skip-if-succeeded-within 4h` exits 0 and runs, claims and records nothing when every hygiene phase has a record on origin younger than 4 hours, including from a checkout that predates the record; a missing record, an old success, a phase that never completed or a failed tick runs normally. `tests/test_maintain_skip.py` holds one test per case. The rendered LaunchAgent's `StartInterval` equals the queue's hygiene interval (`tests/test_launchd.py`).
+2. **True constraints.** "I don't think I want it to be GitHub Actions because I think that will cost a lot of money", "it should ideally be agnostic to platform", "this laptop can do headless background runs every X hours when it's on. Then the cloud routine can try doing one but not bother if one completed successfully" (decisions/2026-11-17-queue-engine-runs-anywhere-trigger-agnostic.md). Capture stays fast and hygiene runs async (2026-11-17-capture-stays-fast-hygiene-runs-async.md), so the triggers add nothing to the capture path.
+3. **Check first.** The tests above, written against real temporary git repos with a bare origin, before the code.
+4. **Already exists.** `LastRun` records, published per phase by the hygiene lease release, `HygieneLeaser.refresh` and `launchd/install.sh`. The skip reads the published phase records instead of adding a second marker; the installer gains a computed interval instead of a second installer.
+5. **Cheapest experiment.** `launchd/install.sh --print` against the real queue, and a local run of the cloud command against a clone of `kmmwren/work-tasks`.
+6. **Waiting.** The cloud routine is registered after this lands; the laptop agent is installed by running `launchd/install.sh`.
+7. **Interface.** One new optional flag and one `parse_duration` helper in `_dates.py`. The plist template's interval is a placeholder, so a queue that sets `hygiene_interval_minutes` changes the cadence.
+8. **Cost.** The skip is one `git fetch` and two file reads; a skipped cloud fire starts a cloud session that runs one command. No model call in the engine.
+9. **Risk.** Low. A skip hides a run only while both phase records are fresh. The cloud tier claims a brief only where a launcher exists, so the routine cannot start unattended judgement runs by itself.
+10. **Capture.** The phase records on origin, `docs/maintain-triggers.md` and the tests.

@@ -28,12 +28,23 @@ resolve_python() {
     return 1
 }
 
+# The agent wakes as often as the queue's hygiene interval ([maintain] hygiene_interval_minutes,
+# default in maintain_config.py), the cadence at which a tick has tidy-up work to do.
+interval_seconds() {
+    "$1" -c 'import sys
+sys.path.insert(0, sys.argv[1])
+from maintain_config import MaintainSettings
+print(int(MaintainSettings.load(sys.argv[2]).hygiene_interval.total_seconds()))' "$REPO/scripts" "$2"
+}
+
 render() {
-    local python queue launcher
+    local python queue launcher interval
     python="$(resolve_python)"
     queue="${QUEUE:-$HOME/work-tasks}"
     launcher="${LAUNCHER:-}"
+    interval="$(interval_seconds "$python" "$queue")"
     sed \
+        -e "s|@INTERVAL@|$interval|g" \
         -e "s|@PYTHON@|$python|g" \
         -e "s|@MAINTAIN@|$REPO/scripts/maintain.py|g" \
         -e "s|@QUEUE@|$queue|g" \
