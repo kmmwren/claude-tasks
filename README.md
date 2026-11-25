@@ -92,6 +92,7 @@ is run with it, it exits with a message telling you which interpreters to use in
 | "capture this" (mid-flow) | **raw-capture** | a raw note lands in `inbox/` |
 | "enrich the inbox" | **enrich** | raw notes become structured briefs |
 | "what's next?" / `/tasks-next` | **prioritise** | ranks the queue (dependency-aware) |
+| "start a session on X" / `/start` | `start_prompt.py` | prints a session-start prompt for a project, milestone or tag slice; alone, the menu of slices |
 | "action the X task" | **action-task** | Claude executes a brief end-to-end |
 | "show the board" / `/tasks-board` | — | regenerates `view/board.html` |
 | "I'm done, hand off" | **handoff** | the session's open work flows to the queue |
@@ -100,7 +101,7 @@ is run with it, it exits with a message telling you which interpreters to use in
 
 ### Priorities and dependencies
 
-`rank.py --scope all|tag:<t>|project:<slug>|session:<id> --top K` reorders the unblocked
+`rank.py --scope all|tag:<t>,...|project:<slug>|milestone:<id>,...|session:<id>|ids:<slug>,... --top K` reorders the unblocked
 candidates against your own taste profile (`profile/priorities.md`, drafted by `seed_profile.py`)
 with a one-line reason each. It learns from what you pick, bump and skip (`learn.py` proposes the
 weight changes). See [the design notes](docs/design.md#the-predictor-head-ranking-against-a-taste-profile).
@@ -111,6 +112,25 @@ Dependencies are declared with `blockers: [other-id]` or a `depends:<id>` tag, a
 stays blocked until its dependency reaches `done/`, so the queue self-unblocks as work
 lands. Define your own priority-tag weights (e.g. an `urgent`/`frog` convention) under
 `[priority]` in `tasks.toml`; the base ranking is otherwise purely mechanical.
+
+### Starting a session on a slice
+
+`/start` (`scripts/start_prompt.py`) prints a prompt to paste into a new session: the slice's ready
+briefs in priority order, each as an `/action-task` command, with what is held in `in-progress/`
+or `blocked/` counted beneath. It reads the current queue and every initialised queue in
+`$CLAUDE_TASKS_ROOTS`, a PATH-style list.
+
+```
+/start                                  # the menu: each queue's ready briefs by milestone and tag
+/start checkout                         # one project, in priority order
+/start checkout --milestone m1,m2       # milestones m1 and m2 of that project
+/start sp --tag ux                      # sp: search-platform, by initials
+/start all --tag memory                 # one tag across every queue
+```
+
+A milestone needs one project; values in one flag take any of them, and `--milestone` with
+`--tag` takes briefs matching both. A clone behind its origin is warned about once, naming the
+queues it holds.
 
 ### Logging without writing the main checkout
 

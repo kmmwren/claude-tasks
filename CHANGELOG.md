@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- **`/start` prints a session-start prompt for a slice.** `start_prompt.py [PROJECT|all]
+  [--milestone m1,m2] [--tag ux,memory]` ranks the slice's ready briefs across the current queue and
+  `$CLAUDE_TASKS_ROOTS` and prints them as `/action-task` commands, highest first, with the briefs
+  held in `in-progress/` and `blocked/` counted. With no arguments it prints the menu: each queue's
+  ready briefs counted by milestone and by tags two or more briefs share, beside the command for
+  each. Queues answer to their folder name, its words, initials or a prefix; milestones to their
+  short form (`m2` for `web-m2`). A clone behind origin is warned about once.
+- **`milestone:<id>,...` scope, and list values for `tag:`.** `rank.py --scope` and
+  `prioritise.rank` take `milestone:m1,m2`, and `tag:ux,memory` admits a brief carrying any listed
+  tag. `AllOfScope` intersects scopes and is weighed as the slice it stands for.
 - **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
   trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
   is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a

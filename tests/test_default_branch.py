@@ -72,7 +72,7 @@ def test_a_git_that_hangs_is_cut_off_and_the_next_source_is_tried(monkeypatch, t
         raise subprocess.TimeoutExpired("git", kwargs["timeout"])
 
     monkeypatch.setattr(db.subprocess, "run", hang)
-    assert db._git(tmp_path, "remote", "show", "origin", timeout=1.0) == ""
+    assert db.git_stdout(tmp_path, "remote", "show", "origin", timeout=1.0) == ""
 
 
 def test_only_the_remote_query_carries_a_timeout(clone, monkeypatch):

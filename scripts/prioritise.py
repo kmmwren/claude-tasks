@@ -627,7 +627,7 @@ def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[
     return orders
 
 
-def _load_fields(path: pathlib.Path) -> dict[str, Any]:
+def load_fields(path: pathlib.Path) -> dict[str, Any]:
     """The brief's frontmatter with `id` always set, so no row ever carries a null id."""
     fields: dict[str, Any] = dict(fm(path.read_text()))
     fields["id"] = brief_id(fields, path.stem)
@@ -662,7 +662,7 @@ def rank(
     fleet = FleetBlockers.from_config(root, config)
     today = today or datetime.date.today()
     ctx = _RankContext.load(root, today, context, scope, weights, tags, fleet)
-    fields = [(f, _load_fields(f)) for f in _brief_files(root, ids)]
+    fields = [(f, load_fields(f)) for f in _brief_files(root, ids)]
     items = [_annotate(f, b, ctx) for f, b in fields if scope.admits(subject(b))]
     chosen = scorer or weights.scorer
     for b in items:
@@ -675,7 +675,7 @@ def next_runnable(root: pathlib.Path) -> dict[str, Any] | None:
     return next((b for b in rank(root) if b["_actionable"]), None)
 
 
-def _flags(b: dict[str, Any]) -> str:
+def flags(b: dict[str, Any]) -> str:
     flags = ""
     if not b["_actionable"]:
         if b["_blocked"]:
@@ -708,7 +708,7 @@ def _row(b: dict[str, Any]) -> str:
     return (
         f"{b['_score']:>7g}  {b['_lane'].value:<13} {b['_move'].value:<8} "
         f"{b.get('importance', '?'):<2} {b.get('due', '') or '-':<10} "
-        f"{b.get('estimated-effort', '') or '-':<3} {b.get('id', '?')}{_flags(b)}"
+        f"{b.get('estimated-effort', '') or '-':<3} {b.get('id', '?')}{flags(b)}"
         f"  [wsjf {_why_text(b['_why'])}]"
     )
 

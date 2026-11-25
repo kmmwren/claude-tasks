@@ -39,6 +39,10 @@ class Subject:
     def project(self) -> str:
         return str(self.fields.get("project", "") or "").strip()
 
+    @property
+    def milestone(self) -> str:
+        return str(self.fields.get("milestone", "") or "").strip()
+
     def has_field(self, name: str) -> bool:
         return str(self.fields.get(name, "") or "").strip().lower() not in EMPTY_VALUES
 

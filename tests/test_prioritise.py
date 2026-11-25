@@ -334,7 +334,7 @@ def test_not_before_in_the_future_is_not_actionable(tmp_path):
     root = _queue(tmp_path, [("ready", "held.md", held), ("ready", "started.md", started)])
     by_id = {b["id"]: b for b in prioritise.rank(root, today=TODAY)}
     assert by_id["held"]["_actionable"] is False
-    assert "not before 2026-06-05" in prioritise._flags(by_id["held"])
+    assert "not before 2026-06-05" in prioritise.flags(by_id["held"])
     assert by_id["started"]["_actionable"] is True
 
 

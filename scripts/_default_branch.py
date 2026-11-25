@@ -13,7 +13,7 @@ class DefaultBranchError(RuntimeError):
     """No source (origin/HEAD, the remote, the checkout) names a branch."""
 
 
-def _git(root: pathlib.Path, *args: str, timeout: float | None = None) -> str:
+def git_stdout(root: pathlib.Path, *args: str, timeout: float | None = None) -> str:
     """Git's stdout in `root`; empty when it fails or times out, so the next source is tried."""
     try:
         run = subprocess.run(
@@ -25,17 +25,19 @@ def _git(root: pathlib.Path, *args: str, timeout: float | None = None) -> str:
 
 
 def _from_origin_head(root: pathlib.Path) -> str:
-    ref = _git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    ref = git_stdout(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
     return ref.removeprefix("origin/")
 
 
 def _from_remote(root: pathlib.Path) -> str:
-    found = _REMOTE_HEAD.search(_git(root, "remote", "show", "origin", timeout=REMOTE_TIMEOUT))
+    found = _REMOTE_HEAD.search(
+        git_stdout(root, "remote", "show", "origin", timeout=REMOTE_TIMEOUT)
+    )
     return "" if found is None or found.group(1) == "(unknown)" else found.group(1)
 
 
 def _from_checkout(root: pathlib.Path) -> str:
-    return _git(root, "symbolic-ref", "--short", "HEAD")
+    return git_stdout(root, "symbolic-ref", "--short", "HEAD")
 
 
 @functools.cache

@@ -10,7 +10,7 @@ from headless import DirectLaunch, ScriptLaunch
 from judge import ClaudeBackend
 from picks import PickLog
 from rank import Ranker
-from scope import AllScope, ProjectScope, SessionScope, TagScope
+from scope import AllOfScope, AllScope, MilestoneScope, ProjectScope, SessionScope, TagScope
 
 from tests.queue_helpers import installed_launcher, make_queue
 
@@ -68,6 +68,7 @@ def briefs(root, *ids, scope=None):
         ("tag:checkout", TagScope, "tag:checkout"),
         ("project:app", ProjectScope, "project:app"),
         ("session:abc", SessionScope, "session:abc"),
+        ("milestone:m1,m2", MilestoneScope, "milestone:m1,m2"),
     ],
 )
 def test_parse_scope(text, cls, key):
@@ -75,7 +76,28 @@ def test_parse_scope(text, cls, key):
     assert (type(scope), scope.key) == (cls, key)
 
 
-@pytest.mark.parametrize("text", ["tag", "tag:", "milestone:m1"])
+def test_list_scopes_admit_any_listed_value_and_all_of_needs_every_part(tmp_path):
+    root = make_queue(
+        tmp_path,
+        {
+            "a": {"tags": "[ux]", "milestone": "m1"},
+            "b": {"tags": "[ops]", "milestone": "m2"},
+            "c": {"tags": "[ux]", "milestone": "m3"},
+        },
+    )
+
+    def ids(scope):
+        return sorted(b.id for b in rank.candidates(root, scope, 15, rank.prioritise_rows))
+
+    milestones = MilestoneScope.of(["m1", "m2"])
+    assert ids(milestones) == ["a", "b"]
+    assert ids(TagScope("ux, ops")) == ["a", "b", "c"]
+    both = AllOfScope([milestones, TagScope.of(["ux"])], weighs_as="project")
+    assert (both.name, both.key, ids(both)) == ("project", "milestone:m1,m2+tag:ux", ["a"])
+    assert AllOfScope([]).key == "all"
+
+
+@pytest.mark.parametrize("text", ["tag", "tag:", "milestone:", "sprint:m1"])
 def test_parse_scope_rejects_unknown_or_empty_scopes(text):
     with pytest.raises(SystemExit, match="--scope must be"):
         scope_mod.parse_scope(text)
