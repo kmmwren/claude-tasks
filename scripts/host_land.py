@@ -15,6 +15,8 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 # isort: split
 import contextlib
 import dataclasses
+import datetime
+import enum
 import pathlib
 import re
 import shutil
@@ -23,7 +25,7 @@ import sys
 import tempfile
 from collections.abc import Iterable, Iterator
 
-from _advance import advance_to_origin
+from _rescue import Advance, advance_or_rescue
 from _concurrency import NETWORK_TIMEOUT, repo_lock
 from _credentials import carries_credential
 from _default_branch import default_branch
@@ -179,31 +181,74 @@ def _ship(queue: HostQueue, paths: list[str], message: str) -> None:
             _git(wt, "push", "-q", "--force", "origin", ref, timeout=NETWORK_TIMEOUT)
 
 
-def _on_default_and_behind(queue: HostQueue) -> bool:
-    """True when the host sits on its default branch holding no commit that origin's copy lacks.
+class Standing(enum.Enum):
+    """Where a host checkout stands against origin's already-fetched default branch."""
 
-    A checkout on another branch, or ahead of origin, is somebody's work in progress and is never moved.
-    """
-    default = default_branch(queue.top)
+    LEVEL = "level"  # at or ahead of origin: nothing to take in
+    BEHIND = "behind"  # on the default branch, holding no commit origin lacks
+    OFF_DEFAULT = "off-default"  # somebody's work in progress; never moved
+    DIVERGED = "diverged"  # on the default branch with a commit origin lacks, and origin has moved on
+
+
+def _holds(top: pathlib.Path, ancestor: str, descendant: str) -> bool:
+    """True when `descendant` contains every commit of `ancestor`."""
     try:
-        if _git(queue.top, "symbolic-ref", "--short", "-q", "HEAD").strip() != default:
-            return False
-        _git(queue.top, "merge-base", "--is-ancestor", "HEAD", f"origin/{default}")
+        _git(top, "merge-base", "--is-ancestor", ancestor, descendant)
     except LandError:
-        return False  # detached, or HEAD holds commits origin lacks
+        return False
     return True
 
 
-def _advance_host(queue: HostQueue) -> None:
-    """Bring the host checkout up to origin's default once the wip branch has merged there; never raises."""
-    if not _on_default_and_behind(queue):
-        return
+def host_standing(queue: HostQueue) -> Standing:
+    """The host's place against origin's default; a detached HEAD counts as off the default branch."""
     default = default_branch(queue.top)
-    if not advance_to_origin(queue.top, default):
+    ref = f"origin/{default}"
+    if _holds(queue.top, ref, "HEAD"):
+        return Standing.LEVEL
+    try:
+        on_default = _git(queue.top, "symbolic-ref", "--short", "-q", "HEAD").strip() == default
+    except LandError:
+        return Standing.OFF_DEFAULT
+    if not on_default:
+        return Standing.OFF_DEFAULT
+    return Standing.BEHIND if _holds(queue.top, "HEAD", ref) else Standing.DIVERGED
+
+
+def _today() -> str:
+    return datetime.date.today().isoformat()
+
+
+def _report(result: Advance, default: str) -> None:
+    if result.rescue:
         print(
-            "  (host checkout not advanced: uncommitted edits overlap incoming changes; "
-            f"commit or move them, then run: git reset --keep origin/{default})"
+            f"  (host checkout held {len(result.rescue.paths)} uncommitted edits that blocked the advance; "
+            f"rescued to tag {result.rescue.tag})"
         )
+    if not result.advanced:
+        print(f"  (host checkout not advanced to origin/{default}: {result.detail or 'refused'})")
+
+
+def level_host(queue: HostQueue) -> tuple[Standing, Advance | None]:
+    """Fetch origin's default and, when the host is behind it, advance it, rescuing edits that block the move.
+
+    A LandError means the fetch failed and nothing moved; a refused advance is reported in the Advance.
+    """
+    default = default_branch(queue.top)
+    _git(queue.top, "fetch", "-q", "origin", default, timeout=NETWORK_TIMEOUT)
+    standing = host_standing(queue)
+    if standing is not Standing.BEHIND:
+        return standing, None
+    return standing, advance_or_rescue(queue.top, default, _today())
+
+
+def _advance_host(queue: HostQueue) -> None:
+    """Bring the host checkout up to origin's default once the wip branch has merged there; never raises.
+
+    A checkout on another branch, or ahead of origin, is somebody's work in progress and is never moved.
+    """
+    if host_standing(queue) is Standing.BEHIND:
+        default = default_branch(queue.top)
+        _report(advance_or_rescue(queue.top, default, _today()), default)
 
 
 def _locked(root: pathlib.Path, lock_held: bool) -> contextlib.AbstractContextManager[bool]:

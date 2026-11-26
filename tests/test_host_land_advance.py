@@ -27,6 +27,10 @@ def _host_with_merged_wip(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib
     return repo, queue
 
 
+def _today() -> str:
+    return host_land._today()
+
+
 def _head(repo: pathlib.Path) -> str:
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
@@ -72,16 +76,19 @@ def test_a_host_with_a_local_commit_origin_lacks_keeps_it(tmp_path):
     assert (repo / BRIEF).read_text() == "x"
 
 
-def test_a_refused_advance_still_lands_and_leaves_the_host_as_it_was(tmp_path, capsys):
+def test_an_edit_that_blocks_the_advance_is_rescued_to_a_pushed_tag_and_the_host_advances(
+    tmp_path, capsys
+):
     repo, queue = _host_with_merged_wip(tmp_path)
-    before = _head(repo)
     (queue / "ready" / "x.md").write_text("changed after the merge")
 
     assert host_land.land_host_queue(queue)
 
-    assert _head(repo) == before
-    assert (repo / BRIEF).read_text() == "changed after the merge"
-    assert "host checkout not advanced" in capsys.readouterr().out
+    assert _head(repo) == git(repo, "rev-parse", "origin/main").stdout.strip()
+    assert (repo / BRIEF).read_text() == "x"
+    rescued = git(tmp_path / "remote", "show", "superseded/rescue/clone-" + _today() + ":" + BRIEF).stdout
+    assert rescued == "changed after the merge"
+    assert "rescued to tag superseded/rescue/clone-" in capsys.readouterr().out
 
 
 def test_a_brief_landing_in_done_with_an_open_criterion_ships_from_where_it_came(tmp_path):

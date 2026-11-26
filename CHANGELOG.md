@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **A behind host checkout advances instead of drifting.** `host_land.level_host` brings a repo that
+  hosts a queue level with origin's default branch. Local edits that would block the advance are first
+  committed to a pushed `superseded/rescue/<repo>-<date>` tag, so nothing is lost and the host's
+  pre-push gates, which skip `superseded/*` refs, do not run. A checkout off the default branch, or
+  holding a commit origin lacks, is never moved and is reported by its `Standing`.
 - **A milestone shows its feature's rollout.** `project_facts.py set-rollout --key K --from FILE` records
   each customer's release and whether the feature is on, as change-only `history/rollout/` facts. The
   project roll-up adds a Rollout column (`K on: some n/m, released r/m`) and a `K not on:` detail line
