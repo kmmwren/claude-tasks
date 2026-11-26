@@ -13,6 +13,12 @@
   without loading it. A due brief still waits for its unmet `blocked_by` entries, including `date:` days.
 
 ### Changed
+- **A queue inside another repo lands on that repo's default branch.** `host_land` used to force-push a
+  nested queue's writes to `wip/tasks-<slug>` and nothing merged it, so the host checkout kept them as
+  uncommitted edits, `reset --keep` refused and the checkout fell further behind. It now pushes the commit
+  to `origin/<default>`, rebasing and retrying when origin moved, and parks on the wip branch (saying so)
+  only when the default branch refuses. The advance clears tracked edits and deletions that already match
+  origin, not just untracked copies.
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or
   `$CLAUDE_TASKS_LAUNCHER` to run the judge and the triage calls through a launcher script; with
   neither, both call plain `claude -p`. A named launcher that is missing or not executable prints one

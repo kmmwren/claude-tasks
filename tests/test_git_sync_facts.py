@@ -178,7 +178,7 @@ def test_a_caller_holding_the_lock_still_never_commits_a_credential(tmp_path, ca
     assert "1 held back for looking like a credential" in capsys.readouterr().out
 
 
-def test_a_nested_queue_lands_on_the_wip_branch_of_a_trunk_origin_without_retaking_the_lock(
+def test_a_nested_queue_lands_on_a_trunk_origin_without_retaking_the_lock(
     tmp_path, monkeypatch
 ):
     repo = trunk_repo(tmp_path)
@@ -190,9 +190,9 @@ def test_a_nested_queue_lands_on_the_wip_branch_of_a_trunk_origin_without_retaki
     result = git_sync.sync_commit("x", root=queue, paths=["."], lock_held=True)
 
     assert result is git_sync.SyncResult.HOSTED
-    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project")
-    assert "project/.tasks/x.md" in wip.stdout.split()
-    assert "project/.tasks/x.md" not in committed_files(repo)
+    landed = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", BRANCH)
+    assert "project/.tasks/x.md" in landed.stdout.split()
+    assert git(tmp_path / "remote", "branch", "--list", "wip/*").stdout == ""
 
 
 # --- which repo holds a queue ------------------------------------------------------------

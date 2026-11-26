@@ -1,29 +1,24 @@
-"""A nested queue's host checkout advances after its wip branch merges, only when it is on its default branch.
+"""A nested queue's host checkout advances onto the commit it landed, only when it is on its default branch.
 
-The host keeps the landed briefs untracked, so once the wip branch is merged the next land has to clear
-identical copies before the host can move to origin's default branch.
+The host holds the landed briefs as uncommitted files, so the advance has to clear the copies that already
+match origin before the host can move to origin's default branch.
 """
 
 import pathlib
 
 import host_land
 
-from tests.test_git_sync import _clone_other, git, make_repo
+from tests.test_git_sync import _clone_other, _push_from_other, git, make_repo
+from tests.test_host_land_default import dirty
 
 BRIEF = "project/.tasks/ready/x.md"
 
 
-def _host_with_merged_wip(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """A host whose queue landed x.md on the wip branch, which origin's default branch has since merged."""
+def _host_with_queue(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     repo = make_repo(tmp_path)
     queue = repo / "project" / ".tasks"
     (queue / "ready").mkdir(parents=True)
     (queue / "ready" / "x.md").write_text("x")
-    assert host_land.land_host_queue(queue)
-    other = _clone_other(tmp_path)
-    git(other, "fetch", "-q", "origin", "wip/tasks-project")
-    git(other, "merge", "-q", "--ff-only", "FETCH_HEAD")
-    git(other, "push", "-q", "origin", "main")
     return repo, queue
 
 
@@ -31,23 +26,23 @@ def _head(repo: pathlib.Path) -> str:
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def test_the_host_on_its_default_branch_advances_past_briefs_it_holds_untracked(tmp_path):
-    repo, queue = _host_with_merged_wip(tmp_path)
-    (queue / "ready" / "y.md").write_text("y")
+def _origin(repo: pathlib.Path) -> str:
+    return git(repo, "rev-parse", "origin/main").stdout.strip()
+
+
+def test_the_host_on_its_default_branch_advances_onto_what_it_landed(tmp_path):
+    repo, queue = _host_with_queue(tmp_path)
 
     assert host_land.land_host_queue(queue)
 
-    assert _head(repo) == git(repo, "rev-parse", "origin/main").stdout.strip()
+    assert _head(repo) == _origin(repo)
     assert git(repo, "ls-files", BRIEF).stdout.strip() == BRIEF
     assert (repo / BRIEF).read_text() == "x"
-    untracked = git(repo, "ls-files", "--others", "--exclude-standard", "project/.tasks/ready")
-    assert untracked.stdout.split() == ["project/.tasks/ready/y.md"]
-    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project")
-    assert "project/.tasks/ready/y.md" in wip.stdout.split()
+    assert dirty(repo) == ""
 
 
 def test_a_host_on_another_branch_is_not_moved(tmp_path):
-    repo, queue = _host_with_merged_wip(tmp_path)
+    repo, queue = _host_with_queue(tmp_path)
     git(repo, "checkout", "-q", "-b", "feature")
     before = _head(repo)
 
@@ -60,7 +55,7 @@ def test_a_host_on_another_branch_is_not_moved(tmp_path):
 
 
 def test_a_host_with_a_local_commit_origin_lacks_keeps_it(tmp_path):
-    repo, queue = _host_with_merged_wip(tmp_path)
+    repo, queue = _host_with_queue(tmp_path)
     (repo / "notes.md").write_text("local work")
     git(repo, "add", "notes.md")
     git(repo, "commit", "-qm", "local work")
@@ -73,15 +68,23 @@ def test_a_host_with_a_local_commit_origin_lacks_keeps_it(tmp_path):
 
 
 def test_a_refused_advance_still_lands_and_leaves_the_host_as_it_was(tmp_path, capsys):
-    repo, queue = _host_with_merged_wip(tmp_path)
+    repo, queue = _host_with_queue(tmp_path)
+    (repo / "notes.md").write_text("one")
+    git(repo, "add", "notes.md")
+    git(repo, "commit", "-qm", "notes")
+    git(repo, "push", "-q", "origin", "main")
+    _push_from_other(_clone_other(tmp_path), "notes.md", "theirs")
+    (repo / "notes.md").write_text("mine, not yet committed")
     before = _head(repo)
-    (queue / "ready" / "x.md").write_text("changed after the merge")
 
     assert host_land.land_host_queue(queue)
 
     assert _head(repo) == before
-    assert (repo / BRIEF).read_text() == "changed after the merge"
+    assert (repo / "notes.md").read_text() == "mine, not yet committed"
+    assert (repo / BRIEF).read_text() == "x"
     assert "host checkout not advanced" in capsys.readouterr().out
+    landed = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "main").stdout.split()
+    assert BRIEF in landed
 
 
 def test_a_brief_landing_in_done_with_an_open_criterion_ships_from_where_it_came(tmp_path):
@@ -94,7 +97,5 @@ def test_a_brief_landing_in_done_with_an_open_criterion_ships_from_where_it_came
 
     assert host_land.land_host_queue(queue)
 
-    wip = git(
-        tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project"
-    ).stdout.split()
-    assert "project/.tasks/ready/z.md" in wip and "project/.tasks/done/z.md" not in wip
+    landed = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "main").stdout.split()
+    assert "project/.tasks/ready/z.md" in landed and "project/.tasks/done/z.md" not in landed
