@@ -509,6 +509,34 @@ class Spread(enum.Enum):
     ALL = "all"
 
 
+def _count(table: Mapping[str, Any], key: str) -> int:
+    value = table.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RowError(f"{key} must be a whole number of at least 0")
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class PrCount:
+    """How many of a feature's pull requests have merged, out of those merged or still open."""
+
+    merged: int
+    open: int
+
+    @classmethod
+    def parse(cls, table: Mapping[str, Any]) -> "PrCount | None":
+        """None for a snapshot recorded before merges were counted, so older history still reads."""
+        if "merged_prs" not in table:
+            return None
+        return cls(_count(table, "merged_prs"), _count(table, "open_prs"))
+
+    def text(self) -> str:
+        return f"merged {self.merged}/{self.merged + self.open} PRs"
+
+    def table(self) -> dict[str, Any]:
+        return {"merged_prs": self.merged, "open_prs": self.open}
+
+
 @dataclasses.dataclass(frozen=True)
 class RolloutSnapshot:
     """Every customer's rollout state for one feature key, as recorded on `recorded_on`.
@@ -520,10 +548,16 @@ class RolloutSnapshot:
     recorded_on: dt.date
     customers: tuple[CustomerRollout, ...]
     source: str
+    prs: PrCount | None = None
 
     @classmethod
     def of(
-        cls, key: str, recorded_on: dt.date, customers: Iterable[CustomerRollout], source: str
+        cls,
+        key: str,
+        recorded_on: dt.date,
+        customers: Iterable[CustomerRollout],
+        source: str,
+        prs: PrCount | None = None,
     ) -> "RolloutSnapshot":
         """A snapshot with its customers put in code order; a code listed twice is refused."""
         ordered = tuple(sorted(customers, key=lambda c: c.code))
@@ -532,7 +566,7 @@ class RolloutSnapshot:
         for first, second in zip(ordered, ordered[1:]):
             if first.code == second.code:
                 raise RowError(f"customer code {first.code} is listed twice")
-        return cls(key, recorded_on, ordered, source)
+        return cls(key, recorded_on, ordered, source, prs)
 
     @classmethod
     def parse(cls, table: Any, source: str) -> "RolloutSnapshot":
@@ -546,6 +580,7 @@ class RolloutSnapshot:
             _day(table, "recorded_on"),
             (CustomerRollout.parse(row) for row in raw),
             source,
+            PrCount.parse(table),
         )
 
     @property
@@ -575,21 +610,32 @@ class RolloutSnapshot:
             return Spread.NONE
         return Spread.ALL if self.on_count == self.total else Spread.SOME
 
+    @property
+    def releases(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """Each release that holds the feature, with the codes of the customers running it, in release order."""
+        held: dict[str, list[str]] = {}
+        for c in self.customers:
+            if c.release:
+                held.setdefault(c.release, []).append(c.code)
+        return tuple((release, tuple(codes)) for release, codes in sorted(held.items()))
+
     def counts_text(self) -> str:
-        return f"on: {self.spread.value} {self.on_count}/{self.total}, released {self.released_count}/{self.total}"
+        merged = f"{self.prs.text()}, " if self.prs else ""
+        return f"{merged}on: {self.spread.value} {self.on_count}/{self.total}, released {self.released_count}/{self.total}"
 
     def line(self) -> str:
         return f"{self.key} {self.counts_text()}"
 
     def same_state(self, other: "RolloutSnapshot") -> bool:
         """True when `other` records the same customers in the same state, whatever its date or file."""
-        return (self.key, self.customers) == (other.key, other.customers)
+        return (self.key, self.prs, self.customers) == (other.key, other.prs, other.customers)
 
     def table(self) -> dict[str, Any]:
         """The file body that parses back to this snapshot."""
         return {
             "key": self.key,
             "recorded_on": self.recorded_on,
+            **(self.prs.table() if self.prs else {}),
             "customer": [c.table() for c in self.customers],
         }
 

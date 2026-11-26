@@ -8,6 +8,10 @@
   project roll-up adds a Rollout column (`K on: some n/m, released r/m`) and a `K not on:` detail line
   to a milestone that names the key, and a `rollouts` list in its JSON. A project with no rollout
   history renders exactly as before.
+- **A rollout says how much has merged and which release each customer runs.** The `set-rollout` JSON
+  takes optional `merged_prs` and `open_prs`; the Rollout cell then opens `merged n/m PRs`, and a
+  `K released:` detail line groups customers by release. The JSON gains `releases`, and the PR counts
+  when recorded. Rollout history written without the counts still reads.
 - **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
   trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
   is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a

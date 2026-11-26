@@ -881,7 +881,9 @@ def rollout_table(r: facts.RolloutSnapshot) -> dict[str, Any]:
         "total": r.total,
         "spread": r.spread.value,
         "missing": list(r.missing),
+        "releases": {release: list(codes) for release, codes in r.releases},
         "recorded_on": date_text(r.recorded_on),
+        **(r.prs.table() if r.prs else {}),
     }
 
 
@@ -1316,9 +1318,15 @@ def milestone_details(m: rm.MilestoneSummary) -> tuple[Row, ...]:
         *effort,
         *(row(f"{b.brief} waits on {', '.join(b.waiting_on)}.") for b in m.blockers),
         *(flag_row(env) for env in m.flags),
+        *(released_row(r) for r in m.rollouts if r.releases),
         *(missing_row(r) for r in m.rollouts if r.missing),
         *(row(f"{item.brief}:", show(item.evidence)) for item in m.evidence),
     )
+
+
+def released_row(r: facts.RolloutSnapshot) -> Row:
+    held = "; ".join(f"{release}: {', '.join(codes)}" for release, codes in r.releases)
+    return row(Strong(f"{r.key} released:"), held)
 
 
 def missing_row(r: facts.RolloutSnapshot) -> Row:

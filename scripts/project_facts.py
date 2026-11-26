@@ -50,6 +50,7 @@ from facts import (
     Evidence,
     Flag,
     HealthRow,
+    PrCount,
     RolloutSnapshot,
     RowError,
     facts_path,
@@ -312,7 +313,8 @@ class SetRollout(HistoryCommand):
             "--from",
             dest="source",
             type=_file,
-            help='JSON: {"key": K, "customers": [{"code", "release", "on"}]}',
+            help='JSON: {"key": K, "merged_prs": n, "open_prs": n, "customers": [{"code", "release", "on"}]}; '
+            "the PR counts are optional",
         )
 
     @classmethod
@@ -351,7 +353,11 @@ def _snapshot_from(source: pathlib.Path, key: str, today: dt.date) -> RolloutSna
     if not isinstance(rows, list):
         raise ValidationError(f"--from: {source} needs a customers list")
     try:
-        return RolloutSnapshot.of(key, today, map(CustomerRollout.parse, rows), source.name)
+        prs = PrCount.parse(body)
+    except RowError as e:
+        raise ValidationError(f"--from: {source}: {e}") from e
+    try:
+        return RolloutSnapshot.of(key, today, map(CustomerRollout.parse, rows), source.name, prs)
     except RowError as e:
         raise ValidationError(f"--from: {source}: customers: {e}") from e
 

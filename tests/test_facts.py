@@ -641,6 +641,28 @@ def test_a_rollout_snapshot_writes_a_body_that_parses_back():
     assert facts.RolloutSnapshot.parse(snap.table(), "s") == snap
 
 
+def test_pr_counts_round_trip_and_a_file_without_them_still_reads(queue):
+    customers = (facts.CustomerRollout("acme", "r1", True),)
+    counted = facts.RolloutSnapshot("KEY-12", D(2026, 11, 1), customers, "s", facts.PrCount(3, 1))
+    assert facts.RolloutSnapshot.parse(counted.table(), "s") == counted
+    put(queue, "history/rollout/KEY-12-2026-11-01-aaaaaaaa.toml", rollout())
+    assert facts.load_rollouts(queue)["KEY-12"].prs is None
+
+
+@pytest.mark.parametrize("merged", ["-1", "true", '"3"'])
+def test_a_pr_count_that_is_not_a_whole_number_leaves_the_row_out(queue, capsys, merged):
+    body = rollout().replace("recorded_on", f"merged_prs = {merged}\nopen_prs = 0\nrecorded_on")
+    put(queue, "history/rollout/KEY-12-2026-11-01-aaaaaaaa.toml", body)
+    assert facts.load_rollouts(queue) == {}
+    assert "merged_prs must be a whole number of at least 0" in capsys.readouterr().err
+
+
+def test_releases_group_customers_by_the_release_they_run():
+    customers = tuple(facts.CustomerRollout(*c) for c in THREE + (("hooli", "r1", True),))
+    snap = facts.RolloutSnapshot.of("KEY-12", D(2026, 11, 1), customers, "s")
+    assert snap.releases == (("r1", ("globex", "hooli")), ("r2", ("acme",)))
+
+
 def test_an_absent_rollout_folder_is_no_rollouts_and_no_warning(queue, capsys):
     assert facts.load_rollouts(queue) == {}
     assert warnings(capsys) == []

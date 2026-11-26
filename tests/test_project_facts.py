@@ -553,6 +553,17 @@ def test_set_rollout_adds_a_dated_file_the_loader_reads_back(queue, tmp_path, ca
     assert capsys.readouterr().out.strip() == "recorded"
 
 
+def test_pr_counts_are_recorded_and_a_change_in_them_alone_is_a_new_fact(queue, tmp_path):
+    source = snapshot_file(tmp_path)
+    body = json.loads(source.read_text())
+    for merged in (1, 2):
+        source.write_text(json.dumps({**body, "merged_prs": merged, "open_prs": 1}))
+        assert set_rollout(queue, source) == 0
+
+    assert len(written(queue, "history/rollout")) == 2
+    assert facts.load_rollouts(queue)["KEY-12"].prs == facts.PrCount(2, 1)
+
+
 def test_an_unchanged_snapshot_writes_nothing_and_says_so(queue, tmp_path, capsys):
     source = snapshot_file(tmp_path)
     assert set_rollout(queue, source) == 0

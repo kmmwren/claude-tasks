@@ -831,8 +831,30 @@ def test_the_project_json_lists_each_rollout_on_its_milestone(tmp_path: pathlib.
         "total": 9,
         "spread": "some",
         "missing": ["hooli", "stark", "tyrell", "umbrella", "wayne", "wonka"],
+        "releases": {"r2": sorted(CODES[:5])},
         "recorded_on": "2026-11-10",
     }
+
+
+def test_the_milestone_details_name_each_release_and_the_customers_on_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = rv.render("project", "markdown", delta(tmp_path))
+    assert f"**KEY-12 released:** r2: {', '.join(sorted(CODES[:5]))}" in text
+
+
+def test_a_rollout_with_pr_counts_shows_how_much_has_merged(tmp_path: pathlib.Path) -> None:
+    counted = (
+        f'key = "KEY-12"\nrecorded_on = 2026-11-10\nmerged_prs = 3\nopen_prs = 1\n{ROLLOUT_ROWS}'
+    )
+    files = {**ROLLOUT_FILES, "history/rollout/KEY-12-2026-11-10-aaaaaaaa.toml": counted}
+    report = delta(tmp_path, files)
+    assert "| KEY-12 merged 3/4 PRs, on: some 3/9, released 5/9 |" in rv.render(
+        "project", "markdown", report
+    )
+    project = json.loads(rv.render("project", "json", report))["projects"][0]
+    (milestone,) = (m for stage in ("now", "next", "done") for m in project[stage])
+    assert (milestone["rollouts"][0]["merged_prs"], milestone["rollouts"][0]["open_prs"]) == (3, 1)
 
 
 def test_without_rollout_history_the_table_json_and_details_gain_nothing(
