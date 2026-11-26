@@ -7,6 +7,7 @@ import pytest
 import transition
 from done_guard import DoneBackstop, UntickedCriteriaError
 
+from tests.queue_helpers import make_queue
 from tests.test_git_sync import git, make_repo
 
 OPEN = "- [x] tests green\n- [ ] landed on main"
@@ -68,6 +69,34 @@ def test_superseded_by_refuses_an_uncarried_criterion(queue):
     with pytest.raises(ValueError, match="not carried"):
         transition.move_brief("old-two", "done", queue, superseded_by=["unrelated"])
     assert (queue / "ready" / "old-two.md").exists()
+
+
+def _other_queue(tmp_path, monkeypatch, brief_id: str, criteria: str) -> pathlib.Path:
+    other = make_queue(tmp_path, {brief_id: {"status": "ready"}}, project_name="elsewhere")
+    (other / "ready" / f"{brief_id}.md").write_text(brief(brief_id, criteria))
+    monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(other))
+    return other
+
+
+def test_superseded_by_accepts_a_successor_in_another_queue(queue, tmp_path, monkeypatch):
+    _other_queue(
+        tmp_path, monkeypatch, "far-one", "- [ ] work landed on main through the merge queue"
+    )
+    put(queue, "ready", "old-far", OPEN)
+    transition.move_brief("old-far", "done", queue, superseded_by=["elsewhere:far-one"])
+    text = (queue / "done" / "old-far.md").read_text()
+    assert "superseded: carried to elsewhere:far-one" in text and "- [ ]" not in text
+
+
+@pytest.mark.parametrize("ref", ["nowhere:far-one", "elsewhere:gone"])
+def test_superseded_by_refuses_a_qualified_successor_that_names_nothing(
+    queue, tmp_path, monkeypatch, ref
+):
+    _other_queue(tmp_path, monkeypatch, "far-one", "- [ ] landed on main")
+    src = put(queue, "ready", "old-none", OPEN)
+    with pytest.raises(ValueError, match="must be an existing brief"):
+        transition.move_brief("old-none", "done", queue, superseded_by=[ref])
+    assert src.exists()
 
 
 def test_cli_exposes_settle_with(queue):

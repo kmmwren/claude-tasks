@@ -61,6 +61,7 @@ from deps import (
     probe_gaps,
     queue_name,
     ref_problem,
+    resolve_queue,
     same_queue,
 )
 from deps import (
@@ -368,11 +369,22 @@ def _append_log(text: str, today: str, message: str) -> str:
     return text.rstrip("\n") + "\n\n## Execution log\n\n" + line + "\n"
 
 
+def find_successor(successor: str, root: pathlib.Path) -> pathlib.Path | None:
+    """The brief a `--superseded-by` item names: `<queue>:<id>` in that known queue, else a plain id in `root`."""
+    ref = QueueRef.parse(successor)
+    if ref is None:
+        return find_brief(successor, root)
+    target = resolve_queue(ref.queue, known_roots(root))
+    return None if target is None else find_brief(ref.id, target)
+
+
 def _carry_criteria(brief_id: str, text: str, successor_ids: list[str], root: pathlib.Path) -> str:
     """Tick the open criteria as carried by the successors, or raise naming those they lack."""
-    successors = Successors.resolve(brief_id, successor_ids, lambda sid: find_brief(sid, root))
+    successors = Successors.resolve(brief_id, successor_ids, lambda sid: find_successor(sid, root))
     successors.require_carried(brief_id, unticked_criteria(text))
-    return settle_criteria(text, f"superseded: carried to {', '.join(successors.ids)}")
+    return settle_criteria(
+        text, f"superseded: carried to {', '.join(dict.fromkeys(successor_ids))}"
+    )
 
 
 def _closed_text(
