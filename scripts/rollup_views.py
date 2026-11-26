@@ -43,6 +43,7 @@ NO_NEXT = "no open milestone has a date."
 NO_ASK = "none."
 NO_BRIEFS = "No briefs"
 NO_FLAGS = "None"
+NO_ROLLOUT = "None"
 NO_DATE = "No date"
 NO_BASELINE = "No first date"
 NO_SLIP = "No slip"
@@ -872,6 +873,18 @@ def flags_table(env: rm.EnvironmentFlags) -> dict[str, Any]:
     return {"environment": env.environment, "flags": flags}
 
 
+def rollout_table(r: facts.RolloutSnapshot) -> dict[str, Any]:
+    return {
+        "key": r.key,
+        "on": r.on_count,
+        "released": r.released_count,
+        "total": r.total,
+        "spread": r.spread.value,
+        "missing": list(r.missing),
+        "recorded_on": date_text(r.recorded_on),
+    }
+
+
 def milestone_table(m: rm.MilestoneSummary) -> dict[str, Any]:
     """The keys earlier readers use come first; the rest is additive."""
     return {
@@ -892,6 +905,7 @@ def milestone_table(m: rm.MilestoneSummary) -> dict[str, Any]:
         "blockers": [{"brief": b.brief, "waiting_on": list(b.waiting_on)} for b in m.blockers],
         "flags": [flags_table(f) for f in m.flags],
         "evidence": [evidence_table(e) for e in m.evidence],
+        **({"rollouts": [rollout_table(r) for r in m.rollouts]} if m.rollouts else {}),
         "as_at": m.as_at.table(),
     }
 
@@ -1146,10 +1160,20 @@ def status_parts(m: rm.MilestoneSummary) -> tuple[Inline | str, ...]:
 
 
 MILESTONE_HEADINGS = ("Milestone", "Status", "Due", "Slip", "Briefs", "Evidence", "Flags")
+ROLLOUT_HEADING = "Rollout"
 
 
-def milestone_cells(m: rm.MilestoneSummary) -> tuple[Row, ...]:
-    return (
+def rollout_text(m: rm.MilestoneSummary) -> str:
+    return "; ".join(r.line() for r in m.rollouts) or NO_ROLLOUT
+
+
+def has_rollouts(p: rm.Project) -> bool:
+    return any(m.rollouts for m in p.milestones)
+
+
+def milestone_cells(m: rm.MilestoneSummary, with_rollout: bool = False) -> tuple[Row, ...]:
+    """The Rollout cell is there only for a project that records a rollout, so other tables stay as they were."""
+    cells = (
         row(m.title),
         row(*status_parts(m)),
         row(Day(m.due) if m.due else NO_DATE),
@@ -1158,13 +1182,16 @@ def milestone_cells(m: rm.MilestoneSummary) -> tuple[Row, ...]:
         row(str(len(m.evidence))),
         row(flags_text(m)),
     )
+    return (*cells, row(rollout_text(m))) if with_rollout else cells
 
 
 def milestone_grid(p: rm.Project) -> Block:
     """Layer 2: one row per milestone, so projects can be read down a column."""
     if not p.milestones:
         return paragraph(NO_MILESTONES)
-    return Table(MILESTONE_HEADINGS, tuple(milestone_cells(m) for m in p.milestones))
+    wide = has_rollouts(p)
+    headings = (*MILESTONE_HEADINGS, ROLLOUT_HEADING) if wide else MILESTONE_HEADINGS
+    return Table(headings, tuple(milestone_cells(m, wide) for m in p.milestones))
 
 
 def stage_sections(p: rm.Project) -> tuple[Section, ...]:
@@ -1289,8 +1316,13 @@ def milestone_details(m: rm.MilestoneSummary) -> tuple[Row, ...]:
         *effort,
         *(row(f"{b.brief} waits on {', '.join(b.waiting_on)}.") for b in m.blockers),
         *(flag_row(env) for env in m.flags),
+        *(missing_row(r) for r in m.rollouts if r.missing),
         *(row(f"{item.brief}:", show(item.evidence)) for item in m.evidence),
     )
+
+
+def missing_row(r: facts.RolloutSnapshot) -> Row:
+    return row(Strong(f"{r.key} not on:"), ", ".join(r.missing))
 
 
 def flag_row(env: rm.EnvironmentFlags) -> Row:

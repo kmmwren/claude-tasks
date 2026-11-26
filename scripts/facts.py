@@ -6,12 +6,14 @@ Every fact is a small file that is only ever added, so two people writing at onc
   history/health/<YYYY-MM-DD>-<8 hex>.toml        colour, reason, set_by, set_on
   history/due/<milestone>-<YYYY-MM-DD>-<8 hex>.toml   milestone, due, set_on, set_by, reason
   history/ci/<YYYY-MM-DD>-<8 hex>.toml            state, link, set_on
+  history/rollout/<KEY>-<YYYY-MM-DD>-<8 hex>.toml   key, recorded_on, [[customer]] code, release, on
   facts/<brief-id>.toml                           [[flag]], [[evidence]], shipped, shipped_on, release
 
 `project.toml` keeps the baseline: `[[milestones]].due` is the first date promised, and its
 `[health]` table is read as the oldest health row. It may also name an `initiative`, a `[links]`
-table of https URLs and `[[releases]]` rows (id, date). The current health, the current due date and the
-slip are derived here on every read and never stored beside their own history.
+table of https URLs and `[[releases]]` rows (id, date). The current health, the current due date, the
+slip and a feature's rollout counts are derived here on every read and never stored beside their own
+history.
 
 A missing file or key is "not recorded", never an error; a row that cannot be read is skipped with a
 warning on stderr that names its file.
@@ -22,9 +24,10 @@ import _compat  # noqa: F401  - version guard; must run before the imports and a
 # isort: split
 import dataclasses
 import datetime as dt
+import enum
 import pathlib
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, TypeVar
 
 from _dates import parse_date
@@ -34,6 +37,7 @@ PROJECT_FILE = "project.toml"
 HEALTH_DIR = pathlib.PurePosixPath("history/health")
 DUE_DIR = pathlib.PurePosixPath("history/due")
 CI_DIR = pathlib.PurePosixPath("history/ci")
+ROLLOUT_DIR = pathlib.PurePosixPath("history/rollout")
 FACTS_DIR = pathlib.PurePosixPath("facts")
 
 COLOURS = ("green", "amber", "red")
@@ -458,6 +462,153 @@ def current_ci(queue: pathlib.Path) -> CiRow | None:
     """The newest CI reading, None when none is recorded."""
     rows = load_ci(queue)
     return rows[-1] if rows else None
+
+
+# --- feature rollout ---------------------------------------------------------------------
+
+
+def _flag(table: Mapping[str, Any], key: str) -> bool:
+    value = table.get(key)
+    if not isinstance(value, bool):
+        raise RowError(f"{key} must be true or false")
+    return value
+
+
+def _release(table: Mapping[str, Any]) -> str:
+    """The release a customer runs; empty when no released version holds the feature."""
+    value = table.get("release", "")
+    if not isinstance(value, str):
+        raise RowError("release must be text")
+    return value.strip()
+
+
+@dataclasses.dataclass(frozen=True)
+class CustomerRollout:
+    """One customer's state for a feature: the release that holds it, and whether it is switched on."""
+
+    code: str
+    release: str
+    on: bool
+
+    @classmethod
+    def parse(cls, table: Any) -> "CustomerRollout":
+        if not isinstance(table, Mapping):
+            raise RowError("not a table")
+        return cls(_text(table, "code"), _release(table), _flag(table, "on"))
+
+    def table(self) -> dict[str, Any]:
+        """The `[[customer]]` row that parses back to this customer."""
+        return {"code": self.code, "release": self.release, "on": self.on}
+
+
+class Spread(enum.Enum):
+    """How far a feature is switched on across the customers recorded for it."""
+
+    NONE = "none"
+    SOME = "some"
+    ALL = "all"
+
+
+@dataclasses.dataclass(frozen=True)
+class RolloutSnapshot:
+    """Every customer's rollout state for one feature key, as recorded on `recorded_on`.
+
+    `customers` is in code order and holds each code once, so two snapshots of the same state are equal.
+    """
+
+    key: str
+    recorded_on: dt.date
+    customers: tuple[CustomerRollout, ...]
+    source: str
+
+    @classmethod
+    def of(
+        cls, key: str, recorded_on: dt.date, customers: Iterable[CustomerRollout], source: str
+    ) -> "RolloutSnapshot":
+        """A snapshot with its customers put in code order; a code listed twice is refused."""
+        ordered = tuple(sorted(customers, key=lambda c: c.code))
+        if not ordered:
+            raise RowError("customer must list at least one customer")
+        for first, second in zip(ordered, ordered[1:]):
+            if first.code == second.code:
+                raise RowError(f"customer code {first.code} is listed twice")
+        return cls(key, recorded_on, ordered, source)
+
+    @classmethod
+    def parse(cls, table: Any, source: str) -> "RolloutSnapshot":
+        if not isinstance(table, Mapping):
+            raise RowError("not a table")
+        raw = table.get("customer")
+        if not isinstance(raw, list):
+            raise RowError("customer must be [[customer]] tables")
+        return cls.of(
+            _text(table, "key"),
+            _day(table, "recorded_on"),
+            (CustomerRollout.parse(row) for row in raw),
+            source,
+        )
+
+    @property
+    def order(self) -> tuple[dt.date, str]:
+        return (self.recorded_on, self.source)
+
+    @property
+    def total(self) -> int:
+        return len(self.customers)
+
+    @property
+    def on_count(self) -> int:
+        return sum(c.on for c in self.customers)
+
+    @property
+    def released_count(self) -> int:
+        return sum(bool(c.release) for c in self.customers)
+
+    @property
+    def missing(self) -> tuple[str, ...]:
+        """The codes of the customers that do not have the feature on."""
+        return tuple(c.code for c in self.customers if not c.on)
+
+    @property
+    def spread(self) -> Spread:
+        if self.on_count == 0:
+            return Spread.NONE
+        return Spread.ALL if self.on_count == self.total else Spread.SOME
+
+    def counts_text(self) -> str:
+        return f"on: {self.spread.value} {self.on_count}/{self.total}, released {self.released_count}/{self.total}"
+
+    def line(self) -> str:
+        return f"{self.key} {self.counts_text()}"
+
+    def same_state(self, other: "RolloutSnapshot") -> bool:
+        """True when `other` records the same customers in the same state, whatever its date or file."""
+        return (self.key, self.customers) == (other.key, other.customers)
+
+    def table(self) -> dict[str, Any]:
+        """The file body that parses back to this snapshot."""
+        return {
+            "key": self.key,
+            "recorded_on": self.recorded_on,
+            "customer": [c.table() for c in self.customers],
+        }
+
+
+def load_rollouts(queue: pathlib.Path) -> dict[str, RolloutSnapshot]:
+    """The newest snapshot of each feature key, ordered by date then file name, keyed in key order."""
+    newest: dict[str, RolloutSnapshot] = {}
+    for path in _history_files(queue, ROLLOUT_DIR):
+        table = _read(path)
+        if table is None:
+            continue
+        try:
+            snap = RolloutSnapshot.parse(table, path.name)
+        except RowError as e:
+            warn(f"{path}: rollout: {e}; that row is left out")
+            continue
+        if snap.key not in newest or snap.order > newest[snap.key].order:
+            newest[snap.key] = snap
+    return dict(sorted(newest.items()))
 
 
 # --- project meta ------------------------------------------------------------------------

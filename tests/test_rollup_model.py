@@ -764,3 +764,101 @@ def test_prioritise_ranks_an_extracted_snapshot_with_no_git_and_no_scripts(world
     assert not (root / ".git").exists() and not (root / "scripts").exists()
     ranked = prioritise.rank(root, today=dt.date(2026, 11, 19))
     assert sorted(b["id"] for b in ranked) == ["b4", "b5"]
+
+
+# --- feature rollout ------------------------------------------------------------------------
+
+JIRA = """
+[[jira]]
+key = "KEY-12"
+title = "Ship the feature"
+url = "https://example.test/KEY-12"
+
+[[jira]]
+key = "KEY-7"
+title = "Second feature"
+url = "https://example.test/KEY-7"
+
+[[jira]]
+key = "KEY-30"
+title = "Never named by a milestone"
+url = "https://example.test/KEY-30"
+"""
+ROLLOUT_MILESTONES = (
+    '[[milestones]]\nid = "m1"\ntitle = "Roll out KEY-12 to customers"\n\n'
+    '[[milestones]]\nid = "m2"\ntitle = "Second"\n\n'
+    '[[milestones]]\nid = "m3"\ntitle = "Third names KEY-99, which has no jira row"\n'
+)
+
+
+def rollout_text(key: str, customers: str, recorded_on: str = "2026-11-10") -> str:
+    rows = "".join(
+        f'\n[[customer]]\ncode = "{code}"\nrelease = "{release}"\non = {on}\n'
+        for code, release, on in (c.split(":") for c in customers.split())
+    )
+    return f'key = "{key}"\nrecorded_on = {recorded_on}\n{rows}'
+
+
+ROLLOUT_FILES = {
+    "history/rollout/KEY-12-2026-11-10-aaaaaaaa.toml": rollout_text(
+        "KEY-12", "acme:r2:true globex:r2:true initech::false hooli:r1:false"
+    ),
+    "history/rollout/KEY-12-2026-11-01-bbbbbbbb.toml": rollout_text(
+        "KEY-12", "acme::false", "2026-11-01"
+    ),
+    "history/rollout/KEY-7-2026-11-10-cccccccc.toml": rollout_text("KEY-7", "acme:r1:true"),
+    "history/rollout/KEY-30-2026-11-10-dddddddd.toml": rollout_text("KEY-30", "acme:r1:true"),
+    "history/rollout/KEY-99-2026-11-10-eeeeeeee.toml": rollout_text("KEY-99", "acme:r1:true"),
+}
+ROLLOUT_BRIEFS = (
+    BriefSpec("key-7", "ready", milestone="m2", ticked=0, unticked=1),
+    BriefSpec("b2", "ready", milestone="m3", ticked=0, unticked=1),
+)
+
+
+def rollout_project(tmp_path: pathlib.Path, files: Mapping[str, str]) -> rm.Project:
+    project = project_toml(tail=ROLLOUT_MILESTONES + JIRA)
+    return built(tmp_path, QueueSpec(project, ROLLOUT_BRIEFS, files))
+
+
+def test_a_milestone_carries_the_newest_rollout_of_each_key_it_names(
+    tmp_path: pathlib.Path,
+) -> None:
+    project = rollout_project(tmp_path, ROLLOUT_FILES)
+    (r,) = project.milestones[0].rollouts
+    assert (r.key, r.on_count, r.released_count, r.total) == ("KEY-12", 2, 3, 4)
+    assert r.missing == ("hooli", "initech")
+    assert r.spread is rm.facts.Spread.SOME
+
+
+def test_a_key_in_a_brief_title_matches_its_milestone(tmp_path: pathlib.Path) -> None:
+    project = rollout_project(tmp_path, ROLLOUT_FILES)
+    assert [r.key for r in project.milestones[1].rollouts] == ["KEY-7"]
+
+
+def test_a_key_no_milestone_names_or_with_no_jira_row_is_not_shown(tmp_path: pathlib.Path) -> None:
+    project = rollout_project(tmp_path, ROLLOUT_FILES)
+    shown = [r.key for m in project.milestones for r in m.rollouts]
+    assert sorted(shown) == ["KEY-12", "KEY-7"]
+    assert project.milestones[2].rollouts == ()
+
+
+def test_a_named_key_with_no_recorded_rollout_shows_nothing(tmp_path: pathlib.Path) -> None:
+    only_seven = {k: v for k, v in ROLLOUT_FILES.items() if "KEY-7" in k}
+    project = rollout_project(tmp_path, only_seven)
+    assert [[r.key for r in m.rollouts] for m in project.milestones] == [[], ["KEY-7"], []]
+
+
+def test_with_no_rollout_history_no_milestone_has_a_rollout(tmp_path: pathlib.Path) -> None:
+    project = rollout_project(tmp_path, {})
+    assert all(m.rollouts == () for m in project.milestones)
+
+
+def test_the_rollout_history_is_read_once_per_queue(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[pathlib.Path] = []
+    real = rm.facts.load_rollouts
+    monkeypatch.setattr(rm.facts, "load_rollouts", lambda q: calls.append(q) or real(q))
+    rollout_project(tmp_path, ROLLOUT_FILES)
+    assert len(calls) == 1

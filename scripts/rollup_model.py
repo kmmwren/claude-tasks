@@ -157,6 +157,7 @@ class MilestoneSummary:
     blockers: tuple[Blocker, ...]
     flags: tuple[EnvironmentFlags, ...]
     evidence: tuple[BriefEvidence, ...]
+    rollouts: tuple[facts.RolloutSnapshot, ...]  # the newest recorded rollout of each key it names
     as_at: AsAt
 
     @property
@@ -368,6 +369,7 @@ class QueueRead:
     schedules: Mapping[str, facts.Schedule]
     ci: facts.CiRow | None
     meta: facts.ProjectMeta
+    rollouts: Mapping[str, facts.RolloutSnapshot]
 
     @classmethod
     def load(cls, label: str, snapshot: QueueSnapshot, now: dt.datetime) -> "QueueRead":
@@ -387,6 +389,7 @@ class QueueRead:
             facts.load_schedules(queue),
             facts.current_ci(queue),
             facts.load_project_meta(queue),
+            facts.load_rollouts(queue),
         )
 
     @property
@@ -395,6 +398,11 @@ class QueueRead:
 
     def facts_of(self, brief: str) -> facts.BriefFacts:
         return self.recorded.get(brief, facts.BriefFacts(brief))
+
+    def rollouts_of(self, row: dict[str, Any]) -> tuple[facts.RolloutSnapshot, ...]:
+        """The rollout of each `[[jira]]` key the milestone row names, for those with one recorded."""
+        keys = (j["key"] for j in pv.matched_jira(row, self.briefs, self.cfg.get("jira", [])))
+        return tuple(self.rollouts[k] for k in keys if k in self.rollouts)
 
 
 def _milestone(
@@ -425,6 +433,7 @@ def _milestone(
         tuple(Blocker(b.id, b.blockers) for b in mine if b.blockers),
         _flags(read, [b.id for b in mine]),
         tuple(BriefEvidence(i, e) for b in mine for i in [b.id] for e in read.facts_of(i).evidence),
+        read.rollouts_of(row),
         read.as_at,
     )
 

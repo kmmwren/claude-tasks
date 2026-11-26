@@ -1,6 +1,7 @@
 """project_facts.py: every subcommand writes what facts.py reads back, history is only ever added to."""
 
 import datetime as dt
+import json
 import re
 
 import facts
@@ -377,7 +378,7 @@ def test_help_exits_zero():
 
 def test_every_subcommand_has_its_own_name():
     names = [c.name for c in project_facts.COMMANDS]
-    assert len(set(names)) == len(names) == 7
+    assert len(set(names)) == len(names) == 8
 
 
 # --- lock and commit -------------------------------------------------------------------------
@@ -510,3 +511,139 @@ def test_each_commit_says_what_it_recorded(tmp_path, monkeypatch, args, subject)
     assert cli(repo, *args, *extra) == 0
 
     assert subjects == [subject]
+
+
+# --- rollout ---------------------------------------------------------------------------------
+
+
+ROLLOUT_NAME = re.compile(r"KEY-12-2026-11-19-[0-9a-f]{8}\.toml")
+
+
+def snapshot_file(tmp_path, customers=None, key="KEY-12"):
+    customers = customers or [
+        {"code": "acme", "release": "r2", "on": True},
+        {"code": "globex", "release": "", "on": False},
+    ]
+    path = tmp_path / "snapshot.json"
+    path.write_text(json.dumps({"key": key, "customers": customers}))
+    return path
+
+
+def set_rollout(queue, path):
+    return cli(queue, "set-rollout", "--key", "KEY-12", "--from", str(path))
+
+
+def test_set_rollout_adds_a_dated_file_the_loader_reads_back(queue, tmp_path, capsys):
+    assert set_rollout(queue, snapshot_file(tmp_path)) == 0
+
+    (path,) = written(queue, "history/rollout")
+    assert ROLLOUT_NAME.fullmatch(path.name)
+    snap = facts.load_rollouts(queue)["KEY-12"]
+    assert snap.recorded_on == TODAY
+    assert [(c.code, c.release, c.on) for c in snap.customers] == [
+        ("acme", "r2", True),
+        ("globex", "", False),
+    ]
+    assert capsys.readouterr().out.strip() == "recorded"
+
+
+def test_an_unchanged_snapshot_writes_nothing_and_says_so(queue, tmp_path, capsys):
+    source = snapshot_file(tmp_path)
+    assert set_rollout(queue, source) == 0
+    capsys.readouterr()
+
+    assert set_rollout(queue, source) == 0
+
+    assert len(written(queue, "history/rollout")) == 1
+    assert capsys.readouterr().out.strip() == "unchanged: KEY-12 rollout"
+
+
+def test_the_same_customers_in_another_order_are_unchanged(queue, tmp_path):
+    assert set_rollout(queue, snapshot_file(tmp_path)) == 0
+    flipped = [
+        {"code": "globex", "release": "", "on": False},
+        {"code": "acme", "release": "r2", "on": True},
+    ]
+
+    assert set_rollout(queue, snapshot_file(tmp_path, flipped)) == 0
+
+    assert len(written(queue, "history/rollout")) == 1
+
+
+def test_a_changed_snapshot_adds_a_second_file_and_becomes_the_newest(queue, tmp_path):
+    assert set_rollout(queue, snapshot_file(tmp_path)) == 0
+    now_on = [
+        {"code": "acme", "release": "r2", "on": True},
+        {"code": "globex", "release": "r3", "on": True},
+    ]
+
+    assert set_rollout(queue, snapshot_file(tmp_path, now_on)) == 0
+
+    assert len(written(queue, "history/rollout")) == 2
+    assert facts.load_rollouts(queue)["KEY-12"].on_count == 2
+
+
+def test_a_snapshot_for_another_key_is_compared_only_with_its_own_history(queue, tmp_path):
+    assert set_rollout(queue, snapshot_file(tmp_path)) == 0
+
+    assert (
+        cli(
+            queue,
+            "set-rollout",
+            "--key",
+            "KEY-9",
+            "--from",
+            str(snapshot_file(tmp_path, key="KEY-9")),
+        )
+        == 0
+    )
+
+    assert len(written(queue, "history/rollout")) == 2
+
+
+@pytest.mark.parametrize(
+    ("body", "complaint"),
+    [
+        ("not json", "not valid JSON"),
+        ('{"key": "KEY-12"}', "customers"),
+        ('{"key": "KEY-12", "customers": []}', "customers"),
+        ('{"key": "KEY-9", "customers": [{"code": "a", "release": "", "on": true}]}', "KEY-9"),
+        ('{"key": "KEY-12", "customers": [{"code": "a", "release": "", "on": "yes"}]}', "on must be"),
+        ('{"key": "KEY-12", "customers": [{"code": "", "release": "", "on": true}]}', "code"),
+        ('[1]', "object"),
+    ],
+)  # fmt: skip
+def test_a_bad_snapshot_file_exits_1_naming_it_and_writes_nothing(
+    queue, tmp_path, capsys, body, complaint
+):
+    path = tmp_path / "snapshot.json"
+    path.write_text(body)
+
+    assert set_rollout(queue, path) == 1
+
+    err = capsys.readouterr().err.strip()
+    assert err.count("\n") == 0 and complaint in err
+    assert written(queue, "history/rollout") == []
+
+
+def test_a_missing_snapshot_file_and_a_bad_key_are_argument_errors(queue, tmp_path, capsys):
+    assert set_rollout(queue, tmp_path / "absent.json") == 1
+    assert "--from" in capsys.readouterr().err
+    assert cli(queue, "set-rollout", "--key", "../x", "--from", str(snapshot_file(tmp_path))) == 1
+    assert "--key" in capsys.readouterr().err
+
+
+def test_set_rollout_commits_the_new_file_and_names_the_key(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    seen = {}
+    monkeypatch.setattr(
+        project_facts,
+        "sync_commit",
+        lambda message, root, **k: seen.update(message=message, paths=k["paths"]),
+    )
+
+    assert set_rollout(repo, snapshot_file(tmp_path)) == 0
+
+    assert seen["message"] == "facts: KEY-12 rollout"
+    (path,) = seen["paths"]
+    assert ROLLOUT_NAME.fullmatch(path.removeprefix("history/rollout/"))

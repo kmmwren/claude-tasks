@@ -76,3 +76,36 @@ def test_decided_full_text_carries_the_reason_after_the_choice():
     assert "<summary>Full text</summary><p>A</p><p>it is fast</p></details>" in pv._decision(
         d, {"ask": {}}
     )
+
+
+JIRA = [{"key": k, "title": k} for k in ("KEY-1", "KEY-2", "KEY-3", "KEY-4")]
+BRIEFS = [
+    {"id": "b1", "title": "Build KEY-2"},
+    {"id": "b2", "title": "Not in the milestone, mentions KEY-4"},
+]
+
+
+def milestone(title="Plain words", briefs=("b1",), criteria=()):
+    return {
+        "reader_title": title,
+        "briefs": list(briefs),
+        "criteria": [{"text": c} for c in criteria],
+    }
+
+
+def test_a_milestone_matches_jira_keys_named_in_its_title_brief_titles_and_criteria():
+    ms = milestone("Ship KEY-3", criteria=["Customers see KEY-1"])
+    assert [j["key"] for j in pv.matched_jira(ms, BRIEFS, JIRA)] == ["KEY-3", "KEY-2", "KEY-1"]
+
+
+def test_a_key_repeated_matches_once_and_a_key_without_a_jira_row_matches_nothing():
+    ms = milestone("KEY-3 and KEY-3 again, KEY-77", criteria=["KEY-3"])
+    assert [j["key"] for j in pv.matched_jira(ms, BRIEFS, JIRA)] == ["KEY-3", "KEY-2"]
+
+
+def test_a_brief_the_milestone_does_not_hold_adds_no_key():
+    assert pv.matched_jira(milestone(briefs=()), BRIEFS, JIRA) == []
+
+
+def test_a_jira_row_with_no_key_is_ignored():
+    assert pv.matched_jira(milestone("KEY-1"), BRIEFS, [{"title": "no key"}, JIRA[0]]) == [JIRA[0]]

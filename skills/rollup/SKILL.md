@@ -26,7 +26,9 @@ with one "Source: <label> @ <commit>, <date>" line, and a gap is written out ("N
 Only these fields appear: each project's slug, title, initiative, source label, commit and `outcome`;
 the owner's health colour, reason and date (never the owner's name); the project's `ask` and its
 deadline; the text of the automatic checks; milestone ids, titles, due dates, slip, progress, counts,
-evidence and feature-flag state per environment; brief ids, titles, due dates, estimates and the
+evidence and feature-flag state per environment; for each feature key (an issue key) a milestone names, how many
+customers have the feature on, how many run a release that holds it, and the codes of the customers
+still missing it; brief ids, titles, due dates, estimates and the
 ids or names of what each brief waits on; shipped brief ids, titles, dates and releases; the
 project's links and latest build; and the "Not shown" and "Source warnings" lines. Brief bodies
 never appear, so check that the `outcome`, the health reason, the ask, the automatic-check text and

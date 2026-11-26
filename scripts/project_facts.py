@@ -19,9 +19,11 @@ import abc
 import argparse
 import dataclasses
 import datetime as dt
+import json
 import pathlib
 import re
 import sys
+import time
 import tomllib
 import uuid
 from collections.abc import Mapping, Sequence
@@ -42,12 +44,17 @@ from facts import (
     HEALTH_DIR,
     HTTPS,
     PROJECT_FILE,
+    ROLLOUT_DIR,
     CiRow,
+    CustomerRollout,
     DueRow,
     Evidence,
     Flag,
     HealthRow,
+    RolloutSnapshot,
+    RowError,
     facts_path,
+    load_rollouts,
 )
 from git_sync import SyncResult, host_repo_name, sync_commit
 from host_land import HostQueue
@@ -118,6 +125,13 @@ def _directory(value: str) -> pathlib.Path:
     path = pathlib.Path(value).expanduser()
     if not path.is_dir():
         raise argparse.ArgumentTypeError("must be an existing directory")
+    return path
+
+
+def _file(value: str) -> pathlib.Path:
+    path = pathlib.Path(value).expanduser()
+    if not path.is_file():
+        raise argparse.ArgumentTypeError("must be an existing file")
     return path
 
 
@@ -283,6 +297,75 @@ class SetCi(HistoryCommand):
 
     def table(self) -> dict[str, Any]:
         return self.row.table()
+
+
+@dataclasses.dataclass(frozen=True)
+class SetRollout(HistoryCommand):
+    """One feature's customers and their state; written only when it differs from the newest recorded."""
+
+    snapshot: RolloutSnapshot
+
+    name = "set-rollout"
+    help = "record which customers have a feature, from a JSON file"
+    folder = ROLLOUT_DIR
+
+    @classmethod
+    def configure(cls, parser: argparse.ArgumentParser) -> None:
+        _require(parser, "--key", type=_id)
+        _require(
+            parser,
+            "--from",
+            dest="source",
+            type=_file,
+            help='JSON: {"key": K, "customers": [{"code", "release", "on"}]}',
+        )
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace, today: dt.date) -> "SetRollout":
+        return cls(_snapshot_from(args.source, args.key, today))
+
+    @property
+    def message(self) -> str:
+        return f"{self.snapshot.key} rollout"
+
+    @property
+    def stem(self) -> str:
+        return f"{self.snapshot.key}-{self.snapshot.recorded_on}"
+
+    def table(self) -> dict[str, Any]:
+        return self.snapshot.table()
+
+    def _fresh_path(self, folder: pathlib.Path) -> pathlib.Path:
+        """Name the file by the clock, so a second change on the same day sorts as the newest."""
+        stamp = int(time.time())
+        while (path := folder / f"{self.stem}-{stamp:08x}.toml").exists():
+            stamp += 1
+        return path
+
+    def write(self, root: pathlib.Path) -> tuple[str, ...]:
+        newest = load_rollouts(root).get(self.snapshot.key)
+        if newest is not None and newest.same_state(self.snapshot):
+            return ()
+        return super().write(root)
+
+
+def _snapshot_from(source: pathlib.Path, key: str, today: dt.date) -> RolloutSnapshot:
+    """The snapshot a JSON file describes for `key`, dated `today`; a ValidationError names what is wrong."""
+    try:
+        body = json.loads(source.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValidationError(f"--from: {source} is not valid JSON ({e})") from e
+    if not isinstance(body, dict):
+        raise ValidationError(f"--from: {source} must hold a JSON object")
+    if body.get("key") != key:
+        raise ValidationError(f"--from: {source} names key {body.get('key')!r}, not {key!r}")
+    rows = body.get("customers")
+    if not isinstance(rows, list):
+        raise ValidationError(f"--from: {source} needs a customers list")
+    try:
+        return RolloutSnapshot.of(key, today, map(CustomerRollout.parse, rows), source.name)
+    except RowError as e:
+        raise ValidationError(f"--from: {source}: customers: {e}") from e
 
 
 @dataclasses.dataclass(frozen=True)
@@ -522,6 +605,7 @@ COMMANDS: tuple[type[Command], ...] = (
     AddEvidence,
     SetShipped,
     SetCi,
+    SetRollout,
 )
 
 

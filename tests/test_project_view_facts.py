@@ -282,3 +282,59 @@ def test_a_milestone_with_no_criteria_shows_no_checklist(tmp_path):
 def test_a_card_for_a_brief_with_no_goal_or_criteria_has_no_body(tmp_path):
     brief = {**build_board.load_briefs(make_queue(tmp_path))[0], "goal": "", "crit": ""}
     assert 'class="body"' not in build_board.card_html(brief)
+
+
+# --- feature rollout ---------------------------------------------------------------------
+
+
+def name_a_key_in_the_first_milestone(q: pathlib.Path) -> None:
+    edit_project(q, 'plain = "The first thing works"', 'plain = "The first thing works KEY-12"')
+    with (q / "project.toml").open("a") as f:
+        f.write(
+            '\n[[jira]]\nkey = "KEY-12"\ntitle = "The feature"\nurl = "https://example.test/KEY-12"\n'
+        )
+
+
+def record_rollout(
+    q: pathlib.Path, key: str = "KEY-12", on: tuple[bool, ...] = (True, False)
+) -> None:
+    folder = q / "history" / "rollout"
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = "".join(
+        f'\n[[customer]]\ncode = "c{n}"\nrelease = "{"r1" if n < 2 else ""}"\non = {str(state).lower()}\n'
+        for n, state in enumerate(on)
+    )
+    (folder / f"{key}-2026-10-20-aaaaaaaa.toml").write_text(
+        f'key = "{key}"\nrecorded_on = 2026-10-20\n{rows}'
+    )
+
+
+def test_a_milestone_ref_to_a_jira_key_shows_its_rollout_counts_and_missing_customers(tmp_path):
+    q = make_queue(tmp_path)
+    name_a_key_in_the_first_milestone(q)
+    record_rollout(q, on=(True, False, False))
+
+    html = pv.render_fragment(model(q))
+
+    assert "on: some 1/3, released 2/3" in html
+    assert "not on: c1, c2" in html
+
+
+def test_the_model_lists_the_rollout_of_each_jira_key(tmp_path):
+    q = make_queue(tmp_path)
+    name_a_key_in_the_first_milestone(q)
+    record_rollout(q)
+    record_rollout(q, "KEY-77")
+
+    assert list(model(q)["feature_rollouts"]) == ["KEY-12"]
+
+
+def test_a_jira_key_with_no_rollout_history_renders_exactly_as_before(tmp_path):
+    q = make_queue(tmp_path)
+    name_a_key_in_the_first_milestone(q)
+    before = pv.render_fragment(model(q))
+
+    record_rollout(q, "KEY-77")
+
+    assert pv.render_fragment(model(q)) == before
+    assert "released" not in before and model(q)["feature_rollouts"] == {}

@@ -712,6 +712,7 @@ def build_model(
         "counts": {d: sum(1 for b in briefs if b["dir"] == d) for d in build_board.DIRS},
         "totals": totals,
         "jira": cfg.get("jira", []),
+        "feature_rollouts": _feature_rollouts(cfg, facts.load_rollouts(queue)),
         "sessions": sessions,
         "links": _link_rows(cfg, meta),
         "initiative": meta.initiative or "",
@@ -743,6 +744,28 @@ TABS = (
 _ID_NOTE = re.compile(r"\s*\((?:[A-Z]{2,}-\d+(?:[,;]\s*[A-Z]{2,}-\d+)*)\)")
 _TRAIL_PAREN = re.compile(r"\s*\([^()]*\)\s*$")
 _JIRA_KEY = re.compile(r"\b[A-Z]{2,}-\d+\b")
+
+
+def matched_jira(
+    ms: dict[str, Any], briefs: Iterable[dict[str, Any]], jira: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The `[[jira]]` rows whose key the milestone names in its title, its briefs' titles or its criteria."""
+    by_key = {j["key"]: j for j in jira if isinstance(j.get("key"), str)}
+    titles = [b["title"] for b in briefs if b["id"] in ms["briefs"]]
+    text = " ".join([ms["reader_title"], *titles, *[c["text"] for c in ms.get("criteria", [])]])
+    return [by_key[k] for k in dict.fromkeys(_JIRA_KEY.findall(text)) if k in by_key]
+
+
+def _feature_rollouts(
+    cfg: dict[str, Any], rollouts: dict[str, facts.RolloutSnapshot]
+) -> dict[str, dict[str, Any]]:
+    """The recorded rollout of each `[[jira]]` key that has one, as the page shows it."""
+    keys = [j["key"] for j in cfg.get("jira", []) if isinstance(j.get("key"), str)]
+    return {
+        k: {"counts": rollouts[k].counts_text(), "missing": list(rollouts[k].missing)}
+        for k in keys
+        if k in rollouts
+    }
 
 
 def _plain(text: str) -> str:
@@ -968,11 +991,11 @@ def _cards(m: dict[str, Any]) -> str:
     return f'<div class="cards{" one" if not opens else ""}">{cards}</div>'
 
 
-def _jira_for(ms: dict[str, Any], m: dict[str, Any]) -> list[dict[str, Any]]:
-    by_key = {j["key"]: j for j in m["jira"]}
-    titles = [b["title"] for b in m["briefs"] if b["id"] in ms["briefs"]]
-    text = " ".join([ms["reader_title"], *titles, *[c["text"] for c in ms.get("criteria", [])]])
-    return [by_key[k] for k in dict.fromkeys(_JIRA_KEY.findall(text)) if k in by_key]
+def _rollout_note(rollout: dict[str, Any] | None) -> str:
+    if rollout is None:
+        return ""
+    missing = f"; not on: {', '.join(rollout['missing'])}" if rollout["missing"] else ""
+    return f' <span class="sub">{e(rollout["counts"] + missing)}</span>'
 
 
 def _pr_state_text(p: dict[str, Any]) -> str:
@@ -1007,8 +1030,9 @@ def _milestone(ms: dict[str, Any], w: dict[str, Any], m: dict[str, Any]) -> str:
             for p in w.get("prs", [])
         ]
     refs += [
-        f'<li>{_link(j["key"], j.get("url", ""))} <span class="sub">{e(j.get("title", ""))}</span></li>'
-        for j in _jira_for(ms, m)
+        f'<li>{_link(j["key"], j.get("url", ""))} <span class="sub">{e(j.get("title", ""))}</span>'
+        f"{_rollout_note(m.get('feature_rollouts', {}).get(j['key']))}</li>"
+        for j in matched_jira(ms, m["briefs"], m["jira"])
     ]
     if refs:
         body += f'<ul class="refs">{"".join(refs)}</ul>'

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **A milestone shows its feature's rollout.** `project_facts.py set-rollout --key K --from FILE` records
+  each customer's release and whether the feature is on, as change-only `history/rollout/` facts. The
+  project roll-up adds a Rollout column (`K on: some n/m, released r/m`) and a `K not on:` detail line
+  to a milestone that names the key, and a `rollouts` list in its JSON. A project with no rollout
+  history renders exactly as before.
 - **`maintain.py` wakes due briefs without a person.** `maintain --tier laptop|cloud` is one
   trigger-agnostic entry point: it exits at once while its tier's last-run record (kept in the queue)
   is younger than the interval, otherwise claims each due brief with a git-pushed lease and starts a

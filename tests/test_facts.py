@@ -31,6 +31,14 @@ def ci(state="green", link="https://ci.example.test/run/1", set_on="2026-11-01")
     return f'state = "{state}"\nlink = "{link}"\nset_on = {set_on}\n'
 
 
+def rollout(key="KEY-12", recorded_on="2026-11-01", customers=(("acme", "r1", True),)) -> str:
+    rows = "".join(
+        f'\n[[customer]]\ncode = "{code}"\nrelease = "{release}"\non = {str(on).lower()}\n'
+        for code, release, on in customers
+    )
+    return f'key = "{key}"\nrecorded_on = {recorded_on}\n{rows}'
+
+
 FLAG = '[[flag]]\nname = "f"\nenvironment = "dev"\nstate = "{state}"\nchanged_on = {day}\n'
 EVIDENCE = (
     '[[evidence]]\nkind = "screenshot"\nlink = "https://img.example.test/a.png"\n'
@@ -562,3 +570,101 @@ def test_a_bad_release_is_left_out_and_named(queue, capsys):
     )
     assert facts.load_project_meta(queue).releases == (facts.Release("b", D(2026, 12, 15)),)
     assert "releases row 1: date must be a YYYY-MM-DD date" in warnings(capsys)[0]
+
+
+# --- feature rollout ---------------------------------------------------------------------
+
+THREE = (("acme", "r2", True), ("globex", "r1", False), ("initech", "", False))
+
+
+def test_a_rollout_history_file_parses_into_customers_in_code_order(queue):
+    put(queue, "history/rollout/KEY-12-2026-11-01-aaaaaaaa.toml", rollout(customers=THREE[::-1]))
+    (snap,) = facts.load_rollouts(queue).values()
+    assert (snap.key, snap.recorded_on, snap.source) == (
+        "KEY-12",
+        D(2026, 11, 1),
+        "KEY-12-2026-11-01-aaaaaaaa.toml",
+    )
+    assert snap.customers == (
+        facts.CustomerRollout("acme", "r2", True),
+        facts.CustomerRollout("globex", "r1", False),
+        facts.CustomerRollout("initech", "", False),
+    )
+
+
+def test_the_newest_snapshot_of_each_key_wins(queue):
+    put(queue, "history/rollout/KEY-12-2026-11-05-bbbbbbbb.toml", rollout(recorded_on="2026-11-05"))
+    put(queue, "history/rollout/KEY-12-2026-11-01-cccccccc.toml", rollout(customers=THREE))
+    put(queue, "history/rollout/KEY-9-2026-10-01-dddddddd.toml", rollout("KEY-9", "2026-10-01"))
+    got = facts.load_rollouts(queue)
+    assert list(got) == ["KEY-12", "KEY-9"]
+    assert got["KEY-12"].recorded_on == D(2026, 11, 5) and len(got["KEY-12"].customers) == 1
+
+
+def test_a_snapshot_dated_the_same_day_is_ordered_by_file_name(queue):
+    put(queue, "history/rollout/KEY-12-2026-11-05-aaaaaaaa.toml", rollout(recorded_on="2026-11-05"))
+    put(
+        queue,
+        "history/rollout/KEY-12-2026-11-05-zzzzzzzz.toml",
+        rollout(recorded_on="2026-11-05", customers=THREE),
+    )
+    assert facts.load_rollouts(queue)["KEY-12"].source.endswith("zzzzzzzz.toml")
+
+
+def test_counts_missing_codes_and_spread_are_derived_from_the_rows(queue):
+    put(queue, "history/rollout/KEY-12-2026-11-01-aaaaaaaa.toml", rollout(customers=THREE))
+    snap = facts.load_rollouts(queue)["KEY-12"]
+    assert (snap.on_count, snap.released_count, snap.total) == (1, 2, 3)
+    assert snap.missing == ("globex", "initech")
+    assert snap.spread is facts.Spread.SOME
+    assert snap.line() == "KEY-12 on: some 1/3, released 2/3"
+
+
+@pytest.mark.parametrize(
+    ("states", "spread"),
+    [
+        ([False, False], facts.Spread.NONE),
+        ([True, False], facts.Spread.SOME),
+        ([True, True], facts.Spread.ALL),
+    ],
+)
+def test_spread_is_none_some_or_all(states, spread):
+    customers = tuple(facts.CustomerRollout(f"c{n}", "", on) for n, on in enumerate(states))
+    snap = facts.RolloutSnapshot("KEY-1", D(2026, 11, 1), customers, "s")
+    assert snap.spread is spread
+
+
+def test_a_rollout_snapshot_writes_a_body_that_parses_back():
+    snap = facts.RolloutSnapshot(
+        "KEY-12", D(2026, 11, 1), (facts.CustomerRollout("acme", "r1", True),), "s"
+    )
+    assert facts.RolloutSnapshot.parse(snap.table(), "s") == snap
+
+
+def test_an_absent_rollout_folder_is_no_rollouts_and_no_warning(queue, capsys):
+    assert facts.load_rollouts(queue) == {}
+    assert warnings(capsys) == []
+
+
+def test_a_rollout_file_that_cannot_be_used_is_left_out_and_named(queue, capsys):
+    put(queue, "history/rollout/a.toml", "not = [valid")
+    bad = put(queue, "history/rollout/b.toml", 'key = "KEY-1"\nrecorded_on = 2026-11-01\n')
+    dup = put(
+        queue,
+        "history/rollout/c.toml",
+        rollout(customers=(("acme", "", True), ("acme", "", False))),
+    )
+    put(queue, "history/rollout/d.toml", rollout("KEY-2").replace("on = true", 'on = "yes"'))
+    assert facts.load_rollouts(queue) == {}
+    first, second, third, fourth = warnings(capsys)
+    assert "cannot be read" in first
+    assert f"{bad}: rollout: customer must be [[customer]] tables; that row is left out" in second
+    assert f"{dup}: rollout: customer code acme is listed twice; that row is left out" in third
+    assert "on must be true or false" in fourth
+
+
+def test_a_bad_snapshot_leaves_the_older_good_one_in_force(queue, capsys):
+    put(queue, "history/rollout/KEY-12-2026-11-01-aaaaaaaa.toml", rollout())
+    put(queue, "history/rollout/KEY-12-2026-11-09-bbbbbbbb.toml", "not = [valid")
+    assert facts.load_rollouts(queue)["KEY-12"].recorded_on == D(2026, 11, 1)
+    assert len(warnings(capsys)) == 1

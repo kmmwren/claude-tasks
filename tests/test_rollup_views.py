@@ -757,3 +757,98 @@ def test_a_bad_tasks_toml_warns_once_per_queue_naming_the_source(
     entry(tmp_path, ALPHA, {**ATLAS_FILES, "tasks.toml": "name = [unterminated\n"})
     err = capsys.readouterr().err
     assert f"cannot read {ALPHA}/tasks.toml (" in err and err.count("cannot read") == 1
+
+
+# --- feature rollout ------------------------------------------------------------------------
+
+CODES = ("acme", "globex", "initech", "hooli", "umbrella", "wayne", "stark", "wonka", "tyrell")
+# Nine customers: three have the feature on, five run a release that holds it.
+ROLLOUT_ROWS = "".join(
+    f'\n[[customer]]\ncode = "{code}"\nrelease = "{"r2" if n < 5 else ""}"\non = {str(n < 3).lower()}\n'
+    for n, code in enumerate(CODES)
+)
+ROLLOUT_PROJECT = (
+    small_project("delta", "", FRESH).replace(
+        'title = "Only"', 'title = "Only"\nplain = "Ship KEY-12"'
+    )
+    + '\n[[jira]]\nkey = "KEY-12"\ntitle = "The feature"\nurl = "https://example.test/KEY-12"\n'
+)
+ROLLOUT_FILES = {
+    "tasks.toml": 'name = "Delta"\n',
+    "project.toml": ROLLOUT_PROJECT,
+    "ready/d1.md": brief("d1", "ready", milestone="m1", unticked=1),
+    "history/rollout/KEY-12-2026-11-10-aaaaaaaa.toml": (
+        f'key = "KEY-12"\nrecorded_on = 2026-11-10\n{ROLLOUT_ROWS}'
+    ),
+}
+CELL = "KEY-12 on: some 3/9, released 5/9"
+MISSING = "hooli, stark, tyrell, umbrella, wayne, wonka"
+
+
+def delta(tmp_path: pathlib.Path, files: Mapping[str, str] = ROLLOUT_FILES) -> rv.Report:
+    return rv.Report(NOW, (BETA,), (entry(tmp_path, BETA, files),))
+
+
+def test_a_milestone_with_a_rollout_shows_counts_in_a_rollout_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = rv.render("project", "markdown", delta(tmp_path))
+    assert "| Milestone | Status | Due | Slip | Briefs | Evidence | Flags | Rollout |" in text
+    assert f"| {CELL} |" in text
+
+
+def test_the_milestone_details_name_the_customers_still_missing(tmp_path: pathlib.Path) -> None:
+    text = rv.render("project", "markdown", delta(tmp_path))
+    assert f"**KEY-12 not on:** {MISSING}" in text
+
+
+def test_a_fully_rolled_out_key_lists_no_missing_customers(tmp_path: pathlib.Path) -> None:
+    rows = ROLLOUT_ROWS.replace("on = false", "on = true")
+    files = {
+        **ROLLOUT_FILES,
+        "history/rollout/KEY-12-2026-11-10-aaaaaaaa.toml": (
+            f'key = "KEY-12"\nrecorded_on = 2026-11-10\n{rows}'
+        ),
+    }
+    text = rv.render("project", "markdown", delta(tmp_path, files))
+    assert "KEY-12 on: all 9/9, released 5/9" in text and "not on" not in text
+
+
+def test_the_html_page_carries_the_same_cell_and_details(tmp_path: pathlib.Path) -> None:
+    html = rv.render("project", "html", delta(tmp_path))
+    assert "<th>Rollout</th>" in html and f"<td>{CELL}</td>" in html
+    assert "KEY-12 not on:" in html
+
+
+def test_the_project_json_lists_each_rollout_on_its_milestone(tmp_path: pathlib.Path) -> None:
+    project = json.loads(rv.render("project", "json", delta(tmp_path)))["projects"][0]
+    (milestone,) = (m for stage in ("now", "next", "done") for m in project[stage])
+    (rollout,) = milestone["rollouts"]
+    assert rollout == {
+        "key": "KEY-12",
+        "on": 3,
+        "released": 5,
+        "total": 9,
+        "spread": "some",
+        "missing": ["hooli", "stark", "tyrell", "umbrella", "wayne", "wonka"],
+        "recorded_on": "2026-11-10",
+    }
+
+
+def test_without_rollout_history_the_table_json_and_details_gain_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    bare = {k: v for k, v in ROLLOUT_FILES.items() if not k.startswith("history/")}
+    report = delta(tmp_path, bare)
+    text = rv.render("project", "markdown", report)
+    assert "Rollout" not in text and "KEY-12 on:" not in text and "not on:" not in text
+    project = json.loads(rv.render("project", "json", report))["projects"][0]
+    (milestone,) = (m for stage in ("now", "next", "done") for m in project[stage])
+    assert "rollouts" not in milestone
+
+
+def test_the_other_views_do_not_mention_rollouts(tmp_path: pathlib.Path) -> None:
+    report = delta(tmp_path)
+    for view in ("work", "portfolio"):
+        text = rv.render(view, "markdown", report)
+        assert "KEY-12 on:" not in text and "not on:" not in text
