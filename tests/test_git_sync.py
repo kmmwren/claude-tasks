@@ -1562,3 +1562,42 @@ def test_a_positive_sweep_time_scale_shrinks_the_budget():
 def test_a_bad_sweep_time_scale_warns_and_keeps_the_real_budget(raw, capsys):
     assert git_sync._sweep_time_scale(raw) == 1.0
     assert "CLAUDE_TASKS_SWEEP_TIME_SCALE" in capsys.readouterr().err
+
+
+def test_a_failed_add_names_the_index_lock_not_a_missing_brief(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    (repo / "inbox" / "mine.md").write_text("new")
+    lock = repo / ".git" / "index.lock"
+    lock.write_text("")
+
+    git_sync.sync_commit("brief(mine): captured", root=repo, ids=["mine"])
+
+    out = capsys.readouterr().out
+    assert "index.lock" in out and "min old" in out and "no brief file matched" not in out
+    assert lock.exists()
+
+
+def test_an_id_with_no_file_still_reports_no_brief_matched(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+
+    git_sync.sync_commit("brief(ghost): captured", root=repo, ids=["ghost"])
+
+    assert "no brief file matched 'ghost'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        (
+            "fatal: unable to write new index file\n",
+            "git add failed for 'b', nothing staged for it: fatal: unable to write new index file",
+        ),
+        (
+            "fatal: Unable to create '/gone/.git/index.lock': File exists.\n",
+            "git add failed for 'b', nothing staged for it: fatal: Unable to create '/gone/.git/index.lock': File exists.",
+        ),
+        ("", "git add failed for 'b', nothing staged for it: no error output"),
+    ],
+)
+def test_a_failure_without_a_live_lock_reports_git_alone(tmp_path, stderr, expected):
+    assert git_sync._add_failure(make_repo(tmp_path), "b", stderr) == expected

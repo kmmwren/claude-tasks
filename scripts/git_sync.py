@@ -238,7 +238,27 @@ def _stage_named_briefs(
             text=True,
         )
         if staged.returncode != 0:
-            print(f"  (warning: no brief file matched '{brief_id}'; nothing staged for it)")
+            print(f"  (warning: {_add_failure(root, brief_id, staged.stderr)})")
+
+
+def _add_failure(root: pathlib.Path, brief_id: str, stderr: str) -> str:
+    """Why `git add` failed for `brief_id`: git's own first line, plus the lock when it blames one."""
+    if "did not match any files" in stderr:
+        return f"no brief file matched '{brief_id}'; nothing staged for it"
+    first = next(iter(stderr.strip().splitlines()), "no error output")
+    return f"git add failed for '{brief_id}', nothing staged for it: {first}{_index_lock_note(root, stderr)}"
+
+
+def _index_lock_note(root: pathlib.Path, stderr: str) -> str:
+    """The index lock's path and age when git blames it; never removed, a live git may hold it."""
+    if "index.lock" not in stderr:
+        return ""
+    out = _git(root, "rev-parse", "--git-path", "index.lock", capture_output=True, text=True)
+    lock = root / out.stdout.strip()
+    if not lock.exists():
+        return ""
+    minutes = int((time.time() - lock.stat().st_mtime) // 60)
+    return f" [lock {lock} is {minutes} min old; remove it only if no git is running]"
 
 
 def _short_log(root: pathlib.Path, rev_range: str) -> str:
