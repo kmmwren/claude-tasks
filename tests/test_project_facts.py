@@ -60,6 +60,16 @@ def test_set_health_adds_a_dated_file_the_loader_reads_back(queue, capsys):
     assert capsys.readouterr().out.strip() == "recorded"
 
 
+def test_same_day_history_files_sort_in_the_order_they_were_written(queue, monkeypatch):
+    clock = iter(range(1_795_700_000, 1_795_700_020))
+    monkeypatch.setattr(project_facts.time, "time", lambda: next(clock))
+    for n in range(20):
+        reason = ("--reason", f"r{n}")
+        assert cli(queue, "set-health", "--colour", "amber", *reason, "--set-by", "kay") == 0
+
+    assert facts.current_health(queue).reason == "r19"
+
+
 def test_set_health_on_names_the_day(queue):
     assert cli(queue, *HEALTH, "--on", "2026-11-01") == 0
 
@@ -77,9 +87,8 @@ def test_history_is_added_to_never_edited(queue):
     assert first.read_text() == before
 
 
-def test_a_name_that_already_exists_is_never_reused(queue, monkeypatch):
-    tokens = iter(["aaaaaaaa", "aaaaaaaa", "bbbbbbbb"])
-    monkeypatch.setattr(project_facts, "_token", lambda: next(tokens))
+def test_two_writes_in_one_second_take_the_next_second_and_never_reuse_a_name(queue, monkeypatch):
+    monkeypatch.setattr(project_facts.time, "time", lambda: 0x6B08A000)
     cli(queue, *HEALTH)
     (first,) = written(queue, "history/health")
     before = first.read_text()
@@ -87,14 +96,11 @@ def test_a_name_that_already_exists_is_never_reused(queue, monkeypatch):
     cli(queue, "set-health", "--colour", "red", "--reason", "Slipped", "--set-by", "kay")
 
     assert [p.name for p in written(queue, "history/health")] == [
-        "2026-11-19-aaaaaaaa.toml",
-        "2026-11-19-bbbbbbbb.toml",
+        "2026-11-19-6b08a000.toml",
+        "2026-11-19-6b08a001.toml",
     ]
     assert first.read_text() == before
-
-
-def test_the_token_is_eight_hex_characters():
-    assert re.fullmatch(r"[0-9a-f]{8}", project_facts._token())
+    assert facts.current_health(queue).reason == "Slipped"
 
 
 def test_today_is_the_calendar_day(monkeypatch):

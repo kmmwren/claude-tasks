@@ -18,6 +18,9 @@
   without loading it. A due brief still waits for its unmet `blocked_by` entries, including `date:` days.
 
 ### Changed
+- **History facts are named by the clock.** `set-health`, `set-due` and `set-rollout` name each
+  `history/` file `<day>-<hex seconds>.toml`, taking the next second when the name exists, so a second
+  change on the same day is always the one read as current. A random suffix could mis-order them.
 - **Breaking: the default wrapper launcher is removed.** Set `[rank] launcher` or
   `$CLAUDE_TASKS_LAUNCHER` to run the judge and the triage calls through a launcher script; with
   neither, both call plain `claude -p`. A named launcher that is missing or not executable prints one

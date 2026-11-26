@@ -25,7 +25,6 @@ import re
 import sys
 import time
 import tomllib
-import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, NoReturn
 
@@ -81,11 +80,6 @@ class LockTimeout(Exception):
 
 def today() -> dt.date:
     return dt.date.today()
-
-
-def _token() -> str:
-    """The 8 hex characters that keep two same-day history files apart."""
-    return uuid.uuid4().hex[:8]
 
 
 # --- argument types: each says what is wrong in the words argparse puts after the flag -------
@@ -187,7 +181,7 @@ class HistoryCommand(Command):
     @property
     @abc.abstractmethod
     def stem(self) -> str:
-        """The file name before the random suffix."""
+        """The file name before the clock suffix."""
 
     @abc.abstractmethod
     def table(self) -> dict[str, Any]:
@@ -199,10 +193,11 @@ class HistoryCommand(Command):
         return (path.relative_to(root).as_posix(),)
 
     def _fresh_path(self, folder: pathlib.Path) -> pathlib.Path:
-        while True:
-            path = folder / f"{self.stem}-{_token()}.toml"
-            if not path.exists():
-                return path
+        """Name the file by the clock, so a second change on the same day sorts as the newest."""
+        stamp = int(time.time())
+        while (path := folder / f"{self.stem}-{stamp:08x}.toml").exists():
+            stamp += 1
+        return path
 
 
 @dataclasses.dataclass(frozen=True)
@@ -334,13 +329,6 @@ class SetRollout(HistoryCommand):
 
     def table(self) -> dict[str, Any]:
         return self.snapshot.table()
-
-    def _fresh_path(self, folder: pathlib.Path) -> pathlib.Path:
-        """Name the file by the clock, so a second change on the same day sorts as the newest."""
-        stamp = int(time.time())
-        while (path := folder / f"{self.stem}-{stamp:08x}.toml").exists():
-            stamp += 1
-        return path
 
     def write(self, root: pathlib.Path) -> tuple[str, ...]:
         newest = load_rollouts(root).get(self.snapshot.key)
