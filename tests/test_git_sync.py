@@ -1599,5 +1599,25 @@ def test_an_id_with_no_file_still_reports_no_brief_matched(tmp_path, capsys):
         ("", "git add failed for 'b', nothing staged for it: no error output"),
     ],
 )
-def test_a_failure_without_a_live_lock_reports_git_alone(tmp_path, stderr, expected):
-    assert git_sync._add_failure(make_repo(tmp_path), "b", stderr) == expected
+def test_a_failure_without_a_live_lock_reports_git_alone(stderr, expected):
+    assert git_sync._add_failure("b", stderr) == expected
+
+
+def test_the_lock_note_gives_the_named_lock_its_age_in_whole_minutes(tmp_path, monkeypatch):
+    lock = tmp_path / "index.lock"
+    lock.write_text("")
+    os.utime(lock, (1_000_000, 1_000_000))
+    monkeypatch.setattr(git_sync.time, "time", lambda: 1_000_000 + 3 * 3600 + 59)
+
+    note = git_sync._index_lock_note(f"fatal: Unable to create '{lock}': File exists.\n")
+
+    assert note == f" [lock {lock} is 180 min old; remove it only if no git is running]"
+
+
+def test_a_lock_newer_than_the_clock_reads_zero_minutes(tmp_path, monkeypatch):
+    lock = tmp_path / "index.lock"
+    lock.write_text("")
+    os.utime(lock, (2_000_000, 2_000_000))
+    monkeypatch.setattr(git_sync.time, "time", lambda: 1_000_000)
+
+    assert " is 0 min old" in git_sync._index_lock_note(f"Unable to create '{lock}'")
