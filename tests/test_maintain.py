@@ -108,6 +108,22 @@ def test_a_due_wake_waits_for_its_unmet_dependencies(tmp_path):
     assert maintainer(clone, []).tick().claimed == ("after-done", "after-today")
 
 
+def test_an_unreadable_queue_leaves_id_dependencies_unmet_with_a_warning(
+    tmp_path, monkeypatch, capsys
+):
+    clone = queue_repo(tmp_path)
+    add_brief(clone, "first", folder="done")
+    add_brief(clone, "after-done", not_before=PAST, blocked_by="[first]")
+    add_brief(clone, "free", not_before=PAST)
+
+    def unreadable(root, roots=()):
+        raise PermissionError(13, "Permission denied", str(root))
+
+    monkeypatch.setattr(maintain_mod, "done_ids", unreadable)
+    assert maintainer(clone, []).tick().claimed == ("free",)
+    assert "id dependencies count as unmet this tick" in capsys.readouterr().err
+
+
 def test_a_datetime_with_an_offset_is_due_at_its_utc_instant(tmp_path):
     clone = queue_repo(tmp_path)
     add_brief(clone, "soon", not_before="2026-11-26T10:30:00+02:00")  # 08:30Z
