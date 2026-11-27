@@ -1621,3 +1621,23 @@ def test_a_lock_newer_than_the_clock_reads_zero_minutes(tmp_path, monkeypatch):
     monkeypatch.setattr(git_sync.time, "time", lambda: 1_000_000)
 
     assert " is 0 min old" in git_sync._index_lock_note(f"Unable to create '{lock}'")
+
+
+def test_a_nested_queue_landed_on_its_wip_branch_counts_as_pushed(tmp_path):
+    repo = make_repo(tmp_path)
+    queue = repo / "project" / ".tasks"
+    (queue / "ready").mkdir(parents=True)
+    (queue / "ready" / "x.md").write_text("x")
+
+    assert git_sync.sync_commit_and_push("brief(x): captured", root=queue, ids=["x"]) is True
+
+    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project")
+    assert "project/.tasks/ready/x.md" in wip.stdout.split()
+
+
+def test_a_deferred_commit_is_not_pushed_and_reports_false(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    monkeypatch.setattr(git_sync, "_commit_for_push", lambda *a, **k: git_sync.SyncResult.DEFERRED)
+    monkeypatch.setattr(git_sync, "push_now", lambda _root: pytest.fail("a deferred commit pushed"))
+
+    assert git_sync.sync_commit_and_push("brief(x): captured", root=repo, ids=["x"]) is False

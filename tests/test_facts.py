@@ -157,6 +157,8 @@ def test_an_absent_key_has_no_rows(queue, capsys):
         lambda: facts.Evidence.parse("x"),
         lambda: facts.CiRow.parse("x", "s"),
         lambda: facts.Release.parse("x"),
+        lambda: facts.CustomerRollout.parse("x"),
+        lambda: facts.RolloutSnapshot.parse("x", "s"),
     ],
 )
 def test_every_row_refuses_a_value_that_is_not_a_table(parse):
@@ -590,6 +592,11 @@ def test_a_rollout_history_file_parses_into_customers_in_code_order(queue):
         facts.CustomerRollout("globex", "r1", False),
         facts.CustomerRollout("initech", "", False),
     )
+
+
+def test_a_customer_whose_release_is_not_text_is_refused():
+    with pytest.raises(facts.RowError, match="release must be text"):
+        facts.CustomerRollout.parse({"code": "acme", "release": 3, "on": True})
 
 
 def test_the_newest_snapshot_of_each_key_wins(queue):

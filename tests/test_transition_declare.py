@@ -1,11 +1,13 @@
 """Tests for `transition.py declare`: writing a brief's blocked_by in place, without moving it."""
 
+import contextlib
+
 import declaration
 import pytest
 import transition
 from deps import declares_dependencies, fm
 
-from tests.queue_helpers import brief_text, make_queue
+from tests.queue_helpers import brief_text, make_queue, queue_lock_held_elsewhere
 
 
 def _undeclared(bid, status):
@@ -167,3 +169,29 @@ def test_declare_refuses_a_qualified_blocker_that_names_nothing(root, tmp_path, 
     monkeypatch.setenv("CLAUDE_TASKS_ROOTS", str(other))
     with pytest.raises(SystemExit):
         _declare(root, "shelved", "--blocked-by", ref)
+
+
+def test_declaring_a_brief_that_does_not_exist_is_refused(root):
+    with pytest.raises(ValueError, match="^no brief with id 'ghost'$"):
+        declaration.declare_brief("ghost", [], root, today="2026-11-23")
+
+
+def test_a_declaration_that_cannot_take_the_queue_lock_writes_nothing(root, monkeypatch):
+    with queue_lock_held_elsewhere(root, monkeypatch, declaration):
+        with pytest.raises(
+            RuntimeError, match="timed out waiting for the queue lock; 'doing' was NOT"
+        ):
+            declaration.declare_brief("doing", [], root, today="2026-11-23")
+    assert "blocked_by" not in _front(root, "in-progress", "doing")
+
+
+def test_a_brief_moved_while_waiting_for_the_lock_is_refused_not_resurrected(root, monkeypatch):
+    @contextlib.contextmanager
+    def lock_after_a_mover(_root):
+        (root / "in-progress" / "doing.md").unlink()
+        yield True
+
+    monkeypatch.setattr(declaration, "repo_lock", lock_after_a_mover)
+    with pytest.raises(ValueError, match="no brief with id 'doing' .moved by another actor."):
+        declaration.declare_brief("doing", [], root, today="2026-11-23")
+    assert not (root / "in-progress" / "doing.md").exists()

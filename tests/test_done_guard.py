@@ -5,7 +5,7 @@ import pathlib
 import git_sync
 import pytest
 import transition
-from done_guard import DoneBackstop, UntickedCriteriaError
+from done_guard import DoneBackstop, UntickedCriteriaError, settle_criteria
 
 from tests.queue_helpers import make_queue
 from tests.test_git_sync import git, make_repo
@@ -179,3 +179,32 @@ def test_backstop_leaves_a_brief_already_filed_in_done_alone(tmp_path):
     (repo / "done" / "old.md").write_text(brief("old", OPEN, "done") + "edit\n")
 
     assert DoneBackstop(repo).run() == []
+
+
+def test_superseded_by_is_refused_for_a_move_that_is_not_to_done(queue):
+    put(queue, "ready", "moving", OPEN)
+    with pytest.raises(
+        ValueError, match="^superseded_by only applies when moving a brief to done$"
+    ):
+        transition.move_brief("moving", "parked", queue, superseded_by="successor")
+    assert (queue / "ready" / "moving.md").exists()
+
+
+def test_a_brief_with_no_success_criteria_section_settles_to_itself():
+    assert (
+        settle_criteria("# Notes\n\nNo criteria here.\n", "PR 1")
+        == "# Notes\n\nNo criteria here.\n"
+    )
+
+
+def test_backstop_warns_and_goes_on_when_a_done_brief_cannot_be_read(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    (repo / "done" / "binary.md").write_bytes(b"\xff\xfe")
+    (repo / "done" / "open.md").write_text(brief("open", OPEN, "done"))
+
+    [reverted] = DoneBackstop(repo, today="2026-11-24").run()
+
+    assert reverted.brief == "open"
+    assert capsys.readouterr().out.startswith(
+        "  (warning: done-guard could not check done/binary.md: 'utf-8' codec can't decode byte 0xff"
+    )

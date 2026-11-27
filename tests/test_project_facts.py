@@ -628,6 +628,8 @@ def test_a_snapshot_for_another_key_is_compared_only_with_its_own_history(queue,
         ('{"key": "KEY-12", "customers": [{"code": "a", "release": "", "on": "yes"}]}', "on must be"),
         ('{"key": "KEY-12", "customers": [{"code": "", "release": "", "on": true}]}', "code"),
         ('[1]', "object"),
+        ('{"key": "KEY-12", "customers": [], "merged_prs": "x", "open_prs": 1}',
+         "merged_prs must be a whole number of at least 0"),
     ],
 )  # fmt: skip
 def test_a_bad_snapshot_file_exits_1_naming_it_and_writes_nothing(
@@ -648,6 +650,20 @@ def test_a_missing_snapshot_file_and_a_bad_key_are_argument_errors(queue, tmp_pa
     assert "--from" in capsys.readouterr().err
     assert cli(queue, "set-rollout", "--key", "../x", "--from", str(snapshot_file(tmp_path))) == 1
     assert "--key" in capsys.readouterr().err
+
+
+def test_a_pr_count_that_is_not_a_whole_number_is_refused_and_records_nothing(
+    queue, tmp_path, capsys
+):
+    source = snapshot_file(tmp_path)
+    body = json.loads(source.read_text())
+    source.write_text(json.dumps({**body, "merged_prs": "two", "open_prs": 1}))
+
+    assert set_rollout(queue, source) == 1
+
+    err = capsys.readouterr().err.strip()
+    assert err.endswith("merged_prs must be a whole number of at least 0") and "--from" in err
+    assert written(queue, "history/rollout") == []
 
 
 def test_set_rollout_commits_the_new_file_and_names_the_key(tmp_path, monkeypatch):

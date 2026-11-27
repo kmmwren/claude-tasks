@@ -4,7 +4,7 @@ import cascade
 import pytest
 from deps import fm
 
-from tests.queue_helpers import brief_text, make_queue
+from tests.queue_helpers import brief_text, make_queue, queue_lock_held_elsewhere
 
 TODAY = "2026-06-02"
 
@@ -111,3 +111,19 @@ def test_a_cross_queue_waiter_stays_blocked_while_another_blocker_is_open(tmp_pa
     touched = cascade.cascade_done(alpha, "dep", [alpha, beta], today=TODAY)
     assert [(t.released, t.updated) for t in touched] == [((), ("far",))]
     assert (beta / "blocked" / "far.md").exists()
+
+
+def test_a_log_for_a_brief_that_moved_away_is_skipped_with_a_warning(root, capsys):
+    cascade._log(root, "ghost", TODAY, ["landed: dep done"])
+    assert capsys.readouterr().err == (
+        "warning: ghost: could not log what landed (queue busy or brief moved)\n"
+    )
+
+
+def test_a_log_while_the_queue_is_locked_leaves_the_brief_as_it_was(root, monkeypatch, capsys):
+    _waiting(root, "held", "[dep]")
+    before = _text(root, "blocked", "held")
+    with queue_lock_held_elsewhere(root, monkeypatch, cascade):
+        cascade._log(root, "held", TODAY, ["landed: dep done"])
+    assert _text(root, "blocked", "held") == before
+    assert "held: could not log what landed" in capsys.readouterr().err

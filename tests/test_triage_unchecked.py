@@ -6,6 +6,7 @@ import pytest
 import triage
 from git_sync import SyncResult
 from triage_close import CloseRules
+from triage_unchecked import clear_checked, load_unchecked
 
 TITLE = "Rotate the leaked key"
 EXISTING = "Vault is v2."
@@ -144,3 +145,26 @@ def test_a_close_held_back_by_the_cap_keeps_the_mark_for_the_next_run(queue):
     assert "unchecked" in (queue / "ready" / f"{repeat}.md").read_text()
     run(queue)
     assert ids(queue, "done") == [repeat]
+
+
+def _unchecked_brief(queue):
+    file_ready(queue, EXISTING)
+    (brief,) = load_unchecked(queue)
+    return brief
+
+
+def test_a_mark_is_kept_when_the_brief_was_rewritten_since_it_was_read(queue):
+    brief = _unchecked_brief(queue)
+    edited = brief.text + "A late edit.\n"
+    brief.path.write_text(edited)
+
+    assert clear_checked([brief], pending=[]) == []
+    assert brief.path.read_text() == edited
+
+
+def test_a_mark_is_kept_when_the_brief_moved_away_since_it_was_read(queue):
+    brief = _unchecked_brief(queue)
+    brief.path.unlink()
+
+    assert clear_checked([brief], pending=[]) == []
+    assert not brief.path.exists()

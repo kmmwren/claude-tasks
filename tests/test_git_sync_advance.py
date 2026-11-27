@@ -9,6 +9,7 @@ import os
 import pathlib
 
 import git_sync
+from _advance import _take_away
 from _concurrency import Deadline
 
 from tests.test_git_sync import _clone_other, git, make_repo
@@ -121,3 +122,16 @@ def test_an_untracked_file_origin_does_not_hold_survives_the_advance(tmp_path):
     assert _head(repo) == _origin_head(repo)
     assert (repo / "inbox" / "mine.md").read_text() == "mine"
     assert git(repo, "ls-files", "inbox/mine.md").stdout == ""
+
+
+def test_a_file_that_cannot_be_removed_is_left_where_it_is(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / BRIEF).parent.mkdir(exist_ok=True)
+    (repo / BRIEF).write_text("same")
+    blob = git(repo, "hash-object", BRIEF).stdout.strip()
+    (repo / "ready").chmod(0o555)
+    try:
+        assert _take_away(repo, BRIEF, blob) is None
+    finally:
+        (repo / "ready").chmod(0o755)
+    assert (repo / BRIEF).read_text() == "same"

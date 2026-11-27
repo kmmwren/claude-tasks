@@ -25,11 +25,11 @@ import sys
 import tempfile
 from collections.abc import Iterable, Iterator
 
-from _rescue import Advance, advance_or_rescue
 from _concurrency import NETWORK_TIMEOUT, repo_lock
 from _credentials import carries_credential
 from _default_branch import default_branch
 from _paths import PROJECT_MARKER
+from _rescue import Advance, advance_or_rescue
 from done_guard import DoneBackstop
 
 DEFAULT_MESSAGE = "queue: sync uncommitted briefs"
@@ -187,7 +187,9 @@ class Standing(enum.Enum):
     LEVEL = "level"  # at or ahead of origin: nothing to take in
     BEHIND = "behind"  # on the default branch, holding no commit origin lacks
     OFF_DEFAULT = "off-default"  # somebody's work in progress; never moved
-    DIVERGED = "diverged"  # on the default branch with a commit origin lacks, and origin has moved on
+    DIVERGED = (
+        "diverged"  # on the default branch with a commit origin lacks, and origin has moved on
+    )
 
 
 def _holds(top: pathlib.Path, ancestor: str, descendant: str) -> bool:

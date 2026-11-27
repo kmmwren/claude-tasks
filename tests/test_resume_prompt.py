@@ -226,3 +226,8 @@ def test_a_completed_item_whose_file_is_gone_is_read_back_from_the_transcript(
 
 def test_no_transcript_means_no_handoffs(tmp_path: pathlib.Path) -> None:
     assert resume_prompt.handoffs(SID, tmp_path / "tasks", tmp_path / "projects") == []
+
+
+@pytest.mark.parametrize("line", ["not json", "[1, 2]", '"text"', '{"message": "plain"}'])
+def test_a_transcript_line_that_is_not_a_message_object_has_no_blocks(line: str) -> None:
+    assert resume_prompt._blocks(line) == []

@@ -1,9 +1,14 @@
 """Shared builders for the dependency, unblock, milestone and board tests."""
 
+import contextlib
 import pathlib
 import time
+from collections.abc import Iterator
+from types import ModuleType
 
 import init_queue
+import pytest
+from _concurrency import lock_path, repo_lock, try_lock
 from _push_state import PushState
 
 
@@ -156,6 +161,21 @@ def wait_for_pusher_idle(root: pathlib.Path, timeout: float = 60.0, poll: float 
                     return True
         time.sleep(poll)
     return False
+
+
+@contextlib.contextmanager
+def queue_lock_held_elsewhere(
+    root: pathlib.Path, monkeypatch: pytest.MonkeyPatch, *modules: ModuleType
+) -> Iterator[None]:
+    """The queue lock is held by another holder, and each module's `repo_lock` gives up after 50ms."""
+    for module in modules:
+        monkeypatch.setattr(module, "repo_lock", lambda r: repo_lock(r, timeout=0.05, poll=0.01))
+    held = try_lock(lock_path(root))
+    assert held is not None
+    try:
+        yield
+    finally:
+        held.release()
 
 
 def installed_launcher(tmp_path: pathlib.Path) -> pathlib.Path:

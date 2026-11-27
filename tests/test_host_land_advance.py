@@ -86,7 +86,9 @@ def test_an_edit_that_blocks_the_advance_is_rescued_to_a_pushed_tag_and_the_host
 
     assert _head(repo) == git(repo, "rev-parse", "origin/main").stdout.strip()
     assert (repo / BRIEF).read_text() == "x"
-    rescued = git(tmp_path / "remote", "show", "superseded/rescue/clone-" + _today() + ":" + BRIEF).stdout
+    rescued = git(
+        tmp_path / "remote", "show", "superseded/rescue/clone-" + _today() + ":" + BRIEF
+    ).stdout
     assert rescued == "changed after the merge"
     assert "rescued to tag superseded/rescue/clone-" in capsys.readouterr().out
 

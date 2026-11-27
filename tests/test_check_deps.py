@@ -5,10 +5,11 @@ import os
 import time
 
 import check_deps
+import host_land
 import pytest
 
 from tests.queue_helpers import MILESTONES, brief_text, make_queue
-from tests.test_git_sync import make_repo
+from tests.test_git_sync import git, make_repo
 
 
 def _kinds(root):
@@ -323,3 +324,27 @@ def test_a_valid_date_is_no_dangling_id_and_a_malformed_one_is_flagged(tmp_path)
 def test_a_blocked_brief_whose_date_has_passed_is_releasable(tmp_path):
     root = make_queue(tmp_path, {"a": {"status": "blocked", "blocked_by": "[date:2000-01-01]"}})
     assert _kinds(root) == [("releasable", "a")]
+
+
+def test_a_host_whose_status_cannot_be_read_reports_nothing_unshipped(tmp_path, monkeypatch):
+    queue = _nested_brief(tmp_path, age_hours=7)
+    assert _unshipped(queue) == [("waiting", "not landed from clone")]
+
+    def unreadable(_self):
+        raise host_land.LandError("git status: fatal")
+
+    monkeypatch.setattr(host_land.HostQueue, "pending", unreadable)
+
+    assert _unshipped(queue) == []
+
+
+def test_a_brief_deleted_from_a_host_checkout_is_a_mirrored_deletion_not_unshipped(tmp_path):
+    queue = _nested_brief(tmp_path, age_hours=7)
+    repo = queue.parent.parent
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "track the brief")
+    (queue / "ready" / "waiting.md").unlink()
+
+    host = host_land.HostQueue.of(queue)
+    assert host is not None and host.pending() == ["project/.tasks/ready/waiting.md"]
+    assert _unshipped(queue) == []

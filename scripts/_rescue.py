@@ -88,8 +88,13 @@ def _discard(root: pathlib.Path, rels: list[str]) -> None:
     if tracked := [r for r in rels if r in in_head]:
         run = subprocess.run(
             [
-                "git", "-C", str(root), "checkout", "HEAD",
-                "--pathspec-from-file=-", "--pathspec-file-nul",
+                "git",
+                "-C",
+                str(root),
+                "checkout",
+                "HEAD",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
             ],
             input="\0".join(tracked).encode(),
             capture_output=True,
@@ -131,12 +136,16 @@ def _push_rescue(root: pathlib.Path, rels: list[str], stem: str) -> Rescue:
         try:
             _mirror(root, wt, rels)
             _git(wt, "add", "--all")
-            _git(wt, "commit", "-q", "-m", f"rescue: {len(rels)} uncommitted edits from {root.name}")
+            _git(
+                wt, "commit", "-q", "-m", f"rescue: {len(rels)} uncommitted edits from {root.name}"
+            )
             sha = _git(wt, "rev-parse", "HEAD").strip()
             _git(wt, "push", "-q", "origin", f"{sha}:refs/tags/{tag}", timeout=PUSH_TIMEOUT)
         finally:
             _run(root, "worktree", "remove", "--force", str(wt))
-    if sha not in _git(root, "ls-remote", "--tags", "origin", f"refs/tags/{tag}", timeout=PUSH_TIMEOUT):
+    if sha not in _git(
+        root, "ls-remote", "--tags", "origin", f"refs/tags/{tag}", timeout=PUSH_TIMEOUT
+    ):
         raise RescueError(f"origin does not hold {sha[:9]} on tag {tag} after the push")
     return Rescue(tag, sha, tuple(rels))
 
