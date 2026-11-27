@@ -4,8 +4,10 @@ host_land.py: ship a queue that lives inside another repo, without touching that
 
 A project queue (`<repo>/projects/x/.tasks`) has no repo of its own, so `git_sync` cannot commit it
 there. `land_host_queue` copies the queue's pending files into a temporary worktree cut from the host's
-`origin/<default>`, records them as one commit and pushes it to `wip/tasks-<queue-slug>`. The host's index,
-HEAD and working files stay as they were; merging the wip branch is the host's own land.
+`origin/<default>`, records them as one commit and pushes it to `origin/<default>`, rebasing and retrying when
+origin moved. Only when the default branch refuses the push (protected branch, a hook gate) does the commit go
+to `wip/tasks-<queue-slug>` instead, and the land says so. The host's index, HEAD and working files stay as
+they were until the host advances onto the commit.
 
   python scripts/host_land.py <queue>
 """
@@ -17,9 +19,11 @@ import contextlib
 import dataclasses
 import datetime
 import enum
+import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,12 +32,16 @@ from collections.abc import Iterable, Iterator
 from _concurrency import NETWORK_TIMEOUT, repo_lock
 from _credentials import carries_credential
 from _default_branch import default_branch
+from _log_conflict import Rebase
 from _paths import PROJECT_MARKER
 from _rescue import Advance, advance_or_rescue
 from done_guard import DoneBackstop
 
 DEFAULT_MESSAGE = "queue: sync uncommitted briefs"
 WIP_PREFIX = "wip/tasks-"
+PUSH_ATTEMPTS = (
+    3  # pushes to the default branch before it is called a refusal; each lost race rebases first
+)
 STATE_PREFIX = ".tasks-"  # the per-clone lock and marks, which sit in the queue when it has no .git
 
 
@@ -134,17 +142,14 @@ class HostQueue:
 
 @contextlib.contextmanager
 def _worktree(queue: HostQueue, start: str) -> Iterator[pathlib.Path]:
-    """A detached throwaway checkout of `start`, removed on exit; the wip branch's upstream is set on the host.
+    """A detached throwaway checkout of `start`, removed on exit.
 
     Detached, because a leftover worktree that has the wip branch checked out would otherwise defer every land.
     """
-    branch = queue.branch
     with tempfile.TemporaryDirectory(prefix="host-land-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
         _git(queue.top, "worktree", "add", "-q", "--detach", str(wt), start)
         try:
-            _git(queue.top, "config", f"branch.{branch}.remote", "origin")
-            _git(queue.top, "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
             yield wt
         finally:
             subprocess.run(
@@ -173,15 +178,96 @@ def _record(wt: pathlib.Path, message: str) -> bool:
     return True
 
 
-def _ship(queue: HostQueue, paths: list[str], message: str) -> None:
-    """The wip branch is rebuilt from origin's default each time and only this pushes it, so the push forces."""
-    default = default_branch(queue.top)
+def _fetch(queue: HostQueue, default: str) -> None:
     _git(queue.top, "fetch", "-q", "origin", default, timeout=NETWORK_TIMEOUT)
+
+
+def _refusal(stderr: str) -> str:
+    """The first line git or the remote's hook printed, which names what refused."""
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip() and not ln.startswith("To ")]
+    return lines[0].removeprefix("remote:").strip()[:160] if lines else "no reason given"
+
+
+def _push(wt: pathlib.Path, ref: str, *flags: str) -> str | None:
+    """Push `HEAD` to `ref` on origin; None when it went, else why it did not (a timeout is a failure).
+
+    The push runs in its own process group so a timeout also kills what the host's pre-push hook spawned.
+    """
+    push = subprocess.Popen(
+        ["git", "-C", str(wt), "push", "-q", *flags, "origin", f"HEAD:{ref}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        _, stderr = push.communicate(timeout=NETWORK_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(push.pid, signal.SIGKILL)
+        push.communicate()
+        return f"push timed out after {NETWORK_TIMEOUT:.0f}s"
+    return None if push.returncode == 0 else _refusal(stderr)
+
+
+def _tip(top: pathlib.Path, default: str) -> str:
+    return _git(top, "rev-parse", f"origin/{default}").strip()
+
+
+def _push_default(queue: HostQueue, wt: pathlib.Path, default: str) -> str | None:
+    """Push the recorded commit to origin's default branch; None once it is there, else why it was refused.
+
+    A push that fails while origin's tip has moved lost a race, so the commit is rebased onto the new tip
+    and sent again. A push that fails with the tip where it was is a refusal: protected branch, a failing hook.
+    """
+    for _ in range(PUSH_ATTEMPTS):
+        tip = _tip(queue.top, default)
+        failure = _push(wt, f"refs/heads/{default}")
+        if failure is None:
+            return None
+        _fetch(queue, default)
+        if _tip(queue.top, default) == tip:
+            return failure
+        rebased = Rebase.onto_origin(wt, default).run()
+        if not rebased.completed:
+            return rebased.reason
+    return f"origin/{default} moved on every one of {PUSH_ATTEMPTS} attempts"
+
+
+def _land_on_default(queue: HostQueue, paths: list[str], message: str, default: str) -> str | None:
+    """The queue's pending files as one commit on origin's default branch; None when landed, else why not."""
+    with _worktree(queue, f"origin/{default}") as wt:
+        _mirror(queue.top, wt, paths)
+        return _push_default(queue, wt, default) if _record(wt, message) else None
+
+
+def _park_on_wip(queue: HostQueue, paths: list[str], message: str, default: str) -> None:
+    """The wip branch is rebuilt from origin's default each time and only this pushes it, so the push forces.
+
+    Fetching first makes a commit the default branch took after all (a lost acknowledgement) record nothing.
+    """
+    _fetch(queue, default)
+    _git(queue.top, "config", f"branch.{queue.branch}.remote", "origin")
+    _git(queue.top, "config", f"branch.{queue.branch}.merge", f"refs/heads/{queue.branch}")
     with _worktree(queue, f"origin/{default}") as wt:
         _mirror(queue.top, wt, paths)
         if _record(wt, message):
-            ref = f"HEAD:refs/heads/{queue.branch}"
-            _git(wt, "push", "-q", "--force", "origin", ref, timeout=NETWORK_TIMEOUT)
+            failure = _push(wt, f"refs/heads/{queue.branch}", "--force")
+            if failure is not None:
+                raise LandError(f"git push: {failure}")
+
+
+def _ship(queue: HostQueue, paths: list[str], message: str) -> None:
+    """Land `paths` on origin's default branch; park them on the wip branch, and say so, if it refuses."""
+    default = default_branch(queue.top)
+    _fetch(queue, default)
+    refused = _land_on_default(queue, paths, message, default)
+    if refused is None:
+        return
+    _park_on_wip(queue, paths, message, default)
+    print(
+        f"  (host land parked on origin/{queue.branch}: origin/{default} refused it ({refused}). "
+        f"Merge that branch into {default} to land it.)"
+    )
 
 
 class Standing(enum.Enum):
@@ -263,7 +349,7 @@ def _locked(root: pathlib.Path, lock_held: bool) -> contextlib.AbstractContextMa
 def land_host_queue(
     root: pathlib.Path, message: str = DEFAULT_MESSAGE, *, lock_held: bool = False
 ) -> bool:
-    """Ship the queue's pending files to the host's `wip/tasks-<slug>` branch; True when none is left behind.
+    """Ship the queue's pending files to the host's default branch (its wip branch if refused); True when none is left behind.
 
     False means deferred (no host repo, lock held, or a git step failed) and the files stay on disk.
     `lock_held` means the caller already holds the queue lock, which cannot be taken twice.

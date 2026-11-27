@@ -422,23 +422,17 @@ def test_the_commit_holds_only_what_the_command_wrote(tmp_path):
     assert wait_for_pusher_idle(repo)
 
 
-def test_a_queue_inside_a_host_repo_lands_on_a_wip_branch_and_the_host_checkout_is_untouched(
-    tmp_path, capsys
-):
+def test_a_queue_inside_a_host_repo_lands_on_its_default_branch(tmp_path, capsys):
     host = make_repo(tmp_path)
     queue = host / "project" / ".tasks"
     queue.mkdir(parents=True)
-    before = git(host, "rev-parse", "HEAD").stdout
 
     assert cli(queue, *HEALTH) == 0
 
-    assert capsys.readouterr().out.strip() == (
-        f"recorded, landed on {host.name} origin/wip/tasks-project"
-    )
-    assert git(host, "rev-parse", "HEAD").stdout == before
+    assert capsys.readouterr().out.strip() == (f"recorded, landed on {host.name} origin")
     assert written(queue, "history/health")
-    wip = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project")
-    assert [f for f in wip.stdout.split() if "/history/health/" in f]
+    landed = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "main")
+    assert [f for f in landed.stdout.split() if "/history/health/" in f]
 
 
 def test_an_unchanged_ask_is_not_committed(tmp_path, monkeypatch, capsys):

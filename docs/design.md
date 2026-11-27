@@ -138,7 +138,7 @@ the shape, each from a recorded decision (file names in claude-config `decisions
 
 ### One store across queues
 
-The git sync, the `wip/tasks-<slug>` branch of a queue inside another repo and the parked-conflict
+The git sync, how a queue inside another repo lands on that repo's default branch (the `wip/tasks-<slug>` branch only when it refuses) and the parked-conflict
 branches are in [queue-sync.md](queue-sync.md). On top of that:
 
 - A brief lives in one queue. A wait across queues is a `<queue>:<id>` blocker, resolved against the

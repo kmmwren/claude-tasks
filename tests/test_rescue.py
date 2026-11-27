@@ -9,14 +9,19 @@ import pytest
 from _rescue import Advance
 
 from tests.test_git_sync import git
-from tests.test_host_land_advance import BRIEF, _head, _host_with_merged_wip, _today
+from tests.test_host_land_advance import (
+    BLOCKING,
+    BRIEF,
+    _head,
+    _host_behind_origin_holding_its_brief,
+    _host_with_a_blocking_edit,
+    _today,
+)
 
 
 def _blocked_host(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    """A host behind origin whose brief carries an edit that blocks the advance."""
-    repo, queue = _host_with_merged_wip(tmp_path)
-    (queue / "ready" / "x.md").write_text("changed after the merge")
-    return repo, queue
+    """A host behind origin holding an edit, outside its queue, that blocks the advance."""
+    return _host_with_a_blocking_edit(tmp_path)
 
 
 def test_a_git_step_that_times_out_raises_a_rescue_error_naming_it(tmp_path, monkeypatch):
@@ -39,7 +44,7 @@ def test_a_file_that_is_absent_has_no_blob_on_disk(tmp_path):
 
 
 def test_discarding_a_tracked_edit_restores_what_head_holds(tmp_path):
-    repo, _queue = _host_with_merged_wip(tmp_path)
+    repo, _queue = _host_behind_origin_holding_its_brief(tmp_path)
     tracked = repo / "seed.md"
     tracked.write_text("head's words")
     git(repo, "add", "seed.md")
@@ -54,7 +59,7 @@ def test_discarding_a_tracked_edit_restores_what_head_holds(tmp_path):
 
 
 def test_a_checkout_that_git_refuses_raises_a_rescue_error(tmp_path):
-    repo, _queue = _host_with_merged_wip(tmp_path)
+    repo, _queue = _host_behind_origin_holding_its_brief(tmp_path)
     tracked = repo / "seed.md"
     tracked.write_text("head's words")
     git(repo, "add", "seed.md")
@@ -119,14 +124,14 @@ def test_a_rescue_that_fails_before_origin_holds_the_edits_leaves_the_host_as_it
     assert host_land.land_host_queue(queue)
 
     assert _head(repo) == before
-    assert (queue / "ready" / "x.md").read_text() == "changed after the merge"
+    assert (repo / BLOCKING).read_text() == "mine, not yet committed"
     assert capsys.readouterr().out.endswith(
         "  (host checkout not advanced to origin/main: git push: remote hung up)\n"
     )
 
 
 def test_an_advance_git_still_refuses_after_the_rescue_is_reported_as_such(tmp_path, monkeypatch):
-    repo, _queue = _host_with_merged_wip(tmp_path)
+    repo, _queue = _host_behind_origin_holding_its_brief(tmp_path)
     monkeypatch.setattr(_rescue, "advance_to_origin", lambda *_a: False)
 
     assert _rescue.advance_or_rescue(repo, "main", _today()) == Advance(
@@ -135,7 +140,7 @@ def test_an_advance_git_still_refuses_after_the_rescue_is_reported_as_such(tmp_p
 
 
 def test_a_detached_host_is_off_its_default_branch_and_is_not_advanced(tmp_path):
-    repo, queue = _host_with_merged_wip(tmp_path)
+    repo, queue = _host_behind_origin_holding_its_brief(tmp_path)
     git(repo, "checkout", "-q", "--detach")
     host = host_land.HostQueue.of(queue)
     assert host is not None
@@ -144,7 +149,7 @@ def test_a_detached_host_is_off_its_default_branch_and_is_not_advanced(tmp_path)
 
 
 def test_a_host_behind_origin_is_advanced_by_level_host(tmp_path):
-    repo, queue = _host_with_merged_wip(tmp_path)
+    repo, queue = _host_behind_origin_holding_its_brief(tmp_path)
     host = host_land.HostQueue.of(queue)
     assert host is not None
 

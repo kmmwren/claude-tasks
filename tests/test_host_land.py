@@ -129,16 +129,39 @@ def test_mirroring_a_path_the_source_no_longer_holds_removes_it(tmp_path):
     assert not (wt / "ready" / "gone.md").exists()
 
 
-def test_a_leftover_worktree_holding_the_wip_branch_neither_blocks_the_land_nor_moves(tmp_path):
-    queue = _nested_queue(tmp_path)
-    host = queue.parent.parent
+def _leftover_wip_worktree(tmp_path: pathlib.Path, host: pathlib.Path) -> pathlib.Path:
     leftover = tmp_path / "leftover"
     git(host, "worktree", "add", "-q", "-b", "wip/tasks-project", str(leftover))
+    return leftover
+
+
+def _untouched(leftover: pathlib.Path, before: str) -> bool:
+    head = git(leftover, "rev-parse", "HEAD").stdout
+    return head == before and git(leftover, "status", "--porcelain").stdout == ""
+
+
+def test_a_leftover_worktree_holding_the_wip_branch_neither_blocks_the_land_nor_moves(tmp_path):
+    queue = _nested_queue(tmp_path)
+    leftover = _leftover_wip_worktree(tmp_path, queue.parent.parent)
+    before = git(leftover, "rev-parse", "HEAD").stdout
+
+    assert host_land.land_host_queue(queue) is True
+
+    shipped = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "main").stdout
+    assert "project/.tasks/ready/x.md" in shipped
+    assert _untouched(leftover, before)
+
+
+def test_a_leftover_worktree_holding_the_wip_branch_neither_blocks_parking_nor_moves(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(host_land, "_land_on_default", lambda *_a: "rejected by a hook")
+    queue = _nested_queue(tmp_path)
+    leftover = _leftover_wip_worktree(tmp_path, queue.parent.parent)
     before = git(leftover, "rev-parse", "HEAD").stdout
 
     assert host_land.land_host_queue(queue) is True
 
     shipped = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project").stdout
     assert "project/.tasks/ready/x.md" in shipped
-    assert git(leftover, "rev-parse", "HEAD").stdout == before
-    assert git(leftover, "status", "--porcelain").stdout == ""
+    assert _untouched(leftover, before)

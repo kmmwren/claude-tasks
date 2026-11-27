@@ -22,7 +22,7 @@ Finds, in one pass:
   facts-brief-mismatch  a facts file whose `brief` field is not its file stem
   facts-unreadable   a facts file that is not valid TOML
   unshipped          a brief in a queue inside another repo that has sat untracked or modified there for
-                     over 6 hours: nothing landed it on the host's wip branch (scripts/host_land.py <queue>)
+                     over 6 hours: nothing landed it on the host's default branch (scripts/host_land.py <queue>)
 
   python scripts/check_deps.py [--json]
 """

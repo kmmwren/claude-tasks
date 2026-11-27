@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from collections.abc import Iterable
 
-from _advance import _entries, _incoming_blobs, _run, advance_to_origin
+from _advance import _entries, _run, advance_to_origin
 
 RESCUE_PREFIX = "superseded/rescue/"
 PUSH_TIMEOUT = 120.0
@@ -159,8 +159,7 @@ def _unchanged_since(root: pathlib.Path, rescue: Rescue) -> list[str]:
 
 def _redundant(root: pathlib.Path, ref: str, rels: list[str]) -> list[str]:
     """Blocking paths whose working copy is already what `ref` holds, so origin has them."""
-    incoming = _incoming_blobs(root, ref)
-    return [rel for rel in rels if _blob_on_disk(root, rel) == incoming.get(rel)]
+    return [rel for rel in rels if _blob_on_disk(root, rel) == _blob_in(root, ref, rel)]
 
 
 def advance_or_rescue(root: pathlib.Path, branch: str, today: str) -> Advance:

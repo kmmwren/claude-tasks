@@ -9,7 +9,7 @@ import os
 import pathlib
 
 import git_sync
-from _advance import _take_away
+from _advance import Change, _take_away
 from _concurrency import Deadline
 
 from tests.test_git_sync import _clone_other, git, make_repo
@@ -131,7 +131,7 @@ def test_a_file_that_cannot_be_removed_is_left_where_it_is(tmp_path):
     blob = git(repo, "hash-object", BRIEF).stdout.strip()
     (repo / "ready").chmod(0o555)
     try:
-        assert _take_away(repo, BRIEF, blob) is None
+        assert _take_away(repo, Change(BRIEF, None, blob)) is None
     finally:
         (repo / "ready").chmod(0o755)
     assert (repo / BRIEF).read_text() == "same"

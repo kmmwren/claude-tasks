@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import _concurrency as C
 import _log_conflict
 import git_sync
+import host_land
 import pytest
 from _concurrency import Deadline
 from _push_state import PushState
@@ -600,42 +601,28 @@ def _nested_queue(tmp_path):
     return repo, queue
 
 
-def _wip_files(tmp_path, slug="project"):
-    return set(
-        git(tmp_path / "remote", "ls-tree", "-r", "--name-only", f"wip/tasks-{slug}").stdout.split()
-    )
+def _landed_files(tmp_path, ref="main"):
+    return committed_files(tmp_path / "remote", ref)
 
 
-def test_a_nested_queue_write_lands_on_the_wip_branch_and_leaves_the_host_untouched(tmp_path):
+def test_a_nested_queue_write_lands_on_the_default_branch_and_the_host_advances_onto_it(tmp_path):
     repo, queue = _nested_queue(tmp_path)
     (queue / "ready" / "x.md").write_text("x")
-    head, index = git(repo, "rev-parse", "HEAD").stdout, git(repo, "write-tree").stdout
 
     result = git_sync.sync_commit("brief(x): captured", root=queue, paths=["."])
 
     assert result is git_sync.SyncResult.HOSTED
-    assert "project/.tasks/ready/x.md" in _wip_files(tmp_path)
-    assert "project/.tasks/ready/x.md" not in committed_files(tmp_path / "remote", "main")
-    assert git(repo, "rev-parse", "HEAD").stdout == head
-    assert git(repo, "write-tree").stdout == index
-    assert git(repo, "status", "--porcelain").stdout.strip().endswith("project/")
+    assert "project/.tasks/ready/x.md" in _landed_files(tmp_path)
+    assert git(tmp_path / "remote", "branch", "--list", "wip/*").stdout == ""
+    assert git(repo, "rev-parse", "HEAD").stdout == git(repo, "rev-parse", "origin/main").stdout
+    assert git(repo, "ls-files", "project/.tasks/ready/x.md").stdout.strip()
     assert git(repo, "worktree", "list").stdout.count("\n") == 1
-    assert git(
-        tmp_path / "remote", "log", "-1", "--format=%s", "wip/tasks-project"
-    ).stdout.strip() == ("brief(x): captured")
+    assert git(tmp_path / "remote", "log", "-1", "--format=%s", "main").stdout.strip() == (
+        "brief(x): captured"
+    )
 
 
-def test_a_nested_queue_sets_the_wip_branch_upstream(tmp_path):
-    repo, queue = _nested_queue(tmp_path)
-    (queue / "ready" / "x.md").write_text("x")
-
-    git_sync.sync_commit("x", root=queue, paths=["."])
-
-    merge = git(repo, "config", "branch.wip/tasks-project.merge").stdout.strip()
-    assert merge == "refs/heads/wip/tasks-project"
-
-
-def test_a_nested_queue_deletion_is_mirrored_on_the_wip_branch(tmp_path):
+def test_a_nested_queue_deletion_is_mirrored_on_the_default_branch(tmp_path):
     repo, queue = _nested_queue(tmp_path)
     (queue / "ready" / "gone.md").write_text("gone")
     (queue / "ready" / "kept.md").write_text("kept")
@@ -646,17 +633,16 @@ def test_a_nested_queue_deletion_is_mirrored_on_the_wip_branch(tmp_path):
 
     assert git_sync.sync_commit("x", root=queue, paths=["."]) is git_sync.SyncResult.HOSTED
 
-    assert "project/.tasks/ready/gone.md" not in _wip_files(tmp_path)
-    assert "project/.tasks/ready/kept.md" in _wip_files(tmp_path)
-    assert "project/.tasks/ready/gone.md" in committed_files(tmp_path / "remote", "main")
-    assert (git(repo, "status", "--porcelain").stdout.split() or [""])[0] == "D"
+    assert "project/.tasks/ready/gone.md" not in _landed_files(tmp_path)
+    assert "project/.tasks/ready/kept.md" in _landed_files(tmp_path)
+    assert not (queue / "ready" / "gone.md").exists()
 
 
 def test_a_nested_queue_with_nothing_pending_pushes_nothing(tmp_path):
     _, queue = _nested_queue(tmp_path)
 
     assert git_sync.sync_commit("x", root=queue, paths=["."]) is git_sync.SyncResult.HOSTED
-    assert _wip_files(tmp_path) == set()
+    assert git(tmp_path / "remote", "rev-list", "--count", "main").stdout.strip() == "1"
 
 
 def test_a_credential_bearing_nested_file_is_not_landed(tmp_path, capsys):
@@ -666,7 +652,7 @@ def test_a_credential_bearing_nested_file_is_not_landed(tmp_path, capsys):
     git_sync.sync_commit("x", root=queue, paths=["."])
 
     assert "1 held back" in capsys.readouterr().out
-    assert _wip_files(tmp_path) == set()
+    assert "project/.tasks/ready/leak.md" not in _landed_files(tmp_path)
 
 
 def test_a_nested_queue_in_a_repo_with_no_origin_defers(tmp_path, capsys):
@@ -1623,7 +1609,8 @@ def test_a_lock_newer_than_the_clock_reads_zero_minutes(tmp_path, monkeypatch):
     assert " is 0 min old" in git_sync._index_lock_note(f"Unable to create '{lock}'")
 
 
-def test_a_nested_queue_landed_on_its_wip_branch_counts_as_pushed(tmp_path):
+def test_a_nested_queue_parked_on_its_wip_branch_counts_as_pushed(tmp_path, monkeypatch):
+    monkeypatch.setattr(host_land, "_land_on_default", lambda *_a: "rejected by a hook")
     repo = make_repo(tmp_path)
     queue = repo / "project" / ".tasks"
     (queue / "ready").mkdir(parents=True)
