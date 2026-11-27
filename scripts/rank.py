@@ -115,7 +115,7 @@ def prioritise_rows(root: pathlib.Path, scope: Scope | None = None) -> list[dict
 def facts(row: Mapping[str, Any]) -> str:
     return (
         f"importance {row.get('importance') or '?'}; due {row.get('due') or 'none'}; "
-        f"effort {row.get('effort') or '?'}; unlocks {len(row.get('unlocks') or [])} briefs"
+        f"effort {row.get('effort') or '?'}; unlocks {row.get('unlocks') or 0} briefs"
     )
 
 

@@ -50,7 +50,7 @@ def rows(*ids, blocked=()):
             "importance": "3",
             "due": "",
             "effort": "m",
-            "unlocks": ["x"] if i == "a" else [],
+            "unlocks": 1 if i == "a" else 0,
             "blocked": i in blocked,
         }
         for i in ids
