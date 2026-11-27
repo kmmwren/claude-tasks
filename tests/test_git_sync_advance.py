@@ -29,6 +29,13 @@ def _origin_moves(tmp_path: pathlib.Path, name: str = BRIEF, text: str = "same")
     _push_from_other(_clone_other(tmp_path), name, text)
 
 
+def _publish(repo: pathlib.Path, message: str) -> None:
+    """Commit everything in `repo` and push it to origin's main."""
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", message)
+    git(repo, "push", "-q", "origin", "main")
+
+
 def _advance(repo: pathlib.Path) -> None:
     git_sync._advance_checkout(repo, Deadline.in_(60))
 
@@ -72,9 +79,7 @@ def test_an_identical_brief_is_written_back_when_a_tracked_edit_still_blocks_the
 ):
     repo = make_repo(tmp_path)
     (repo / "ready" / "theirs.md").write_text("v1")
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", "theirs")
-    git(repo, "push", "-q", "origin", "main")
+    _publish(repo, "theirs")
     before = _head(repo)
     other = _clone_other(tmp_path)
     _push_from_other(other, "ready/theirs.md", "v2")
@@ -96,9 +101,7 @@ def test_an_identical_brief_is_written_back_when_a_tracked_edit_still_blocks_the
 def test_a_brief_still_in_head_but_dropped_from_the_index_is_left_alone(tmp_path, capsys):
     repo = make_repo(tmp_path)
     (repo / BRIEF).write_text("v1")
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", "brief")
-    git(repo, "push", "-q", "origin", "main")
+    _publish(repo, "brief")
     before = _head(repo)
     _origin_moves(tmp_path, BRIEF, "v2")
     (repo / BRIEF).write_text("v2")
@@ -135,3 +138,53 @@ def test_a_file_that_cannot_be_removed_is_left_where_it_is(tmp_path):
     finally:
         (repo / "ready").chmod(0o755)
     assert (repo / BRIEF).read_text() == "same"
+
+
+def test_a_symlink_origin_adds_is_left_to_the_reset_to_bring_in(tmp_path):
+    repo = make_repo(tmp_path)
+    other = _clone_other(tmp_path)
+    (other / "ready" / "link.md").parent.mkdir(exist_ok=True)
+    (other / "ready" / "link.md").symlink_to("held.md")
+    _publish(other, "link")
+
+    _advance(repo)
+
+    assert _head(repo) == _origin_head(repo)
+    assert os.readlink(repo / "ready" / "link.md") == "held.md"
+
+
+def test_a_symlink_standing_where_origin_adds_a_brief_is_never_cleared(tmp_path, capsys):
+    repo = make_repo(tmp_path)
+    before = _head(repo)
+    _origin_moves(tmp_path)
+    (repo / "same.txt").write_text("same")
+    (repo / BRIEF).symlink_to(repo / "same.txt")
+
+    _advance(repo)
+
+    assert _head(repo) == before
+    assert (repo / BRIEF).is_symlink()
+    assert "checkout was not advanced" in capsys.readouterr().out
+
+
+def test_a_brief_origin_deleted_stays_deleted_when_a_tracked_edit_blocks_the_reset(
+    tmp_path, capsys
+):
+    repo = make_repo(tmp_path)
+    (repo / BRIEF).write_text("done with")
+    (repo / "ready" / "theirs.md").write_text("v1")
+    _publish(repo, "two briefs")
+    before = _head(repo)
+    other = _clone_other(tmp_path)
+    (other / BRIEF).unlink()
+    (other / "ready" / "theirs.md").write_text("v2")
+    _publish(other, "drop one, edit the other")
+    (repo / BRIEF).unlink()
+    (repo / "ready" / "theirs.md").write_text("an uncommitted note")
+
+    _advance(repo)
+
+    assert _head(repo) == before
+    assert not (repo / BRIEF).exists()
+    assert (repo / "ready" / "theirs.md").read_text() == "an uncommitted note"
+    assert "checkout was not advanced" in capsys.readouterr().out
