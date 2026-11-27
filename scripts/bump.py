@@ -17,7 +17,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _paths import require_queue, resolve_root  # noqa: E402
-from deps import fm  # noqa: E402
+from deps import fm, read_briefs  # noqa: E402
 from git_sync import sync_commit  # noqa: E402
 from picks import note_choice  # noqa: E402
 
@@ -29,23 +29,24 @@ def tag_for(ref: str) -> str:
     return f"pr:{ref}" if REF.match(ref) else ref
 
 
-def find(root: pathlib.Path, tag: str) -> pathlib.Path | None:
+def find(root: pathlib.Path, tag: str) -> tuple[pathlib.Path, str] | None:
+    """The open brief carrying `tag` with its text, the PR queue's own brief ahead of any other."""
     tagged = [
-        path
+        (path, text)
         for folder in FOLDERS
-        for path in sorted((root / folder).glob("*.md"))
-        if tag in tags(path)
+        for path, text in read_briefs(root / folder)
+        if tag in tags(text)
     ]
-    return next((p for p in tagged if owned_by_pr_queue(p, tag)), tagged[0] if tagged else None)
+    return next((b for b in tagged if owned_by_pr_queue(b[1], tag)), tagged[0] if tagged else None)
 
 
-def tags(path: pathlib.Path) -> set[str]:
-    return {t.strip() for t in fm(path.read_text()).get("tags", "").strip().strip("[]").split(",")}
+def tags(text: str) -> set[str]:
+    return {t.strip() for t in fm(text).get("tags", "").strip().strip("[]").split(",")}
 
 
-def owned_by_pr_queue(path: pathlib.Path, tag: str) -> bool:
+def owned_by_pr_queue(text: str, tag: str) -> bool:
     """The PR-queue sync titles its own brief `PR <ref>: ...`; a session's brief on the same PR copies the tag, not the title."""
-    return tag.startswith("pr:") and fm(path.read_text()).get("title", "").strip('"').startswith(
+    return tag.startswith("pr:") and fm(text).get("title", "").strip('"').startswith(
         f"PR {tag[3:]}: "
     )
 
@@ -53,10 +54,10 @@ def owned_by_pr_queue(path: pathlib.Path, tag: str) -> bool:
 def bump(
     root: pathlib.Path, ref: str, importance: int, reason: str, now: datetime.datetime | None = None
 ) -> str:
-    path = find(root, tag_for(ref))
-    if path is None:
+    found = find(root, tag_for(ref))
+    if found is None:
         raise SystemExit(f"no open brief tagged {tag_for(ref)}")
-    text = path.read_text()
+    path, text = found
     current = int(fm(text).get("importance", "3"))
     if importance >= current:
         return f"unchanged: importance {current} is already as high as {importance} or higher"

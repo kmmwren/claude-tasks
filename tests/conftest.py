@@ -55,3 +55,20 @@ def _no_ambient_hygiene(monkeypatch):
     import hygiene
 
     monkeypatch.setattr(hygiene, "STEPS", ())
+
+
+@pytest.fixture
+def vanish_on_first_read(monkeypatch):
+    """Arm a path that another session moves out of its folder after it was listed but before it is read."""
+
+    def arm(path: pathlib.Path) -> None:
+        original = type(path).read_text
+
+        def read_text(self, *args, **kwargs):
+            if self == path:
+                self.unlink(missing_ok=True)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(path), "read_text", read_text)
+
+    return arm

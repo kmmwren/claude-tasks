@@ -14,7 +14,7 @@ This module owns the register's format and the one idempotent write path, so the
 existing one and are never reused or renumbered; an item whose quote and source are already
 registered is skipped, so re-running extraction on the same messages changes nothing.
 
-Stdlib only, so a repo can vendor it with `_paths.py` and `requirements_check.py`.
+Stdlib only, so a repo can vendor it with `_paths.py`, `deps.py` and `requirements_check.py`.
 """
 
 import argparse

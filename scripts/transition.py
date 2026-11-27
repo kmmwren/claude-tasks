@@ -60,6 +60,7 @@ from deps import (
     parse_list,
     probe_gaps,
     queue_name,
+    read_briefs,
     ref_problem,
     resolve_queue,
     same_queue,
@@ -104,18 +105,10 @@ def find_brief(brief_id: str, root: pathlib.Path) -> pathlib.Path | None:
     by_id = (
         f
         for d in folders
-        for f in sorted(d.glob("*.md"))
-        if (text := _text_if_present(f)) is not None and identity_of(fm(text), f.stem) == brief_id
+        for f, text in read_briefs(d)
+        if identity_of(fm(text), f.stem) == brief_id
     )
     return next((p for p in chain(by_stem, by_id) if p.exists()), None)
-
-
-def _text_if_present(path: pathlib.Path) -> str | None:
-    """None for a brief another process moved between the folder listing and the read."""
-    try:
-        return path.read_text()
-    except FileNotFoundError:
-        return None
 
 
 def _require_enriched(brief_id: str, new_status: str, path: pathlib.Path) -> None:
@@ -194,8 +187,8 @@ def resolve_brief(
     """Rank actionable briefs by relevance to `query`. Best first; non-matches dropped."""
     hits: list[dict[str, Any]] = []
     for d in statuses:
-        for f in sorted((root / d).glob("*.md")):
-            brief = fm(f.read_text())
+        for f, text in read_briefs(root / d):
+            brief = fm(text)
             s = _score(query, brief)
             if s > 0:
                 hits.append(

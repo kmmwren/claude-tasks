@@ -14,7 +14,7 @@ import hashlib
 import pathlib
 import re
 
-from deps import fm, parse_list
+from deps import fm, parse_list, read_briefs
 from readiness import EXECUTION_LOG, brief_missing_fields, raw_title, section
 from transition import set_field
 from triage_sources import cited_sources
@@ -104,7 +104,7 @@ class InboxBrief:
 
 def load_folder(root: pathlib.Path, folder: str) -> list[InboxBrief]:
     """Every structured brief in root/folder, in id order; raw captures are left for the enrich skill."""
-    briefs = (InboxBrief(f, f.read_text()) for f in sorted((root / folder).glob("*.md")))
+    briefs = (InboxBrief(f, text) for f, text in read_briefs(root / folder))
     return [b for b in briefs if b.structured]
 
 

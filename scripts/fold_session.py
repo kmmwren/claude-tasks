@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from _concurrency import atomic_write, repo_lock, reserve_name
 from _paths import CONFIG_FILE, TASK_DIRS, binding_path, require_queue, warn
 from config import load_config
-from deps import Brief, fm, load_queue
+from deps import Brief, fm, load_queue, read_briefs
 from facts import facts_path
 from git_sync import host_repo_name, sync_commit
 
@@ -59,8 +59,8 @@ class SessionQueue:
 
     def open_briefs(self) -> Iterator[pathlib.Path]:
         for status in OPEN_DIRS:
-            for path in sorted((self.root / status).glob("*.md")):
-                if not _STUB.match(path.read_text()):
+            for path, text in read_briefs(self.root / status):
+                if not _STUB.match(text):
                     yield path
 
     def fold(self, env: Mapping[str, str] | None = None) -> list[Move]:
@@ -118,10 +118,10 @@ class SessionQueue:
             brief = Brief("", "", fm(move.dest.read_text()))
             wanted |= brief.declared_ids | brief.legacy_tokens
         wanted -= {b.id for b in load_queue(self.fold_to)}
-        for done in sorted((self.root / "done").glob("*.md")):
-            if _brief_id(done) in wanted:
+        for done, text in read_briefs(self.root / "done"):
+            if _text_id(text, done.stem) in wanted:
                 carried = self._reserve(done)
-                atomic_write(carried.dest, done.read_text())
+                atomic_write(carried.dest, text)
 
     def _mark_folded(self) -> None:
         config = self.root / CONFIG_FILE
@@ -135,7 +135,11 @@ class SessionQueue:
 
 
 def _brief_id(path: pathlib.Path) -> str:
-    return fm(path.read_text()).get("id", path.stem)
+    return _text_id(path.read_text(), path.stem)
+
+
+def _text_id(text: str, stem: str) -> str:
+    return fm(text).get("id", stem)
 
 
 def _retarget(text: str, renames: Mapping[str, str], own_id: str | None) -> str:

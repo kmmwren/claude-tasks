@@ -36,7 +36,7 @@ from collections.abc import Callable, Iterator
 
 from _paths import require_queue, resolve_root, warn
 from claim import IN_PROGRESS, Claim, Claimer, Lease, Target
-from deps import Brief, brief_id, done_ids, fm, unmet
+from deps import Brief, brief_id, done_ids, fm, read_briefs, unmet
 from headless import Launch, ScriptLaunch, launcher_script, rank_table, spawn_detached
 from hygiene import Engine, Hygiene, HygieneResult
 from hygiene_lease import HygieneLeaser
@@ -106,12 +106,13 @@ class Scanner:
 
     def candidates(self, now: dt.datetime) -> Iterator[Candidate]:
         for folder in (*WAKE_FOLDERS, IN_PROGRESS):
-            for path in sorted((self.root / folder).glob("*.md")):
-                yield from self._candidate(folder, path, now)
+            for path, text in read_briefs(self.root / folder):
+                yield from self._candidate(folder, path, text, now)
 
-    def _candidate(self, folder: str, path: pathlib.Path, now: dt.datetime) -> Iterator[Candidate]:
+    def _candidate(
+        self, folder: str, path: pathlib.Path, text: str, now: dt.datetime
+    ) -> Iterator[Candidate]:
         try:
-            text = path.read_text()
             ident = brief_id(fm(text), path.stem)
             wake = Wake.parse(ident, text)
             if wake is not None and self._claimable(

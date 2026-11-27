@@ -2,6 +2,7 @@
 
 import dataclasses
 import datetime as dt
+import pathlib
 import subprocess
 import time
 
@@ -297,12 +298,20 @@ def test_a_malformed_brief_warns_and_the_rest_still_run(tmp_path, capsys):
     assert "skipping bad.md" in capsys.readouterr().err
 
 
-def test_a_brief_that_cannot_be_read_is_skipped(tmp_path, capsys):
+def test_a_brief_that_cannot_be_read_is_skipped_with_a_warning(tmp_path, monkeypatch, capsys):
     clone = queue_repo(tmp_path)
     add_brief(clone, "good", not_before=PAST)
-    (clone / "ready" / "gone.md").symlink_to(clone / "nowhere.md")
+    locked = add_brief(clone, "locked", not_before=PAST)
+    original = pathlib.Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", read_text)
     assert maintainer(clone, []).tick().claimed == ("good",)
-    assert "skipping gone.md" in capsys.readouterr().err
+    assert "locked.md" in capsys.readouterr().err
 
 
 def test_a_lost_claim_is_reported_and_nothing_is_run(tmp_path, monkeypatch):
@@ -618,3 +627,13 @@ def test_main_exits_75_when_the_judgement_phase_is_deferred_for_want_of_credits(
     judge = dataclasses.replace(step_script(tmp_path, 0), phase=Phase.JUDGEMENT)
     clone = queue_repo(tmp_path)
     assert run_main(clone, monkeypatch, step_script(tmp_path, 0), judge) == 75
+
+
+def test_a_brief_moved_away_mid_scan_is_skipped_and_the_rest_still_run(
+    tmp_path, vanish_on_first_read
+):
+    clone = queue_repo(tmp_path)
+    ghost = add_brief(clone, "a-ghost", not_before=PAST)
+    add_brief(clone, "b-good", not_before=PAST)
+    vanish_on_first_read(ghost)
+    assert maintainer(clone, []).tick().claimed == ("b-good",)

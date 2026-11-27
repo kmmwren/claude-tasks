@@ -1389,3 +1389,25 @@ def test_set_fields_refuses_text_without_frontmatter_so_a_record_is_never_droppe
 
 def test_set_fields_with_nothing_to_set_leaves_any_text_alone():
     assert transition._set_fields("no frontmatter\n", {}) == "no frontmatter\n"
+
+
+def test_a_done_move_survives_an_unrelated_brief_moved_away_mid_scan(
+    root, monkeypatch, capsys, vanish_on_first_read
+):
+    ghost = root / "ready" / "moved-by-another-session.md"
+    ghost.write_text(
+        _brief(
+            "ready", "moved-by-another-session", "Moved by another session", declared=DECLARED_NONE
+        )
+    )
+    vanish_on_first_read(ghost)
+    commits = []
+    monkeypatch.setattr(transition, "sync_commit", lambda msg, *a, **k: commits.append(msg))
+
+    transition.main(
+        ["move", "rotate-the-api-key", "done", "--root", str(root), "--today", "2026-06-03"]
+    )
+
+    assert (root / "done" / "rotate-the-api-key.md").exists()
+    assert commits == ["brief(rotate-the-api-key): → done"]
+    assert "next:" in capsys.readouterr().out

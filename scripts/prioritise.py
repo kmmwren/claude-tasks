@@ -52,7 +52,7 @@ from typing import Any
 
 from _paths import known_roots, require_queue, resolve_root
 from config import load_config_or_defaults
-from deps import Brief, brief_id, dependency_edges, done_ids, fm, load_queue, unmet
+from deps import Brief, brief_id, dependency_edges, done_ids, fm, load_queue, read_briefs, unmet
 from fleet_blockers import FleetBlockers
 from scope import SCOPE_HELP, AllScope, Scope, parse_scope
 from signals import Signal, SignalWeights, Subject
@@ -384,8 +384,8 @@ def index_queue(root: pathlib.Path) -> tuple[dict[str, str], dict[str, int]]:
     edges: set[tuple[str, str]] = set()
     blocks_edges: set[tuple[str, str]] = set()
     for d in INDEX_DIRS:
-        for f in (root / d).glob("*.md"):
-            b = fm(f.read_text())
+        for f, text in read_briefs(root / d):
+            b = fm(text)
             bid = brief_id(b, f.stem)
             status_by_id[bid] = d
             edges |= {(dep, bid) for dep in parse_deps(b)}
@@ -627,19 +627,20 @@ def _orders(items: list[dict[str, Any]], weights: Weights) -> dict[Scorer, list[
     return orders
 
 
-def _load_fields(path: pathlib.Path) -> dict[str, Any]:
+def _load_fields(path: pathlib.Path, text: str) -> dict[str, Any]:
     """The brief's frontmatter with `id` always set, so no row ever carries a null id."""
-    fields: dict[str, Any] = dict(fm(path.read_text()))
+    fields: dict[str, Any] = dict(fm(text))
     fields["id"] = brief_id(fields, path.stem)
     return fields
 
 
-def _brief_files(root: pathlib.Path, ids: frozenset[str] | None) -> list[pathlib.Path]:
-    """ready/ briefs, or the named briefs wherever they are live."""
-    if ids is None:
-        return sorted((root / "ready").glob("*.md"))
-    live = (f for d in LIVE_DIRS for f in sorted((root / d).glob("*.md")))
-    return [f for f in live if brief_id(fm(f.read_text()), f.stem) in ids]
+def _briefs(
+    root: pathlib.Path, ids: frozenset[str] | None
+) -> list[tuple[pathlib.Path, dict[str, Any]]]:
+    """ready/ briefs, or the named briefs wherever they are live, with their fields."""
+    dirs = ("ready",) if ids is None else LIVE_DIRS
+    loaded = ((f, _load_fields(f, text)) for d in dirs for f, text in read_briefs(root / d))
+    return [(f, b) for f, b in loaded if ids is None or b["id"] in ids]
 
 
 def rank(
@@ -662,8 +663,7 @@ def rank(
     fleet = FleetBlockers.from_config(root, config)
     today = today or datetime.date.today()
     ctx = _RankContext.load(root, today, context, scope, weights, tags, fleet)
-    fields = [(f, _load_fields(f)) for f in _brief_files(root, ids)]
-    items = [_annotate(f, b, ctx) for f, b in fields if scope.admits(subject(b))]
+    items = [_annotate(f, b, ctx) for f, b in _briefs(root, ids) if scope.admits(subject(b))]
     chosen = scorer or weights.scorer
     for b in items:
         b["_score"] = b[f"_score_{chosen.value}"]

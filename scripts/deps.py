@@ -21,9 +21,9 @@ import dataclasses
 import datetime
 import pathlib
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
-from _paths import CONFIG_FILE, PROJECT_MARKER, TASK_DIRS, strip_comment
+from _paths import CONFIG_FILE, PROJECT_MARKER, TASK_DIRS, strip_comment, warn
 
 EXTERNAL_PREFIX = "external:"
 BRIEF_DIRS = tuple(d for d in TASK_DIRS if d != "inbox")
@@ -267,12 +267,24 @@ def declares_dependencies(fields: dict[str, str]) -> bool:
     return "blocked_by" in fields or bool(parse_list(fields.get("blockers", "")) or depends)
 
 
+def read_briefs(directory: pathlib.Path) -> Iterator[tuple[pathlib.Path, str]]:
+    """Each brief in `directory` with its text; one moved away after the listing is skipped silently, any other unreadable one with a warning."""
+    for path in sorted(directory.glob("*.md")):
+        try:
+            text = path.read_text()
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            warn(f"skipping unreadable brief {path}: {e}")
+            continue
+        yield path, text
+
+
 def load_queue(root: pathlib.Path) -> list[Brief]:
     """Every brief across the lifecycle folders. A folder that does not exist is empty."""
     out: list[Brief] = []
     for d in BRIEF_DIRS:
-        for f in sorted((root / d).glob("*.md")):
-            text = f.read_text()
+        for f, text in read_briefs(root / d):
             fields = fm(text)
             out.append(Brief(brief_id(fields, f.stem), d, fields, fm_repeated(text), text))
     return out
