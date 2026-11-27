@@ -30,6 +30,7 @@ import project_view as pv
 import rollup_views as rv
 from _concurrency import atomic_write
 from _paths import PROJECT_MARKER, is_queue, resolve_root, warn
+from deps import unreadable_briefs
 from queue_snapshot import QueueSnapshot, SnapshotUnavailable, read_queue
 
 CONFIG_ENV = "CLAUDE_TASKS_ROLLUP_CONFIG"
@@ -222,6 +223,9 @@ def _reject_repeated_labels(found: list[Source]) -> None:
 def entry_or_omission(
     source: Source, snapshot: QueueSnapshot, now: dt.datetime
 ) -> rv.Entry | rv.Omission:
+    if unreadable := unreadable_briefs(snapshot.root):
+        # Scanners skip such a brief with a warning; a roll-up that did would under-report silently.
+        return source.omission("; ".join(_os_reason(u.error, snapshot.root) for u in unreadable))
     try:
         return rv.Entry.read(source.label, snapshot, now)
     except (pv.ProjectConfigError, tomllib.TOMLDecodeError) as e:

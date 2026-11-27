@@ -267,17 +267,37 @@ def declares_dependencies(fields: dict[str, str]) -> bool:
     return "blocked_by" in fields or bool(parse_list(fields.get("blockers", "")) or depends)
 
 
-def read_briefs(directory: pathlib.Path) -> Iterator[tuple[pathlib.Path, str]]:
-    """Each brief in `directory` with its text; one moved away after the listing is skipped silently, any other unreadable one with a warning."""
+@dataclasses.dataclass(frozen=True)
+class UnreadableBrief:
+    """A brief that exists but cannot be read, with the error that says why."""
+
+    path: pathlib.Path
+    error: OSError
+
+
+def scan_briefs(directory: pathlib.Path) -> Iterator[tuple[pathlib.Path, str] | UnreadableBrief]:
+    """Each brief in `directory` as its text or as why it has none; one moved away after the listing is not reported."""
     for path in sorted(directory.glob("*.md")):
         try:
-            text = path.read_text()
+            yield path, path.read_text()
         except FileNotFoundError:
             continue
         except OSError as e:
-            warn(f"skipping unreadable brief {path}: {e}")
-            continue
-        yield path, text
+            yield UnreadableBrief(path, e)
+
+
+def read_briefs(directory: pathlib.Path) -> Iterator[tuple[pathlib.Path, str]]:
+    """Each readable brief in `directory` with its text; an unreadable one is skipped with a warning naming it."""
+    for found in scan_briefs(directory):
+        if isinstance(found, UnreadableBrief):
+            warn(f"skipping unreadable brief {found.path}: {found.error}")
+        else:
+            yield found
+
+
+def unreadable_briefs(root: pathlib.Path) -> list[UnreadableBrief]:
+    """Every brief in `root`'s lifecycle folders, inbox included, that a scan has to skip."""
+    return [u for d in TASK_DIRS for u in scan_briefs(root / d) if isinstance(u, UnreadableBrief)]
 
 
 def load_queue(root: pathlib.Path) -> list[Brief]:
