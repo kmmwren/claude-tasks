@@ -33,7 +33,9 @@ INTERVAL = 4 * HOURS
 A = Step("a", Phase.DETERMINISTIC, Home.PLUGIN, "a.py")
 B = Step("b", Phase.DETERMINISTIC, Home.PLUGIN, "b.py", ok_codes=frozenset({0, 1}))
 ROUTE = Step("route", Phase.DETERMINISTIC, Home.COORDINATOR, "router.py")
-PROJECT_HYGIENE = Step("project-hygiene", Phase.DETERMINISTIC, Home.COORDINATOR, "coordinator.py", ("hygiene",))
+PROJECT_HYGIENE = Step(
+    "project-hygiene", Phase.DETERMINISTIC, Home.COORDINATOR, "coordinator.py", ("hygiene",)
+)
 J = Step("j", Phase.JUDGEMENT, Home.PLUGIN, "j.py")
 NO_CAPACITY = "class S:\n    accounts = {'x': 1}\n\n    def free(self, now=None):\n        return []\n\n\ndef load():\n    return S()\n"
 
@@ -138,8 +140,21 @@ def test_project_hygiene_is_a_deterministic_coordinator_step_ordered_after_route
     step = steps[names.index("project-hygiene")]
     assert (step.phase, step.home) == (real["Phase"].DETERMINISTIC, real["Home"].COORDINATOR)
     assert (step.script, step.args, step.ok_codes) == (
-        PROJECT_HYGIENE.script, PROJECT_HYGIENE.args, PROJECT_HYGIENE.ok_codes)
+        PROJECT_HYGIENE.script,
+        PROJECT_HYGIENE.args,
+        PROJECT_HYGIENE.ok_codes,
+    )
     assert names.index("project-hygiene") == names.index("route") + 1
+
+
+def test_the_installed_coordinator_accepts_the_project_hygiene_step():
+    where = pathlib.Path(os.environ.get(hy.COORDINATOR_ENV) or hy.COORDINATOR_DIR).expanduser()
+    coordinator = where / PROJECT_HYGIENE.script
+    if not coordinator.is_file():
+        pytest.skip(f"{coordinator} is not installed here")
+    argv = [sys.executable, str(coordinator), *PROJECT_HYGIENE.args, "--help"]
+    done = subprocess.run(argv, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
 
 
 def test_the_production_engine_runs_the_step_table_as_subprocesses(tmp_path, monkeypatch):

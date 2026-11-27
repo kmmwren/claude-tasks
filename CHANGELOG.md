@@ -8,6 +8,9 @@
   branch neither blocks the push nor moves.
 
 ### Added
+- **maintain keeps project queues current.** The deterministic tier runs the coordinator's
+  `coordinator.py hygiene` straight after `route`, so each registered project's merged-PR closes,
+  duplicates, expired questions, unblocks and checklist refresh land on its remote every pass.
 - **A behind host checkout advances instead of drifting.** `host_land.level_host` brings a repo that
   hosts a queue level with origin's default branch. Local edits that would block the advance are first
   committed to a pushed `superseded/rescue/<repo>-<date>` tag, so nothing is lost and the host's
