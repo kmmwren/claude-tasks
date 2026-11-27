@@ -127,3 +127,18 @@ def test_mirroring_a_path_the_source_no_longer_holds_removes_it(tmp_path):
     host_land._mirror(top, wt, ["ready/gone.md"])
 
     assert not (wt / "ready" / "gone.md").exists()
+
+
+def test_a_leftover_worktree_holding_the_wip_branch_neither_blocks_the_land_nor_moves(tmp_path):
+    queue = _nested_queue(tmp_path)
+    host = queue.parent.parent
+    leftover = tmp_path / "leftover"
+    git(host, "worktree", "add", "-q", "-b", "wip/tasks-project", str(leftover))
+    before = git(leftover, "rev-parse", "HEAD").stdout
+
+    assert host_land.land_host_queue(queue) is True
+
+    shipped = git(tmp_path / "remote", "ls-tree", "-r", "--name-only", "wip/tasks-project").stdout
+    assert "project/.tasks/ready/x.md" in shipped
+    assert git(leftover, "rev-parse", "HEAD").stdout == before
+    assert git(leftover, "status", "--porcelain").stdout == ""

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- **A leftover checkout of a wip branch no longer defers every host land.** `host_land` cuts its throwaway
+  worktree detached and sets the `wip/tasks-<slug>` upstream on the host, so a stale worktree holding that
+  branch neither blocks the push nor moves.
+
 ### Added
 - **A behind host checkout advances instead of drifting.** `host_land.level_host` brings a repo that
   hosts a queue level with origin's default branch. Local edits that would block the advance are first

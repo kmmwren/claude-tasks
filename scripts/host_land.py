@@ -134,14 +134,17 @@ class HostQueue:
 
 @contextlib.contextmanager
 def _worktree(queue: HostQueue, start: str) -> Iterator[pathlib.Path]:
-    """A throwaway checkout of `start` on the queue's wip branch, upstream set; removed on exit."""
+    """A detached throwaway checkout of `start`, removed on exit; the wip branch's upstream is set on the host.
+
+    Detached, because a leftover worktree that has the wip branch checked out would otherwise defer every land.
+    """
     branch = queue.branch
     with tempfile.TemporaryDirectory(prefix="host-land-") as tmp:
         wt = pathlib.Path(tmp) / "wt"
-        _git(queue.top, "worktree", "add", "-q", "--no-track", "-B", branch, str(wt), start)
+        _git(queue.top, "worktree", "add", "-q", "--detach", str(wt), start)
         try:
-            _git(wt, "config", f"branch.{branch}.remote", "origin")
-            _git(wt, "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
+            _git(queue.top, "config", f"branch.{branch}.remote", "origin")
+            _git(queue.top, "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
             yield wt
         finally:
             subprocess.run(
