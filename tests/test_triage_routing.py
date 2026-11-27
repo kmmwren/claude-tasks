@@ -102,26 +102,44 @@ def test_no_needs_a_pr_alert_is_raised(tmp_path, events):
     assert report.alerts == [] and bell.texts == []
 
 
+def _run_through_the_cli(tmp_path, monkeypatch, spawn):
+    """Triage over one routable brief with a real `RouterCli` whose detached spawn is `spawn`."""
+    monkeypatch.setattr(triage_route, "spawn_detached", spawn)
+    monkeypatch.setattr(triage_route, "ROUTER_LOG", tmp_path / "router.log")
+    script = tmp_path / "router.py"
+    script.write_text("")
+    root = make_inbox(tmp_path, {"filed": FILED})
+    base = triage.Options(root, True, GATE, None, 5, 1, None, "2026-11-25")
+    monkeypatch.setattr(RouterCli, "plan", lambda self: DIRECT)
+    monkeypatch.setattr(RouterCli, "apply", lambda self, project, ids: True)
+    options = dataclasses.replace(base, router=RouterCli(script), notify=Bell())
+    return triage.run(options), script
+
+
 def test_a_routed_brief_starts_a_detached_land(tmp_path, events, monkeypatch):
-    log = tmp_path / "router.log"
     started = []
 
     def fake_spawn(launch, args, reason, log_path, cwd, env=None):
         started.append((launch.argv(args), log_path, cwd))
         return 1
 
-    monkeypatch.setattr(triage_route, "spawn_detached", fake_spawn)
-    monkeypatch.setattr(triage_route, "ROUTER_LOG", log)
-    script = tmp_path / "router.py"
-    script.write_text("")
-    root = make_inbox(tmp_path, {"filed": FILED})
-    base = triage.Options(root, True, GATE, None, 5, 1, None, "2026-11-25")
-    router = RouterCli(script)
-    monkeypatch.setattr(RouterCli, "plan", lambda self: DIRECT)
-    monkeypatch.setattr(RouterCli, "apply", lambda self, project, ids: True)
-    report = triage.run(dataclasses.replace(base, router=router, notify=Bell()))
+    report, script = _run_through_the_cli(tmp_path, monkeypatch, fake_spawn)
     assert report.routed == ["filed"]
-    assert started == [([triage_route.sys.executable, str(script), "land"], log, tmp_path)]
+    argv = [triage_route.sys.executable, str(script), "land"]
+    assert started == [(argv, tmp_path / "router.log", tmp_path)]
+
+
+def test_a_router_land_that_cannot_start_is_reported_and_triage_carries_on(
+    tmp_path, events, monkeypatch, capsys
+):
+    def cannot_start(launch, args, reason, log_path, cwd, env=None):
+        raise OSError("no such interpreter")
+
+    report, _ = _run_through_the_cli(tmp_path, monkeypatch, cannot_start)
+    assert report.routed == ["filed"] and report.alerts == []
+    err = capsys.readouterr().err
+    assert "triage: router land did not start: no such interpreter" in err
+    assert "promoted briefs stay in the general queue" in err
 
 
 def test_nothing_is_landed_when_nothing_was_routed(tmp_path, events):

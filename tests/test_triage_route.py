@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import time
 
 import pytest
 import triage_route
@@ -115,3 +116,15 @@ def test_with_no_env_the_installed_router_is_used_when_it_exists(tmp_path, monke
     assert RouterCli.configured() is None
     (tmp_path / "router.py").write_text("")
     assert RouterCli.configured() == RouterCli(tmp_path / "router.py")
+
+
+def test_a_router_land_runs_the_router_detached_with_the_callers_environment(tmp_path, monkeypatch):
+    out = tmp_path / "land.txt"
+    monkeypatch.setenv("LAND_OUT", str(out))
+    monkeypatch.setattr(triage_route, "ROUTER_LOG", tmp_path / "logs" / "router.log")
+    body = "import os\nopen(os.environ['LAND_OUT'], 'w').write(' '.join(sys.argv[1:]) + '\\n')"
+    _fake_router(tmp_path, body).land()
+    deadline = time.monotonic() + 10
+    while not (out.exists() and out.read_text().endswith("\n")) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert out.read_text() == "land\n"
