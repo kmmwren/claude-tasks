@@ -2,13 +2,16 @@
 """
 maintain.py: the one entry point that wakes due briefs, whatever triggers it.
 
-  python scripts/maintain.py --tier laptop|cloud [--root PATH]
+  python scripts/maintain.py --tier laptop|cloud [--root PATH] [--skip-if-fresh MINUTES]
 
 A tick reads its tier's last-run record and exits at once while it is younger than the tier's
 interval. Otherwise it finds the briefs that are due (`not_before` passed or `wake_probe` clear),
 skips those its tier cannot serve (`needs:`), claims each with a git-pushed lease, hands the claimed
 brief to a detached headless run through the launcher, and records the tick. A LaunchAgent, a cloud
 routine or a person can call it; nothing here assumes the laptop.
+
+`--skip-if-fresh` widens that check to every tier's record, so a cloud routine stands down while the
+laptop has ticked within the window; it prints `fresh, skipping` and writes nothing.
 
 Report lines go to stdout, one per brief that needs a person: `overdue`, `overdue-needs-<cap>`.
 A malformed brief or a failing probe warns and is skipped. The exit status is 0 for a clean tick or one
@@ -290,12 +293,34 @@ def _launcher(root: pathlib.Path) -> Launch | None:
     return ScriptLaunch(str(script)) if script else None
 
 
+def fresh_run(root: pathlib.Path, window: dt.timedelta, now: dt.datetime) -> LastRun | None:
+    """The first tier's record younger than `window`, whichever tier wrote it."""
+    records = (LastRun.read(root, tier.value) for tier in Tier)
+    return next((r for r in records if r is not None and r.fresh(now, window)), None)
+
+
+def positive_minutes(text: str) -> dt.timedelta:
+    minutes = float(text)
+    if minutes <= 0:
+        raise argparse.ArgumentTypeError(f"{text} is not a positive number of minutes")
+    return dt.timedelta(minutes=minutes)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Wake the briefs that are due, then record the tick.")
     ap.add_argument("--tier", required=True, choices=[t.value for t in Tier])
     ap.add_argument("--root", help="queue directory (default: the resolved queue)")
+    ap.add_argument(
+        "--skip-if-fresh",
+        type=positive_minutes,
+        metavar="MINUTES",
+        help="exit 0 without running while any tier's last-run record is younger than this",
+    )
     a = ap.parse_args(argv)
     root = require_queue(pathlib.Path(a.root) if a.root else resolve_root())
+    if a.skip_if_fresh and (last := fresh_run(root, a.skip_if_fresh, now_utc())):
+        print(f"fresh, skipping: {last.tier} ticked at {last.at:%H:%M}Z")
+        return 0
     try:
         result = Maintainer(root, Tier(a.tier), MaintainSettings.load(root)).tick()
     except Exception as e:  # noqa: BLE001  - a scheduled tick reports and retries next time; it never crashes

@@ -430,6 +430,56 @@ def test_main_needs_a_tier():
         maintain_mod.main([])
 
 
+def stub_tick(monkeypatch) -> list[str]:
+    calls: list[str] = []
+
+    def tick(self):
+        calls.append(self.tier.value)
+        return maintain_mod.TickResult(ran=True)
+
+    monkeypatch.setattr(Maintainer, "tick", tick)
+    return calls
+
+
+def cloud_args(clone, *extra: str) -> list[str]:
+    return ["--tier", "cloud", "--root", str(clone), *extra]
+
+
+def test_skip_if_fresh_exits_zero_when_another_tier_ran_within_the_window(
+    tmp_path, monkeypatch, capsys
+):
+    clone = queue_repo(tmp_path)
+    LastRun("laptop", now_utc() - 5 * MINUTE).write(clone)
+    calls = stub_tick(monkeypatch)
+    assert maintain_mod.main(cloud_args(clone, "--skip-if-fresh", "60")) == 0
+    assert capsys.readouterr().out.startswith("fresh, skipping")
+    assert calls == [] and LastRun.read(clone, "cloud") is None
+
+
+def test_skip_if_fresh_runs_the_tick_when_every_record_is_older_than_the_window(
+    tmp_path, monkeypatch, capsys
+):
+    clone = queue_repo(tmp_path)
+    LastRun("laptop", now_utc() - 61 * MINUTE).write(clone)
+    calls = stub_tick(monkeypatch)
+    assert maintain_mod.main(cloud_args(clone, "--skip-if-fresh", "60")) == 0
+    assert calls == ["cloud"] and "skipping" not in capsys.readouterr().out
+
+
+def test_without_skip_if_fresh_another_tiers_record_does_not_stop_the_tick(tmp_path, monkeypatch):
+    clone = queue_repo(tmp_path)
+    LastRun("laptop", now_utc() - MINUTE).write(clone)
+    calls = stub_tick(monkeypatch)
+    assert maintain_mod.main(cloud_args(clone)) == 0
+    assert calls == ["cloud"]
+
+
+def test_skip_if_fresh_needs_a_positive_number_of_minutes(tmp_path):
+    clone = queue_repo(tmp_path)
+    with pytest.raises(SystemExit):
+        maintain_mod.main(cloud_args(clone, "--skip-if-fresh", "0"))
+
+
 def test_never_due_readings_are_not_claimed(tmp_path):
     clone = queue_repo(tmp_path)
     add_brief(clone, "b1", wake_probe="x")
