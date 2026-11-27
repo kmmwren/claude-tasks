@@ -33,6 +33,7 @@ INTERVAL = 4 * HOURS
 A = Step("a", Phase.DETERMINISTIC, Home.PLUGIN, "a.py")
 B = Step("b", Phase.DETERMINISTIC, Home.PLUGIN, "b.py", ok_codes=frozenset({0, 1}))
 ROUTE = Step("route", Phase.DETERMINISTIC, Home.COORDINATOR, "router.py")
+PROJECT_HYGIENE = Step("project-hygiene", Phase.DETERMINISTIC, Home.COORDINATOR, "coordinator.py", ("hygiene",))
 J = Step("j", Phase.JUDGEMENT, Home.PLUGIN, "j.py")
 NO_CAPACITY = "class S:\n    accounts = {'x': 1}\n\n    def free(self, now=None):\n        return []\n\n\ndef load():\n    return S()\n"
 
@@ -128,6 +129,17 @@ def test_the_real_step_table_runs_deterministic_before_judgement_and_names_real_
     assert phases == sorted(phases, key=order.index)
     plugin = [step for step in real["STEPS"] if step.home is real["Home"].PLUGIN]
     assert plugin and all((hy.SCRIPTS_DIR / step.script).is_file() for step in plugin)
+
+
+def test_project_hygiene_is_a_deterministic_coordinator_step_ordered_after_route():
+    real = runpy.run_path(hy.__file__)
+    steps = real["STEPS"]
+    names = [step.name for step in steps]
+    step = steps[names.index("project-hygiene")]
+    assert (step.phase, step.home) == (real["Phase"].DETERMINISTIC, real["Home"].COORDINATOR)
+    assert (step.script, step.args, step.ok_codes) == (
+        PROJECT_HYGIENE.script, PROJECT_HYGIENE.args, PROJECT_HYGIENE.ok_codes)
+    assert names.index("project-hygiene") == names.index("route") + 1
 
 
 def test_the_production_engine_runs_the_step_table_as_subprocesses(tmp_path, monkeypatch):

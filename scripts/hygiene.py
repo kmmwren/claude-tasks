@@ -129,6 +129,7 @@ STEPS: tuple[Step, ...] = (
         ("run", "--all"),
     ),
     Step("route", Phase.DETERMINISTIC, Home.COORDINATOR, "router.py", ("tick", "--no-judge")),
+    Step("project-hygiene", Phase.DETERMINISTIC, Home.COORDINATOR, "coordinator.py", ("hygiene",)),
     Step(
         "triage-mechanical", Phase.DETERMINISTIC, Home.PLUGIN, "triage.py", ("promote", "--apply")
     ),
